@@ -1,294 +1,260 @@
 import asyncio
-import random
 import time
-import sqlite3
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
-    Message, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
-from aiogram.filters import CommandStart, Command
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.filters import Command
 
-# ================= CONFIG =================
-BOT_TOKEN = "8405907915:AAHG8r-Dg0hrucmMe0G3rdQnpUQIXDJJFSc"
-BOT_USERNAME = "@CandyBlossom34_bot"
-ADMINS = [5925859280]
-ADMIN_CONTACT = "@balikcyda"
-RESERVE_CHANNEL = "https://t.me/+JZdfikxXx-M0ZDll"
-
-VIDEO_PRICE = 1
-BONUS_AMOUNT = 3
-BONUS_COOLDOWN = 3600
-# ==========================================
+import db
+from config import BOT_TOKEN, ADMIN_IDS, REF_BONUS, BONUS_AMOUNT, BONUS_COOLDOWN
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
-# ================= DATABASE =================
-db = sqlite3.connect("database.db")
-sql = db.cursor()
+db.init_db()
 
-sql.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    balance INTEGER DEFAULT 0,
-    is_verified INTEGER DEFAULT 0,
-    last_bonus INTEGER DEFAULT 0
-)
-""")
+# ===================== КНОПКИ =====================
 
-sql.execute("""
-CREATE TABLE IF NOT EXISTS videos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_id TEXT
-)
-""")
-
-sql.execute("""
-CREATE TABLE IF NOT EXISTS watched (
-    user_id INTEGER,
-    video_id INTEGER,
-    UNIQUE(user_id, video_id)
-)
-""")
-
-sql.execute("""
-CREATE TABLE IF NOT EXISTS promo (
-    code TEXT PRIMARY KEY,
-    amount INTEGER
-)
-""")
-
-db.commit()
-
-# ================= KEYBOARDS =================
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎥 Смотреть видео", callback_data="watch")],
+        [InlineKeyboardButton(text="🎥 Смотреть видео", callback_data="watch_video")],
         [InlineKeyboardButton(text="🍬 Шоп конфет", callback_data="shop")],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
         [InlineKeyboardButton(text="🎁 Бонус", callback_data="bonus")],
         [InlineKeyboardButton(text="🎟 Промокод", callback_data="promo")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="📢 Резервный канал", url=RESERVE_CHANNEL)]
+        [InlineKeyboardButton(text="📢 Резервный канал", url="https://t.me/example")]
     ])
+
 
 def fake_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📥 Скачать видео с YouTube", callback_data="fake_youtube")],
         [InlineKeyboardButton(text="💱 Узнать курс валют", callback_data="fake_rate")],
-        [InlineKeyboardButton(text="🎲 Поиграть в кости", callback_data="fake_dice")]
+        [InlineKeyboardButton(text="🎲 Бросить кости", callback_data="fake_dice")]
     ])
 
-# ================= UTIL =================
-def get_user(user_id):
-    sql.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
-    db.commit()
 
-def is_verified(user_id):
-    sql.execute("SELECT is_verified FROM users WHERE user_id=?", (user_id,))
-    return sql.fetchone()[0] == 1
+# ===================== START =====================
 
-def set_verified(user_id):
-    sql.execute("UPDATE users SET is_verified=1 WHERE user_id=?", (user_id,))
-    db.commit()
-
-# ================= START =================
-@dp.message(CommandStart())
+@dp.message(Command("start"))
 async def start(message: Message):
     user_id = message.from_user.id
-    get_user(user_id)
+    user = db.get_user(user_id)
 
-    if user_id in ADMINS:
-        await message.answer("👑 Админ-доступ", reply_markup=main_menu())
+    # Админ — сразу в основное меню
+    if user_id in ADMIN_IDS:
+        await message.answer("👮 Админ-доступ", reply_markup=main_menu())
         return
 
-    args = message.text.split()
-    if len(args) > 1:
-        set_verified(user_id)
+    # Проверка реферальной ссылки
+    if message.text and " " in message.text:
+        try:
+            ref_id = int(message.text.split()[1])
+        except ValueError:
+            ref_id = None
 
-    if is_verified(user_id):
-        await message.answer("Добро пожаловать!", reply_markup=main_menu())
+        if ref_id and ref_id != user_id and user[2] == 0:
+            db.set_ref_used(user_id)
+            db.update_balance(ref_id, REF_BONUS)
+
+            await message.answer(
+                "🎉 Вы вошли по реферальной ссылке!\n"
+                "Основное меню открыто навсегда.",
+                reply_markup=main_menu()
+            )
+            return
+
+    # Уже был по рефке
+    if user[2] == 1:
+        await message.answer("Главное меню", reply_markup=main_menu())
     else:
         await message.answer("❌ Доступ ограничен", reply_markup=fake_menu())
 
-# ================= FAKE =================
-@dp.callback_query(F.data.startswith("fake_"))
-async def fake(callback: CallbackQuery):
-    if callback.data == "fake_youtube":
-        await callback.answer("Ошибка ❌", show_alert=True)
-    elif callback.data == "fake_rate":
-        await callback.answer(f"Курс: {random.randint(60,120)}₽", show_alert=True)
-    elif callback.data == "fake_dice":
-        await callback.answer(f"🎲 {random.randint(1,6)}", show_alert=True)
 
-# ================= SHOP =================
-@dp.callback_query(F.data == "shop")
-async def shop(callback: CallbackQuery):
-    await callback.message.answer(
-        "💰 Пополнение баланса\n\n"
-        "Курс 1$ = 299 конфет | 75 Звезд Telegram\n"
-        "Если вам нужно больше, то умножайте свое число на 2\n\n"
-        "Оплата принимается:\n"
-        "• CryptoBot (Крипта)\n"
-        "• Telegram stars\n\n"
-        "Для покупки обязательно напишите на этот аккаунт - @balikcyda\n\n"
-        "✍️ Введите количество конфет:"
+# ===================== ФЕЙК-МЕНЮ =====================
+
+@dp.callback_query(F.data == "fake_youtube")
+async def fake_youtube(call: CallbackQuery):
+    await call.answer("Ошибка загрузки видео ❌", show_alert=True)
+
+
+@dp.callback_query(F.data == "fake_rate")
+async def fake_rate(call: CallbackQuery):
+    rate = round(60 + (time.time() % 20), 2)
+    await call.message.answer(f"💱 Текущий курс: {rate} RUB/USD")
+
+
+@dp.callback_query(F.data == "fake_dice")
+async def fake_dice(call: CallbackQuery):
+    num = int(time.time()) % 6 + 1
+    await call.message.answer(f"🎲 Выпало число: {num}")
+
+
+# ===================== ПРОФИЛЬ (ФИКС РЕФКИ) =====================
+
+@dp.callback_query(F.data == "profile")
+async def profile(call: CallbackQuery):
+    user = db.get_user(call.from_user.id)
+    bot_username = (await bot.me()).username
+
+    ref_link = (
+        f"https://t.me/share/url?"
+        f"url=https://t.me/{bot_username}?start={call.from_user.id}"
     )
 
-@dp.message(F.text.regexp(r"^\d+$"))
-async def buy_amount(message: Message):
-    amount = int(message.text)
-    user = message.from_user
+    await call.message.answer(
+        f"👤 Профиль\n\n"
+        f"🍬 Баланс: {user[1]}\n\n"
+        f"🔗 Реферальная ссылка:\n{ref_link}"
+    )
 
-    for admin in ADMINS:
+
+# ===================== БОНУС =====================
+
+@dp.callback_query(F.data == "bonus")
+async def bonus(call: CallbackQuery):
+    user_id = call.from_user.id
+
+    if db.can_take_bonus(user_id):
+        db.take_bonus(user_id)
+        await call.message.answer(f"🎁 Вы получили {BONUS_AMOUNT} конфеты")
+    else:
+        await call.message.answer("⏳ Бонус можно получать раз в час")
+
+
+# ===================== ШОП =====================
+
+@dp.callback_query(F.data == "shop")
+async def shop(call: CallbackQuery):
+    await call.message.answer(
+        "Курс 1$ = 299 конфет | 75 Звезд Telegram\n\n"
+        "Если вам нужно больше, то умножайте свое число на 2\n\n"
+        "Оплата принимается:\n"
+        "CryptoBot ( Крипта ), Telegram stars.\n\n"
+        "Для покупки обязательно напишите на этот аккаунт - @balikcyda\n\n"
+        "✍️ Напишите количество конфет, которое хотите купить:"
+    )
+
+
+@dp.message(F.text.regexp(r"^\d+$"))
+async def buy_request(message: Message):
+    user_id = message.from_user.id
+    amount = int(message.text)
+
+    if amount <= 0:
+        return
+
+    for admin_id in ADMIN_IDS:
         try:
             await bot.send_message(
-                admin,
-                f"🍬 Заявка\n"
-                f"👤 @{user.username or 'без_username'}\n"
-                f"🆔 {user.id}\n"
-                f"📦 {amount}"
+                admin_id,
+                "💰 Запрос на покупку конфет\n\n"
+                f"👤 Username: @{message.from_user.username}\n"
+                f"🆔 ID: {user_id}\n"
+                f"🍬 Количество: {amount}"
             )
-        except TelegramForbiddenError:
+        except:
             pass
 
-    await message.answer("✅ Заявка отправлена админу")
+    await message.answer("✅ Заявка отправлена администратору")
 
-# ================= PROMO =================
+
+# ===================== ПРОМОКОД =====================
+
 @dp.callback_query(F.data == "promo")
-async def promo(callback: CallbackQuery):
-    await callback.message.answer("🎟 Введите промокод:")
+async def promo(call: CallbackQuery):
+    await call.message.answer("🎟 Введите промокод:")
 
-@dp.message(F.text.len() > 1)
+
+@dp.message(F.text)
 async def activate_promo(message: Message):
-    code = message.text.strip()
+    code = message.text.strip().upper()
+    user_id = message.from_user.id
 
-    sql.execute("SELECT amount FROM promo WHERE code=?", (code,))
-    promo = sql.fetchone()
+    promo = db.cursor.execute(
+        "SELECT amount FROM promo_codes WHERE code=? AND active=1",
+        (code,)
+    ).fetchone()
+
     if not promo:
         return
 
-    amount = promo[0]
-    sql.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amount, message.from_user.id))
-    sql.execute("DELETE FROM promo WHERE code=?", (code,))
-    db.commit()
+    used = db.cursor.execute(
+        "SELECT 1 FROM used_promos WHERE user_id=? AND code=?",
+        (user_id, code)
+    ).fetchone()
 
-    await message.answer(f"🎉 Промокод активирован! +{amount} конфет")
+    if used:
+        await message.answer("❌ Вы уже использовали этот промокод")
+        return
 
-# ================= PROFILE =================
-@dp.callback_query(F.data == "profile")
-async def profile(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    sql.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
-    balance = sql.fetchone()[0]
-
-    ref = f"https://t.me/{BOT_USERNAME}?start={user_id}"
-
-    await callback.message.answer(
-        f"👤 Профиль\n\n"
-        f"🍬 Баланс: {balance}\n"
-        f"🔗 Реферальная ссылка:\n{ref}\n\n"
-        f"+3 конфеты за приглашение"
+    db.update_balance(user_id, promo[0])
+    db.cursor.execute(
+        "INSERT INTO used_promos (user_id, code) VALUES (?, ?)",
+        (user_id, code)
     )
+    db.conn.commit()
 
-# ================= BONUS =================
-@dp.callback_query(F.data == "bonus")
-async def bonus(callback: CallbackQuery):
-    uid = callback.from_user.id
-    now = int(time.time())
+    await message.answer(f"🎉 Промокод активирован! +{promo[0]} конфет")
 
-    sql.execute("SELECT last_bonus FROM users WHERE user_id=?", (uid,))
-    last = sql.fetchone()[0]
 
-    if now - last < BONUS_COOLDOWN:
-        await callback.answer("⏳ Раз в час", show_alert=True)
-        return
-
-    sql.execute("UPDATE users SET balance = balance + ?, last_bonus=? WHERE user_id=?", (BONUS_AMOUNT, now, uid))
-    db.commit()
-    await callback.answer("🎁 +3 конфеты", show_alert=True)
-
-# ================= VIDEO =================
-@dp.callback_query(F.data == "watch")
-async def watch(callback: CallbackQuery):
-    uid = callback.from_user.id
-    sql.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-    bal = sql.fetchone()[0]
-
-    if bal < VIDEO_PRICE:
-        await callback.answer("❌ Недостаточно конфет", show_alert=True)
-        return
-
-    sql.execute("""
-    SELECT id, file_id FROM videos
-    WHERE id NOT IN (SELECT video_id FROM watched WHERE user_id=?)
-    ORDER BY RANDOM() LIMIT 1
-    """, (uid,))
-    video = sql.fetchone()
-
-    if not video:
-        await callback.answer("🎬 Видео закончились", show_alert=True)
-        return
-
-    vid, file = video
-    await callback.message.answer_video(file)
-
-    sql.execute("UPDATE users SET balance = balance - 1 WHERE user_id=?", (uid,))
-    sql.execute("INSERT INTO watched VALUES (?,?)", (uid, vid))
-    db.commit()
-
-# ================= ADMIN =================
-@dp.message(Command("addpromo"))
-async def addpromo(message: Message):
-    if message.from_user.id not in ADMINS:
-        return
-    _, code, amount = message.text.split()
-    sql.execute("INSERT OR REPLACE INTO promo VALUES (?,?)", (code, int(amount)))
-    db.commit()
-    await message.answer("✅ Промокод создан")
-
-@dp.message(Command("delpromo"))
-async def delpromo(message: Message):
-    if message.from_user.id not in ADMINS:
-        return
-    _, code = message.text.split()
-    sql.execute("DELETE FROM promo WHERE code=?", (code,))
-    db.commit()
-    await message.answer("🗑 Промокод удалён")
+# ===================== АДМИН КОМАНДЫ =====================
 
 @dp.message(Command("addbalance"))
-async def addbalance(message: Message):
-    if message.from_user.id not in ADMINS:
+async def add_balance(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
         return
-    _, uid, amt = message.text.split()
-    sql.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (int(amt), int(uid)))
-    db.commit()
-    await message.answer("✅ Баланс пополнен")
 
-@dp.message(Command("subbalance"))
-async def subbalance(message: Message):
-    if message.from_user.id not in ADMINS:
-        return
-    _, uid, amt = message.text.split()
-    sql.execute("UPDATE users SET balance = balance - ? WHERE user_id=?", (int(amt), int(uid)))
-    db.commit()
-    await message.answer("➖ Баланс уменьшен")
+    _, uid, amount = message.text.split()
+    db.update_balance(int(uid), int(amount))
+    await message.answer("✅ Баланс добавлен")
 
-@dp.message(Command("addvideo"))
-async def addvideo(message: Message):
-    if message.from_user.id not in ADMINS:
-        return
-    if not message.video:
-        await message.answer("Отправь видео")
-        return
-    sql.execute("INSERT INTO videos (file_id) VALUES (?)", (message.video.file_id,))
-    db.commit()
-    await message.answer("🎬 Видео добавлено")
 
-# ================= RUN =================
+@dp.message(Command("delbalance"))
+async def del_balance(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    _, uid, amount = message.text.split()
+    db.update_balance(int(uid), -int(amount))
+    await message.answer("✅ Баланс уменьшен")
+
+
+@dp.message(Command("createpromo"))
+async def create_promo(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    _, code, amount = message.text.split()
+    db.cursor.execute(
+        "INSERT OR REPLACE INTO promo_codes (code, amount, active) VALUES (?, ?, 1)",
+        (code.upper(), int(amount))
+    )
+    db.conn.commit()
+    await message.answer("🎟 Промокод создан")
+
+
+@dp.message(Command("deletepromo"))
+async def delete_promo(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    _, code = message.text.split()
+    db.cursor.execute("DELETE FROM promo_codes WHERE code=?", (code.upper(),))
+    db.conn.commit()
+    await message.answer("❌ Промокод удалён")
+
+
+# ===================== ЗАПУСК =====================
+
 async def main():
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
