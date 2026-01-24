@@ -1,4 +1,6 @@
-import time, random
+import time
+import random
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
@@ -19,6 +21,7 @@ def has_access(user_id: int) -> bool:
 # ================= START =================
 @router.message(CommandStart())
 async def start(message: Message):
+    # ----- ADMIN -----
     if message.from_user.id == ADMIN_ID:
         cursor.execute(
             "INSERT OR IGNORE INTO users (user_id, username, is_verified) VALUES (?, ?, 1)",
@@ -33,6 +36,7 @@ async def start(message: Message):
         await message.answer("👑 Админ-доступ", reply_markup=main_menu)
         return
 
+    # ----- USERS -----
     args = message.text.split()
     ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
@@ -195,16 +199,16 @@ async def promo_button(call: CallbackQuery):
 
 @router.message(F.text)
 async def promo_input(message: Message):
+    if message.text.startswith("/"):
+        return
+
     if message.from_user.id not in user_waiting_promo:
         return
 
     user_waiting_promo.discard(message.from_user.id)
     code = message.text.strip()
 
-    cursor.execute(
-        "SELECT reward FROM promocodes WHERE code = ?",
-        (code,)
-    )
+    cursor.execute("SELECT reward FROM promocodes WHERE code = ?", (code,))
     promo = cursor.fetchone()
 
     if not promo:
@@ -217,10 +221,7 @@ async def promo_input(message: Message):
         "UPDATE users SET balance = balance + ? WHERE user_id = ?",
         (reward, message.from_user.id)
     )
-    cursor.execute(
-        "DELETE FROM promocodes WHERE code = ?",
-        (code,)
-    )
+    cursor.execute("DELETE FROM promocodes WHERE code = ?", (code,))
     conn.commit()
 
     await message.answer(f"🎉 Промокод активирован! +{reward} 🍬")
@@ -238,7 +239,7 @@ async def upload_video(message: Message):
     )
     conn.commit()
 
-    await message.answer("✅ Видео загружено")
+    await message.answer("✅ Видео загружено и добавлено в очередь")
 
 
 @router.message(Command("add_balance"))
@@ -246,14 +247,16 @@ async def add_balance(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    _, user_id, amount = message.text.split()
-    cursor.execute(
-        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-        (int(amount), int(user_id))
-    )
-    conn.commit()
-
-    await message.answer("✅ Баланс пополнен")
+    try:
+        _, user_id, amount = message.text.split()
+        cursor.execute(
+            "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+            (int(amount), int(user_id))
+        )
+        conn.commit()
+        await message.answer("✅ Баланс пополнен")
+    except:
+        await message.answer("❌ Используй: /add_balance user_id amount")
 
 
 @router.message(Command("remove_balance"))
@@ -261,14 +264,16 @@ async def remove_balance(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    _, user_id, amount = message.text.split()
-    cursor.execute(
-        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
-        (int(amount), int(user_id))
-    )
-    conn.commit()
-
-    await message.answer("✅ Баланс уменьшен")
+    try:
+        _, user_id, amount = message.text.split()
+        cursor.execute(
+            "UPDATE users SET balance = balance - ? WHERE user_id = ?",
+            (int(amount), int(user_id))
+        )
+        conn.commit()
+        await message.answer("✅ Баланс уменьшен")
+    except:
+        await message.answer("❌ Используй: /remove_balance user_id amount")
 
 
 @router.message(Command("add_promo"))
@@ -276,14 +281,16 @@ async def add_promo(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    _, code, reward = message.text.split()
-    cursor.execute(
-        "INSERT INTO promocodes (code, reward) VALUES (?, ?)",
-        (code, int(reward))
-    )
-    conn.commit()
-
-    await message.answer("✅ Промокод добавлен")
+    try:
+        _, code, reward = message.text.split()
+        cursor.execute(
+            "INSERT INTO promocodes (code, reward) VALUES (?, ?)",
+            (code, int(reward))
+        )
+        conn.commit()
+        await message.answer("✅ Промокод добавлен")
+    except:
+        await message.answer("❌ Используй: /add_promo CODE AMOUNT")
 
 
 @router.message(Command("remove_promo"))
@@ -291,11 +298,10 @@ async def remove_promo(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    _, code = message.text.split()
-    cursor.execute(
-        "DELETE FROM promocodes WHERE code = ?",
-        (code,)
-    )
-    conn.commit()
-
-    await message.answer("✅ Промокод удалён")
+    try:
+        _, code = message.text.split()
+        cursor.execute("DELETE FROM promocodes WHERE code = ?", (code,))
+        conn.commit()
+        await message.answer("✅ Промокод удалён")
+    except:
+        await message.answer("❌ Используй: /remove_promo CODE")
