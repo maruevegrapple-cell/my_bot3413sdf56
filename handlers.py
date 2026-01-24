@@ -1,9 +1,9 @@
-import time
-import random
-
+import time, random
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 
 from config import *
 from db import cursor, conn
@@ -11,17 +11,19 @@ from keyboards import fake_menu, main_menu, video_menu
 
 router = Router()
 
+# ================= FSM =================
+class PromoFSM(StatesGroup):
+    waiting_code = State()
+
 # ================= ACCESS =================
 def has_access(user_id: int) -> bool:
     cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     return row and row[0] == 1
 
-
 # ================= START =================
 @router.message(CommandStart())
 async def start(message: Message):
-    # ----- ADMIN -----
     if message.from_user.id == ADMIN_ID:
         cursor.execute(
             "INSERT OR IGNORE INTO users (user_id, username, is_verified) VALUES (?, ?, 1)",
@@ -36,7 +38,6 @@ async def start(message: Message):
         await message.answer("👑 Админ-доступ", reply_markup=main_menu)
         return
 
-    # ----- USERS -----
     args = message.text.split()
     ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
@@ -67,7 +68,6 @@ async def start(message: Message):
     else:
         await message.answer("🎬 Онлайн сервис", reply_markup=fake_menu)
 
-
 # ================= FAKE MENU =================
 @router.callback_query(F.data.startswith("fake_"))
 async def fake_menu_actions(call: CallbackQuery):
@@ -78,16 +78,14 @@ async def fake_menu_actions(call: CallbackQuery):
     elif call.data == "fake_dice":
         await call.answer(f"🎲 Выпало: {random.randint(1,6)}", show_alert=True)
 
-
-# ================= BACK TO MENU =================
+# ================= BACK =================
 @router.callback_query(F.data == "menu")
-async def back_to_menu(call: CallbackQuery):
+async def back_menu(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
 
     await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
-
 
 # ================= VIDEOS =================
 @router.callback_query(F.data == "videos")
@@ -129,7 +127,6 @@ async def videos(call: CallbackQuery):
         reply_markup=video_menu
     )
 
-
 # ================= BONUS =================
 @router.callback_query(F.data == "bonus")
 async def bonus(call: CallbackQuery):
@@ -153,7 +150,6 @@ async def bonus(call: CallbackQuery):
 
     await call.answer("🎁 +3 конфеты", show_alert=True)
 
-
 # ================= PROFILE =================
 @router.callback_query(F.data == "profile")
 async def profile(call: CallbackQuery):
@@ -173,7 +169,6 @@ async def profile(call: CallbackQuery):
         f"🎁 За каждого друга: +3 конфеты"
     )
 
-
 # ================= SHOP =================
 @router.callback_query(F.data == "shop")
 async def shop(call: CallbackQuery):
@@ -183,30 +178,20 @@ async def shop(call: CallbackQuery):
 
     await call.message.answer(PAYMENT_TEXT)
 
-
-# ================= PROMO =================
-user_waiting_promo = set()
-
+# ================= PROMO FSM =================
 @router.callback_query(F.data == "promo")
-async def promo_button(call: CallbackQuery):
+async def promo_start(call: CallbackQuery, state: FSMContext):
     if not has_access(call.from_user.id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
 
-    user_waiting_promo.add(call.from_user.id)
+    await state.set_state(PromoFSM.waiting_code)
     await call.message.answer("🎟 Введите промокод:")
 
-
-@router.message(F.text)
-async def promo_input(message: Message):
-    if message.text.startswith("/"):
-        return
-
-    if message.from_user.id not in user_waiting_promo:
-        return
-
-    user_waiting_promo.discard(message.from_user.id)
+@router.message(PromoFSM.waiting_code, ~Command())
+async def promo_input(message: Message, state: FSMContext):
     code = message.text.strip()
+    await state.clear()
 
     cursor.execute("SELECT reward FROM promocodes WHERE code = ?", (code,))
     promo = cursor.fetchone()
@@ -226,7 +211,6 @@ async def promo_input(message: Message):
 
     await message.answer(f"🎉 Промокод активирован! +{reward} 🍬")
 
-
 # ================= ADMIN =================
 @router.message(F.video)
 async def upload_video(message: Message):
@@ -239,8 +223,7 @@ async def upload_video(message: Message):
     )
     conn.commit()
 
-    await message.answer("✅ Видео загружено и добавлено в очередь")
-
+    await message.answer("✅ Видео добавлено")
 
 @router.message(Command("add_balance"))
 async def add_balance(message: Message):
@@ -256,8 +239,7 @@ async def add_balance(message: Message):
         conn.commit()
         await message.answer("✅ Баланс пополнен")
     except:
-        await message.answer("❌ Используй: /add_balance user_id amount")
-
+        await message.answer("❌ Формат: /add_balance user_id amount")
 
 @router.message(Command("remove_balance"))
 async def remove_balance(message: Message):
@@ -273,8 +255,7 @@ async def remove_balance(message: Message):
         conn.commit()
         await message.answer("✅ Баланс уменьшен")
     except:
-        await message.answer("❌ Используй: /remove_balance user_id amount")
-
+        await message.answer("❌ Формат: /remove_balance user_id amount")
 
 @router.message(Command("add_promo"))
 async def add_promo(message: Message):
@@ -290,8 +271,7 @@ async def add_promo(message: Message):
         conn.commit()
         await message.answer("✅ Промокод добавлен")
     except:
-        await message.answer("❌ Используй: /add_promo CODE AMOUNT")
-
+        await message.answer("❌ Формат: /add_promo CODE AMOUNT")
 
 @router.message(Command("remove_promo"))
 async def remove_promo(message: Message):
@@ -304,4 +284,4 @@ async def remove_promo(message: Message):
         conn.commit()
         await message.answer("✅ Промокод удалён")
     except:
-        await message.answer("❌ Используй: /remove_promo CODE")
+        await message.answer("❌ Формат: /remove_promo CODE")
