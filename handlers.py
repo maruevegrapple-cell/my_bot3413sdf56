@@ -1,7 +1,7 @@
 import time, random
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 
 from config import *
 from db import cursor, conn
@@ -10,17 +10,21 @@ from keyboards import fake_menu, main_menu, video_menu
 router = Router()
 
 
+# ---------- ACCESS ----------
 def has_access(user_id: int) -> bool:
     cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     return row and row[0] == 1
 
 
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
+
 # ---------- START ----------
 @router.message(CommandStart())
 async def start(message: Message):
-    # 👑 АДМИН — ВСЕГДА С ДОСТУПОМ
-    if message.from_user.id == ADMIN_ID:
+    if is_admin(message.from_user.id):
         cursor.execute(
             "INSERT OR IGNORE INTO users (user_id, username, is_verified) VALUES (?, ?, 1)",
             (message.from_user.id, message.from_user.username)
@@ -31,13 +35,9 @@ async def start(message: Message):
         )
         conn.commit()
 
-        await message.answer(
-            "👑 Админ-доступ",
-            reply_markup=main_menu
-        )
+        await message.answer("👑 Админ-доступ", reply_markup=main_menu)
         return
 
-    # ---------- ОСТАЛЬНЫЕ ----------
     args = message.text.split()
     ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
@@ -80,13 +80,12 @@ async def fake_menu_actions(call: CallbackQuery):
         await call.answer(f"🎲 Выпало: {random.randint(1,6)}", show_alert=True)
 
 
-# ---------- BACK TO MENU ----------
+# ---------- BACK ----------
 @router.callback_query(F.data == "menu")
 async def back_to_menu(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
-
     await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
 
 
@@ -181,27 +180,13 @@ async def shop(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
-
     await call.message.answer(PAYMENT_TEXT)
 
 
-# ---------- PROMO ----------
-@router.callback_query(F.data == "promo")
-async def promo(call: CallbackQuery):
-    if not has_access(call.from_user.id):
-        await call.answer("❌ Нет доступа", show_alert=True)
-        return
-
-    await call.message.answer(
-        "🎟 Введите промокод сообщением\n\n"
-        "⚠️ Промокод можно активировать один раз"
-    )
-
-
-# ---------- ADMIN UPLOAD VIDEO ----------
+# ---------- ADMIN: UPLOAD VIDEO ----------
 @router.message(F.video)
 async def upload_video(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
 
     cursor.execute(
@@ -211,3 +196,53 @@ async def upload_video(message: Message):
     conn.commit()
 
     await message.answer("✅ Видео загружено и добавлено в очередь")
+
+
+# ==================================================
+# ================= ADMIN COMMANDS =================
+# ==================================================
+
+# /add_balance user_id amount
+@router.message(Command("add_balance"))
+async def add_balance(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    try:
+        _, user_id, amount = message.text.split()
+        user_id = int(user_id)
+        amount = int(amount)
+    except:
+        await message.answer("❌ Формат: /add_balance user_id amount")
+        return
+
+    cursor.execute(
+        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+        (amount, user_id)
+    )
+    conn.commit()
+
+    await message.answer(f"✅ Пользователю {user_id} добавлено {amount} конфет")
+
+
+# /remove_balance user_id amount
+@router.message(Command("remove_balance"))
+async def remove_balance(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    try:
+        _, user_id, amount = message.text.split()
+        user_id = int(user_id)
+        amount = int(amount)
+    except:
+        await message.answer("❌ Формат: /remove_balance user_id amount")
+        return
+
+    cursor.execute(
+        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
+        (amount, user_id)
+    )
+    conn.commit()
+
+    await message.answer(f"✅ У пользователя {user_id} списано {amount} конфет")
