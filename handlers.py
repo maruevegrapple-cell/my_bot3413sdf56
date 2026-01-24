@@ -1,7 +1,7 @@
 import time, random
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 
 from config import *
 from db import cursor, conn
@@ -9,59 +9,81 @@ from keyboards import fake_menu, main_menu, video_menu
 
 router = Router()
 
-# ---------- ACCESS ----------
+
 def has_access(user_id: int) -> bool:
     cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     return bool(row and row[0] == 1)
 
+
 # ---------- START ----------
 @router.message(CommandStart())
 async def start(message: Message):
-    if message.from_user.id == ADMIN_ID:
+    user_id = message.from_user.id
+    username = message.from_user.username
+
+    # ---------- АДМИН ----------
+    if user_id == ADMIN_ID:
         cursor.execute(
             "INSERT OR IGNORE INTO users (user_id, username, is_verified) VALUES (?, ?, 1)",
-            (message.from_user.id, message.from_user.username)
+            (user_id, username)
         )
-        cursor.execute("UPDATE users SET is_verified = 1 WHERE user_id = ?", (message.from_user.id,))
+        cursor.execute(
+            "UPDATE users SET is_verified = 1 WHERE user_id = ?",
+            (user_id,)
+        )
         conn.commit()
 
         await message.answer("👑 Админ-доступ", reply_markup=main_menu)
         return
 
+    # ---------- ОСТАЛЬНЫЕ ----------
     args = message.text.split()
     ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
-    cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (message.from_user.id,))
-    if not cursor.fetchone():
+    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    exists = cursor.fetchone()
+
+    if not exists:
         cursor.execute(
             "INSERT INTO users (user_id, username, referrer, is_verified) VALUES (?, ?, ?, ?)",
-            (message.from_user.id, message.from_user.username, ref_id, 1 if ref_id else 0)
+            (user_id, username, ref_id, 1 if ref_id else 0)
         )
+
         if ref_id:
             cursor.execute(
                 "UPDATE users SET balance = balance + ? WHERE user_id = ?",
                 (REF_BONUS, ref_id)
             )
+
         conn.commit()
 
-    if has_access(message.from_user.id):
+    if has_access(user_id):
         await message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
         await message.answer("🎬 Онлайн сервис", reply_markup=fake_menu)
 
-# ---------- FAKE ----------
+
+# ---------- FAKE MENU ----------
 @router.callback_query(F.data.startswith("fake_"))
 async def fake_actions(call: CallbackQuery):
-    await call.answer("❌ Недоступно", show_alert=True)
+    if call.data == "fake_download":
+        await call.answer("❌ Ошибка загрузки", show_alert=True)
+    elif call.data == "fake_rate":
+        await call.answer(f"💱 Курс: {random.randint(60,120)}", show_alert=True)
+    elif call.data == "fake_dice":
+        await call.answer(f"🎲 Выпало: {random.randint(1,6)}", show_alert=True)
+
 
 # ---------- MENU ----------
 @router.callback_query(F.data == "menu")
-async def menu(call: CallbackQuery):
+async def back_to_menu(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
+
     await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
+
 
 # ---------- VIDEOS ----------
 @router.callback_query(F.data == "videos")
@@ -82,7 +104,8 @@ async def videos(call: CallbackQuery):
         WHERE id NOT IN (
             SELECT video_id FROM user_videos WHERE user_id = ?
         )
-        ORDER BY id ASC LIMIT 1
+        ORDER BY id ASC
+        LIMIT 1
     """, (call.from_user.id,))
     video = cursor.fetchone()
 
@@ -101,6 +124,7 @@ async def videos(call: CallbackQuery):
         caption="🎥 Видео\n🍬 -1 конфета",
         reply_markup=video_menu
     )
+
 
 # ---------- BONUS ----------
 @router.callback_query(F.data == "bonus")
@@ -122,11 +146,17 @@ async def bonus(call: CallbackQuery):
         (BONUS_AMOUNT, now, call.from_user.id)
     )
     conn.commit()
+
     await call.answer("🎁 +3 конфеты", show_alert=True)
+
 
 # ---------- PROFILE ----------
 @router.callback_query(F.data == "profile")
 async def profile(call: CallbackQuery):
+    if not has_access(call.from_user.id):
+        await call.answer("❌ Нет доступа", show_alert=True)
+        return
+
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (call.from_user.id,))
     balance = cursor.fetchone()[0]
 
@@ -134,30 +164,32 @@ async def profile(call: CallbackQuery):
 
     await call.message.answer(
         f"👤 Профиль\n\n"
-        f"🍬 Баланс: {balance}\n"
-        f"👥 За каждого друга: +3 конфеты\n\n"
-        f"🔗 Реферальная ссылка:\n{ref_link}"
+        f"🍬 Баланс: {balance} 🎁\n\n"
+        f"🔗 Реферальная ссылка:\n{ref_link}\n\n"
+        f"🎁 За каждого друга: +3 конфеты"
     )
 
-# ---------- SHOP (ПОЧИНЕНО) ----------
+
+# ---------- SHOP ----------
 @router.callback_query(F.data == "shop")
 async def shop(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
+
     await call.message.answer(PAYMENT_TEXT)
 
-# ---------- PROMO ----------
-@router.callback_query(F.data == "promo")
-async def promo(call: CallbackQuery):
-    await call.message.answer("🎟 Введите промокод:")
 
-# ---------- ADMIN VIDEO ----------
+# ---------- ADMIN: UPLOAD VIDEO ----------
 @router.message(F.video)
 async def upload_video(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (message.video.file_id,))
+    cursor.execute(
+        "INSERT INTO videos (file_id) VALUES (?)",
+        (message.video.file_id,)
+    )
     conn.commit()
+
     await message.answer("✅ Видео загружено")
