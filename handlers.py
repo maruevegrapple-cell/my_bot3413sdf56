@@ -14,7 +14,14 @@ router = Router()
 
 # ---------- ACCESS ----------
 def has_access(user_id: int) -> bool:
-    cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
+    # 👑 Админ всегда имеет доступ
+    if user_id in ADMINS:
+        return True
+
+    cursor.execute(
+        "SELECT is_verified FROM users WHERE user_id = ?",
+        (user_id,)
+    )
     row = cursor.fetchone()
     return row and row[0] == 1
 
@@ -23,7 +30,7 @@ def has_access(user_id: int) -> bool:
 @router.message(Command("start"))
 async def start_handler(message: Message):
     # 👑 АДМИН — СРАЗУ В ОСНОВНОЕ МЕНЮ
-    if message.from_user.id == ADMIN_ID:
+    if message.from_user.id in ADMINS:
         await message.answer(
             "👑 Админ-доступ",
             reply_markup=main_menu
@@ -124,8 +131,14 @@ async def next_video(call: CallbackQuery):
 
     video_id, file_id = video
 
-    cursor.execute("UPDATE users SET balance = balance - 1 WHERE user_id = ?", (call.from_user.id,))
-    cursor.execute("INSERT INTO user_videos VALUES (?, ?)", (call.from_user.id, video_id))
+    cursor.execute(
+        "UPDATE users SET balance = balance - 1 WHERE user_id = ?",
+        (call.from_user.id,)
+    )
+    cursor.execute(
+        "INSERT INTO user_videos VALUES (?, ?)",
+        (call.from_user.id, video_id)
+    )
     conn.commit()
 
     await call.message.answer_video(
@@ -151,7 +164,8 @@ async def bonus(call: CallbackQuery):
         return
 
     cursor.execute("""
-        UPDATE users SET balance = balance + ?, last_bonus = ?
+        UPDATE users
+        SET balance = balance + ?, last_bonus = ?
         WHERE user_id = ?
     """, (BONUS_AMOUNT, now, call.from_user.id))
     conn.commit()
