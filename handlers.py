@@ -1,30 +1,32 @@
 import time
 import random
 
-from aiogram import types
-from aiogram.dispatcher import Dispatcher
-from aiogram.dispatcher.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery
 
-from config import *
+from config import (
+    ADMIN_ID, ADMINS, BOT_USERNAME,
+    VIDEO_PRICE, BONUS_AMOUNT, BONUS_COOLDOWN,
+    REF_BONUS, PAYMENT_TEXT
+)
 from db import cursor, conn
 from keyboards import fake_menu, main_menu, video_menu
+
+router = Router()
 
 # ---------- ACCESS ----------
 def has_access(user_id: int) -> bool:
     cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    return row and row[0] == 1
+    return bool(row and row[0] == 1)
 
 
 # ---------- START ----------
-async def start(message: Message):
-    # 👑 АДМИН СРАЗУ В МЕНЮ
+@router.message(F.text.startswith("/start"))
+async def start_handler(message: Message):
+    # 👑 АДМИН СРАЗУ В ОСНОВНОЕ МЕНЮ
     if message.from_user.id == ADMIN_ID:
-        await message.answer(
-            "👑 Админ-доступ",
-            reply_markup=main_menu
-        )
+        await message.answer("👑 Админ-доступ", reply_markup=main_menu)
         return
 
     args = message.text.split()
@@ -65,7 +67,8 @@ async def start(message: Message):
 
 
 # ---------- FAKE MENU ----------
-async def fake_actions(call: CallbackQuery):
+@router.callback_query(F.data.startswith("fake_"))
+async def fake_menu_actions(call: CallbackQuery):
     if call.data == "fake_download":
         await call.answer("❌ Ошибка загрузки", show_alert=True)
 
@@ -77,7 +80,8 @@ async def fake_actions(call: CallbackQuery):
         await call.answer(f"🎲 Выпало: {random.randint(1,6)}", show_alert=True)
 
 
-# ---------- MENU ----------
+# ---------- BACK TO MENU ----------
+@router.callback_query(F.data == "menu")
 async def back_to_menu(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Ошибка", show_alert=True)
@@ -90,7 +94,8 @@ async def back_to_menu(call: CallbackQuery):
 
 
 # ---------- VIDEOS ----------
-async def next_video(call: CallbackQuery):
+@router.callback_query(F.data == "videos")
+async def watch_video(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Ошибка", show_alert=True)
         return
@@ -118,8 +123,14 @@ async def next_video(call: CallbackQuery):
 
     video_id, file_id = video
 
-    cursor.execute("UPDATE users SET balance = balance - 1 WHERE user_id = ?", (call.from_user.id,))
-    cursor.execute("INSERT INTO user_videos VALUES (?, ?)", (call.from_user.id, video_id))
+    cursor.execute(
+        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
+        (VIDEO_PRICE, call.from_user.id)
+    )
+    cursor.execute(
+        "INSERT INTO user_videos (user_id, video_id) VALUES (?, ?)",
+        (call.from_user.id, video_id)
+    )
     conn.commit()
 
     await call.message.answer_video(
@@ -130,7 +141,8 @@ async def next_video(call: CallbackQuery):
 
 
 # ---------- BONUS ----------
-async def bonus(call: CallbackQuery):
+@router.callback_query(F.data == "bonus")
+async def bonus_handler(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Ошибка", show_alert=True)
         return
@@ -143,27 +155,29 @@ async def bonus(call: CallbackQuery):
         await call.answer("⏳ Бонус уже получен", show_alert=True)
         return
 
-    cursor.execute("""
-        UPDATE users SET balance = balance + ?, last_bonus = ?
-        WHERE user_id = ?
-    """, (BONUS_AMOUNT, now, call.from_user.id))
+    cursor.execute(
+        "UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?",
+        (BONUS_AMOUNT, now, call.from_user.id)
+    )
     conn.commit()
 
     await call.answer("🎁 +3 конфеты", show_alert=True)
 
 
 # ---------- SHOP ----------
-async def shop(call: CallbackQuery):
+@router.callback_query(F.data == "shop")
+async def shop_handler(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Ошибка", show_alert=True)
         return
 
-    # ❗ текст НЕ ТРОГАЕМ
     await call.message.answer(PAYMENT_TEXT)
+    # ⚠️ админу сообщение НЕ шлём — как ты и просил
 
 
 # ---------- PROFILE ----------
-async def profile(call: CallbackQuery):
+@router.callback_query(F.data == "profile")
+async def profile_handler(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Ошибка", show_alert=True)
         return
@@ -177,11 +191,12 @@ async def profile(call: CallbackQuery):
         f"👤 Профиль\n\n"
         f"🍬 Баланс: {balance}\n\n"
         f"🔗 Реферальная ссылка:\n{ref_link}\n\n"
-        f"🎁 За каждого друга: +3 конфеты"
+        f"🎁 За друга: +3 конфеты"
     )
 
 
 # ---------- ADMIN: ADD VIDEO ----------
+@router.message(F.video, F.from_user.id.in_(ADMINS))
 async def add_video(message: Message):
     cursor.execute(
         "INSERT OR IGNORE INTO videos (file_id) VALUES (?)",
@@ -189,17 +204,3 @@ async def add_video(message: Message):
     )
     conn.commit()
     await message.answer("✅ Видео добавлено в базу")
-
-
-# ---------- REGISTER ----------
-def register_handlers(dp: Dispatcher):
-    dp.register_message_handler(start, Command("start"))
-
-    dp.register_callback_query_handler(fake_actions, lambda c: c.data.startswith("fake_"))
-    dp.register_callback_query_handler(back_to_menu, lambda c: c.data == "menu")
-    dp.register_callback_query_handler(next_video, lambda c: c.data == "videos")
-    dp.register_callback_query_handler(bonus, lambda c: c.data == "bonus")
-    dp.register_callback_query_handler(shop, lambda c: c.data == "shop")
-    dp.register_callback_query_handler(profile, lambda c: c.data == "profile")
-
-    dp.register_message_handler(add_video, content_types=types.ContentType.VIDEO, user_id=ADMINS)
