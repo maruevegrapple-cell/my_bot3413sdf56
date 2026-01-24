@@ -1,6 +1,6 @@
-from config import ADMIN_ID
-from keyboards import main_menu_keyboard
-import time, random
+import time
+import random
+
 from aiogram import Router, Bot, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
@@ -11,6 +11,7 @@ from keyboards import fake_menu, main_menu, video_menu
 
 router = Router()
 
+
 # ---------- ACCESS ----------
 def has_access(user_id: int) -> bool:
     cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
@@ -20,7 +21,15 @@ def has_access(user_id: int) -> bool:
 
 # ---------- START ----------
 @router.message(Command("start"))
-async def start(message: Message):
+async def start_handler(message: Message):
+    # 👑 АДМИН — СРАЗУ В ОСНОВНОЕ МЕНЮ
+    if message.from_user.id == ADMIN_ID:
+        await message.answer(
+            "👑 Админ-доступ",
+            reply_markup=main_menu
+        )
+        return
+
     args = message.text.split()
     ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
