@@ -245,3 +245,55 @@ async def upload_video(message: Message):
     conn.commit()
 
     await message.answer("✅ Видео загружено и добавлено в очередь")
+
+# ---------- PROMO ADD (ADMIN) ----------
+@router.message(F.text.startswith("/add_promo"))
+async def add_promo(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    parts = message.text.split()
+    if len(parts) != 3:
+        await message.answer("❌ Формат: /add_promo КОД СУММА")
+        return
+
+    code = parts[1]
+    amount = int(parts[2])
+
+    cursor.execute(
+        "INSERT OR IGNORE INTO promo_codes (code, amount) VALUES (?, ?)",
+        (code, amount)
+    )
+    conn.commit()
+
+    await message.answer(f"✅ Промокод `{code}` на {amount} конфет создан")
+
+
+# ---------- PROMO USE ----------
+@router.message(F.text.startswith("/use_promo"))
+async def use_promo(message: Message):
+    code = message.text.replace("/use_promo", "").strip()
+
+    cursor.execute(
+        "SELECT amount FROM promo_codes WHERE code = ?",
+        (code,)
+    )
+    promo = cursor.fetchone()
+
+    if not promo:
+        await message.answer("❌ Неверный или использованный промокод")
+        return
+
+    amount = promo[0]
+
+    cursor.execute(
+        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+        (amount, message.from_user.id)
+    )
+    cursor.execute(
+        "DELETE FROM promo_codes WHERE code = ?",
+        (code,)
+    )
+    conn.commit()
+
+    await message.answer(f"🎉 Промокод активирован! +{amount} конфет")
