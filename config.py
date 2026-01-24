@@ -27,3 +27,8 @@ PAYMENT_TEXT = (
 )
 
 RESERVE_CHANNEL = "https://t.me/your_channel"
+
+# ---------- ADMIN ----------
+ADMIN_ID = 123456789
+ADMINS = [ADMIN_ID]
+
