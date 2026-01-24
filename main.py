@@ -2,12 +2,7 @@ import asyncio
 import time
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 
 import db
@@ -18,7 +13,7 @@ dp = Dispatcher()
 
 db.init_db()
 
-# ===================== КНОПКИ =====================
+# ===================== МЕНЮ =====================
 
 def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -33,11 +28,10 @@ def main_menu():
 
 def fake_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📥 Скачать видео с YouTube", callback_data="fake_youtube")],
-        [InlineKeyboardButton(text="💱 Узнать курс валют", callback_data="fake_rate")],
-        [InlineKeyboardButton(text="🎲 Бросить кости", callback_data="fake_dice")]
+        [InlineKeyboardButton(text="📥 Скачать видео", callback_data="fake")],
+        [InlineKeyboardButton(text="💱 Курс валют", callback_data="fake")],
+        [InlineKeyboardButton(text="🎲 Рандом", callback_data="fake")]
     ])
-
 
 # ===================== START =====================
 
@@ -46,162 +40,147 @@ async def start(message: Message):
     user_id = message.from_user.id
     user = db.get_user(user_id)
 
-    # Админ — сразу в основное меню
     if user_id in ADMIN_IDS:
-        await message.answer("👮 Админ-доступ", reply_markup=main_menu())
+        await message.answer("👮 Админ-меню", reply_markup=main_menu())
         return
 
-    # Проверка реферальной ссылки
     if message.text and " " in message.text:
         try:
             ref_id = int(message.text.split()[1])
-        except ValueError:
+        except:
             ref_id = None
 
         if ref_id and ref_id != user_id and user[2] == 0:
             db.set_ref_used(user_id)
             db.update_balance(ref_id, REF_BONUS)
-
-            await message.answer(
-                "🎉 Вы вошли по реферальной ссылке!\n"
-                "Основное меню открыто навсегда.",
-                reply_markup=main_menu()
-            )
+            await message.answer("🎉 Основное меню открыто!", reply_markup=main_menu())
             return
 
-    # Уже был по рефке
     if user[2] == 1:
         await message.answer("Главное меню", reply_markup=main_menu())
     else:
         await message.answer("❌ Доступ ограничен", reply_markup=fake_menu())
 
+# ===================== ФЕЙК =====================
 
-# ===================== ФЕЙК-МЕНЮ =====================
+@dp.callback_query(F.data == "fake")
+async def fake(call: CallbackQuery):
+    await call.answer("❌ Недоступно", show_alert=True)
 
-@dp.callback_query(F.data == "fake_youtube")
-async def fake_youtube(call: CallbackQuery):
-    await call.answer("Ошибка загрузки видео ❌", show_alert=True)
-
-
-@dp.callback_query(F.data == "fake_rate")
-async def fake_rate(call: CallbackQuery):
-    rate = round(60 + (time.time() % 20), 2)
-    await call.message.answer(f"💱 Текущий курс: {rate} RUB/USD")
-
-
-@dp.callback_query(F.data == "fake_dice")
-async def fake_dice(call: CallbackQuery):
-    num = int(time.time()) % 6 + 1
-    await call.message.answer(f"🎲 Выпало число: {num}")
-
-
-# ===================== ПРОФИЛЬ (ФИКС РЕФКИ) =====================
+# ===================== ПРОФИЛЬ =====================
 
 @dp.callback_query(F.data == "profile")
 async def profile(call: CallbackQuery):
     user = db.get_user(call.from_user.id)
-    bot_username = (await bot.me()).username
 
-    ref_link = (
-        f"https://t.me/share/url?"
-        f"url=https://t.me/{bot_username}?start={call.from_user.id}"
-    )
-
-    await call.message.answer(
+    await call.message.edit_text(
         f"👤 Профиль\n\n"
         f"🍬 Баланс: {user[1]}\n\n"
-        f"🔗 Реферальная ссылка:\n{ref_link}"
+        f"🔗 Реферальная система активна",
+        reply_markup=main_menu()
     )
-
 
 # ===================== БОНУС =====================
 
 @dp.callback_query(F.data == "bonus")
 async def bonus(call: CallbackQuery):
-    user_id = call.from_user.id
+    uid = call.from_user.id
 
-    if db.can_take_bonus(user_id):
-        db.take_bonus(user_id)
-        await call.message.answer(f"🎁 Вы получили {BONUS_AMOUNT} конфеты")
+    if db.can_take_bonus(uid):
+        db.take_bonus(uid)
+        await call.message.edit_text(
+            f"🎁 Вы получили {BONUS_AMOUNT} конфет",
+            reply_markup=main_menu()
+        )
     else:
-        await call.message.answer("⏳ Бонус можно получать раз в час")
-
+        await call.answer("⏳ Бонус раз в час", show_alert=True)
 
 # ===================== ШОП =====================
 
+user_in_shop = set()
+
 @dp.callback_query(F.data == "shop")
 async def shop(call: CallbackQuery):
-    await call.message.answer(
-        "Курс 1$ = 299 конфет | 75 Звезд Telegram\n\n"
-        "Если вам нужно больше, то умножайте свое число на 2\n\n"
-        "Оплата принимается:\n"
-        "CryptoBot ( Крипта ), Telegram stars.\n\n"
-        "Для покупки обязательно напишите на этот аккаунт - @balikcyda\n\n"
-        "✍️ Напишите количество конфет, которое хотите купить:"
-    )
+    user_in_shop.add(call.from_user.id)
 
+    await call.message.edit_text(
+        "Курс 1$ = 299 конфет | 75 ⭐ Telegram\n\n"
+        "Если нужно больше — умножайте на 2\n\n"
+        "Оплата:\nCryptoBot, Telegram Stars\n\n"
+        "✍️ Напишите количество конфет:",
+        reply_markup=main_menu()
+    )
 
 @dp.message(F.text.regexp(r"^\d+$"))
 async def buy_request(message: Message):
-    user_id = message.from_user.id
-    amount = int(message.text)
+    uid = message.from_user.id
 
-    if amount <= 0:
+    if uid not in user_in_shop:
         return
 
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(
-                admin_id,
-                "💰 Запрос на покупку конфет\n\n"
-                f"👤 Username: @{message.from_user.username}\n"
-                f"🆔 ID: {user_id}\n"
-                f"🍬 Количество: {amount}"
-            )
-        except:
-            pass
+    amount = int(message.text)
+    user_in_shop.discard(uid)
 
-    await message.answer("✅ Заявка отправлена администратору")
+    for admin in ADMIN_IDS:
+        await bot.send_message(
+            admin,
+            f"💰 Заявка на пополнение\n\n"
+            f"👤 ID: {uid}\n"
+            f"🍬 Количество: {amount}"
+        )
 
+    await message.answer("✅ Администратор уведомлён")
 
-# ===================== ПРОМОКОД =====================
+# ===================== ВИДЕО =====================
+
+@dp.callback_query(F.data == "watch_video")
+async def watch_video(call: CallbackQuery):
+    video = db.get_unwatched_video(call.from_user.id)
+
+    if not video:
+        await call.answer("❌ Видео закончились", show_alert=True)
+        return
+
+    await bot.send_video(
+        call.from_user.id,
+        video[0]
+    )
+
+    db.mark_video_watched(call.from_user.id, video[1])
+
+# ===================== АДМИН: ЗАГРУЗКА ВИДЕО =====================
+
+@dp.message(F.video)
+async def upload_video(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    file_id = message.video.file_id
+    db.add_video(file_id)
+
+    await message.answer("✅ Видео добавлено в базу")
+
+# ===================== ПРОМО =====================
 
 @dp.callback_query(F.data == "promo")
 async def promo(call: CallbackQuery):
-    await call.message.answer("🎟 Введите промокод:")
-
+    await call.message.edit_text("🎟 Введите промокод:")
 
 @dp.message(F.text)
-async def activate_promo(message: Message):
-    code = message.text.strip().upper()
-    user_id = message.from_user.id
+async def promo_activate(message: Message):
+    code = message.text.upper()
+    uid = message.from_user.id
 
-    promo = db.cursor.execute(
-        "SELECT amount FROM promo_codes WHERE code=? AND active=1",
-        (code,)
-    ).fetchone()
-
+    promo = db.get_promo(code)
     if not promo:
         return
 
-    used = db.cursor.execute(
-        "SELECT 1 FROM used_promos WHERE user_id=? AND code=?",
-        (user_id, code)
-    ).fetchone()
-
-    if used:
-        await message.answer("❌ Вы уже использовали этот промокод")
+    if db.is_promo_used(uid, code):
+        await message.answer("❌ Уже использован")
         return
 
-    db.update_balance(user_id, promo[0])
-    db.cursor.execute(
-        "INSERT INTO used_promos (user_id, code) VALUES (?, ?)",
-        (user_id, code)
-    )
-    db.conn.commit()
-
-    await message.answer(f"🎉 Промокод активирован! +{promo[0]} конфет")
-
+    db.use_promo(uid, code, promo)
+    await message.answer(f"🎉 +{promo} конфет")
 
 # ===================== АДМИН КОМАНДЫ =====================
 
@@ -212,8 +191,7 @@ async def add_balance(message: Message):
 
     _, uid, amount = message.text.split()
     db.update_balance(int(uid), int(amount))
-    await message.answer("✅ Баланс добавлен")
-
+    await message.answer("✅ Готово")
 
 @dp.message(Command("delbalance"))
 async def del_balance(message: Message):
@@ -222,8 +200,7 @@ async def del_balance(message: Message):
 
     _, uid, amount = message.text.split()
     db.update_balance(int(uid), -int(amount))
-    await message.answer("✅ Баланс уменьшен")
-
+    await message.answer("✅ Готово")
 
 @dp.message(Command("createpromo"))
 async def create_promo(message: Message):
@@ -231,13 +208,8 @@ async def create_promo(message: Message):
         return
 
     _, code, amount = message.text.split()
-    db.cursor.execute(
-        "INSERT OR REPLACE INTO promo_codes (code, amount, active) VALUES (?, ?, 1)",
-        (code.upper(), int(amount))
-    )
-    db.conn.commit()
+    db.create_promo(code, int(amount))
     await message.answer("🎟 Промокод создан")
-
 
 @dp.message(Command("deletepromo"))
 async def delete_promo(message: Message):
@@ -245,16 +217,13 @@ async def delete_promo(message: Message):
         return
 
     _, code = message.text.split()
-    db.cursor.execute("DELETE FROM promo_codes WHERE code=?", (code.upper(),))
-    db.conn.commit()
-    await message.answer("❌ Промокод удалён")
+    db.delete_promo(code)
+    await message.answer("❌ Удалён")
 
-
-# ===================== ЗАПУСК =====================
+# ===================== RUN =====================
 
 async def main():
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
