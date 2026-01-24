@@ -193,7 +193,7 @@ async def promo_button(call: CallbackQuery):
     await call.message.answer("🎟 Введите промокод:")
 
 
-@router.message(F.text)
+@router.message(~Command())
 async def promo_input(message: Message):
     if message.from_user.id not in user_waiting_promo:
         return
