@@ -13,7 +13,7 @@ router = Router()
 def has_access(user_id: int) -> bool:
     cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    return bool(row and row[0] == 1)
+    return row and row[0] == 1
 
 
 # ================= START =================
@@ -29,6 +29,7 @@ async def start(message: Message):
             (message.from_user.id,)
         )
         conn.commit()
+
         await message.answer("👑 Админ-доступ", reply_markup=main_menu)
         return
 
@@ -192,7 +193,7 @@ async def promo_button(call: CallbackQuery):
     await call.message.answer("🎟 Введите промокод:")
 
 
-@router.message(F.text & ~F.text.startswith("/"))
+@router.message(F.text)
 async def promo_input(message: Message):
     if message.from_user.id not in user_waiting_promo:
         return
