@@ -1,7 +1,7 @@
 import time
 import random
 
-from aiogram import Router, F, Bot
+from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 
 from config import (
@@ -24,7 +24,6 @@ def has_access(user_id: int) -> bool:
 # ---------- START ----------
 @router.message(F.text.startswith("/start"))
 async def start_handler(message: Message):
-    # 👑 АДМИН СРАЗУ В ОСНОВНОЕ МЕНЮ
     if message.from_user.id == ADMIN_ID:
         await message.answer("👑 Админ-доступ", reply_markup=main_menu)
         return
@@ -69,6 +68,8 @@ async def start_handler(message: Message):
 # ---------- FAKE MENU ----------
 @router.callback_query(F.data.startswith("fake_"))
 async def fake_menu_actions(call: CallbackQuery):
+    await call.answer()
+
     if call.data == "fake_download":
         await call.answer("❌ Ошибка загрузки", show_alert=True)
 
@@ -83,8 +84,9 @@ async def fake_menu_actions(call: CallbackQuery):
 # ---------- BACK TO MENU ----------
 @router.callback_query(F.data == "menu")
 async def back_to_menu(call: CallbackQuery):
+    await call.answer()
+
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
         return
 
     await call.message.answer(
@@ -96,8 +98,9 @@ async def back_to_menu(call: CallbackQuery):
 # ---------- VIDEOS ----------
 @router.callback_query(F.data == "videos")
 async def watch_video(call: CallbackQuery):
+    await call.answer()
+
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
         return
 
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (call.from_user.id,))
@@ -143,8 +146,9 @@ async def watch_video(call: CallbackQuery):
 # ---------- BONUS ----------
 @router.callback_query(F.data == "bonus")
 async def bonus_handler(call: CallbackQuery):
+    await call.answer()
+
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
         return
 
     now = int(time.time())
@@ -167,19 +171,20 @@ async def bonus_handler(call: CallbackQuery):
 # ---------- SHOP ----------
 @router.callback_query(F.data == "shop")
 async def shop_handler(call: CallbackQuery):
+    await call.answer()
+
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
         return
 
     await call.message.answer(PAYMENT_TEXT)
-    # ⚠️ админу сообщение НЕ шлём — как ты и просил
 
 
 # ---------- PROFILE ----------
 @router.callback_query(F.data == "profile")
 async def profile_handler(call: CallbackQuery):
+    await call.answer()
+
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
         return
 
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (call.from_user.id,))
