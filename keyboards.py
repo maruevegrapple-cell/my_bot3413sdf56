@@ -13,10 +13,8 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="🍬 Шоп конфет", callback_data="shop"),
         InlineKeyboardButton(text="👤 Профиль", callback_data="profile")
     ],
-    [
-        InlineKeyboardButton(text="🎁 Бонус", callback_data="bonus"),
-        InlineKeyboardButton(text="🎟 Промокод", callback_data="promo")
-    ],
+    [InlineKeyboardButton(text="🎁 Бонус", callback_data="bonus")],
+    [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="promo")],
     [InlineKeyboardButton(text="📢 Резервный канал", url=RESERVE_CHANNEL)]
 ])
 

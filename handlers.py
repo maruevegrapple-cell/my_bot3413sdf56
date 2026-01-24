@@ -9,15 +9,13 @@ from keyboards import fake_menu, main_menu, video_menu
 
 router = Router()
 
-# ================== HELPERS ==================
-
+# ---------- ACCESS ----------
 def has_access(user_id: int) -> bool:
     cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    return row and row[0] == 1
+    return bool(row and row[0] == 1)
 
-# ================== START ==================
-
+# ---------- START ----------
 @router.message(CommandStart())
 async def start(message: Message):
     if message.from_user.id == ADMIN_ID:
@@ -34,7 +32,7 @@ async def start(message: Message):
     args = message.text.split()
     ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (message.from_user.id,))
+    cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (message.from_user.id,))
     if not cursor.fetchone():
         cursor.execute(
             "INSERT INTO users (user_id, username, referrer, is_verified) VALUES (?, ?, ?, ?)",
@@ -52,23 +50,20 @@ async def start(message: Message):
     else:
         await message.answer("🎬 Онлайн сервис", reply_markup=fake_menu)
 
-# ================== FAKE ==================
-
+# ---------- FAKE ----------
 @router.callback_query(F.data.startswith("fake_"))
-async def fake_menu_actions(call: CallbackQuery):
+async def fake_actions(call: CallbackQuery):
     await call.answer("❌ Недоступно", show_alert=True)
 
-# ================== MENU ==================
-
+# ---------- MENU ----------
 @router.callback_query(F.data == "menu")
-async def back_menu(call: CallbackQuery):
+async def menu(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
     await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
 
-# ================== VIDEOS ==================
-
+# ---------- VIDEOS ----------
 @router.callback_query(F.data == "videos")
 async def videos(call: CallbackQuery):
     if not has_access(call.from_user.id):
@@ -107,10 +102,13 @@ async def videos(call: CallbackQuery):
         reply_markup=video_menu
     )
 
-# ================== BONUS ==================
-
+# ---------- BONUS ----------
 @router.callback_query(F.data == "bonus")
 async def bonus(call: CallbackQuery):
+    if not has_access(call.from_user.id):
+        await call.answer("❌ Нет доступа", show_alert=True)
+        return
+
     now = int(time.time())
     cursor.execute("SELECT last_bonus FROM users WHERE user_id = ?", (call.from_user.id,))
     last = cursor.fetchone()[0]
@@ -124,11 +122,9 @@ async def bonus(call: CallbackQuery):
         (BONUS_AMOUNT, now, call.from_user.id)
     )
     conn.commit()
-
     await call.answer("🎁 +3 конфеты", show_alert=True)
 
-# ================== PROFILE ==================
-
+# ---------- PROFILE ----------
 @router.callback_query(F.data == "profile")
 async def profile(call: CallbackQuery):
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (call.from_user.id,))
@@ -138,91 +134,30 @@ async def profile(call: CallbackQuery):
 
     await call.message.answer(
         f"👤 Профиль\n\n"
-        f"🍬 Баланс: {balance}\n\n"
-        f"🔗 Реферальная ссылка:\n{ref_link}\n\n"
-        f"🎁 За каждого друга: +3 конфеты"
+        f"🍬 Баланс: {balance}\n"
+        f"👥 За каждого друга: +3 конфеты\n\n"
+        f"🔗 Реферальная ссылка:\n{ref_link}"
     )
 
-# ================== PROMO ==================
+# ---------- SHOP (ПОЧИНЕНО) ----------
+@router.callback_query(F.data == "shop")
+async def shop(call: CallbackQuery):
+    if not has_access(call.from_user.id):
+        await call.answer("❌ Нет доступа", show_alert=True)
+        return
+    await call.message.answer(PAYMENT_TEXT)
 
+# ---------- PROMO ----------
 @router.callback_query(F.data == "promo")
-async def promo_button(call: CallbackQuery):
+async def promo(call: CallbackQuery):
     await call.message.answer("🎟 Введите промокод:")
 
-@router.message(F.text.startswith("/use_promo"))
-async def use_promo_cmd(message: Message):
-    code = message.text.split(maxsplit=1)[1]
-    cursor.execute("SELECT reward FROM promos WHERE code = ?", (code,))
-    promo = cursor.fetchone()
-
-    if not promo:
-        await message.answer("❌ Промокод недействителен")
-        return
-
-    cursor.execute("DELETE FROM promos WHERE code = ?", (code,))
-    cursor.execute(
-        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-        (promo[0], message.from_user.id)
-    )
-    conn.commit()
-
-    await message.answer(f"✅ Промокод активирован! +{promo[0]} конфет")
-
-@router.message()
-async def promo_plain_text(message: Message):
-    cursor.execute("SELECT reward FROM promos WHERE code = ?", (message.text,))
-    promo = cursor.fetchone()
-    if not promo:
-        return
-
-    cursor.execute("DELETE FROM promos WHERE code = ?", (message.text,))
-    cursor.execute(
-        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-        (promo[0], message.from_user.id)
-    )
-    conn.commit()
-
-    await message.answer(f"✅ Промокод активирован! +{promo[0]} конфет")
-
-# ================== ADMIN ==================
-
+# ---------- ADMIN VIDEO ----------
 @router.message(F.video)
 async def upload_video(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
+
     cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (message.video.file_id,))
     conn.commit()
     await message.answer("✅ Видео загружено")
-
-@router.message(F.text.startswith("/add_promo"))
-async def add_promo(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    _, code, amount = message.text.split()
-    cursor.execute("INSERT INTO promos VALUES (?, ?)", (code, int(amount)))
-    conn.commit()
-    await message.answer("✅ Промокод создан")
-
-@router.message(F.text.startswith("/add_balance"))
-async def add_balance(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    _, user_id, amount = message.text.split()
-    cursor.execute(
-        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-        (int(amount), int(user_id))
-    )
-    conn.commit()
-    await message.answer("✅ Баланс пополнен")
-
-@router.message(F.text.startswith("/remove_balance"))
-async def remove_balance(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    _, user_id, amount = message.text.split()
-    cursor.execute(
-        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
-        (int(amount), int(user_id))
-    )
-    conn.commit()
-    await message.answer("✅ Баланс списан")
