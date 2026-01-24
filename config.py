@@ -1,16 +1,24 @@
 import os
+from dotenv import load_dotenv
 
-# === BOT ===
-BOT_TOKEN = os.getenv("8405907915:AAHG8r-Dg0hrucmMe0G3rdQnpUQIXDJJFSc")
+# Загружаем .env если он есть
+load_dotenv()
 
-if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN is not set in Railway variables")
+def get_env(name: str, required=True, default=None):
+    value = os.getenv(name, default)
+    if required and not value:
+        raise RuntimeError(f"❌ {name} is not set (.env or Railway Variables)")
+    return value
 
-# === ADMINS ===
-_raw_admins = os.getenv("5925859280", "8221665807")
-ADMIN_IDS = [int(x) for x in _raw_admins.split(",") if x.strip().isdigit()]
+BOT_TOKEN = get_env("8405907915:AAHG8r-Dg0hrucmMe0G3rdQnpUQlXDJFSc")
 
-# === REF SYSTEM ===
-REF_BONUS = int(os.getenv("REF_BONUS", 3))
-BONUS_AMOUNT = int(os.getenv("BONUS_AMOUNT", 3))
-BONUS_COOLDOWN = int(os.getenv("BONUS_COOLDOWN", 3600))  # 24h
+# ADMIN_IDS = "5925859280,456,789"
+_raw_admins = get_env("ADMIN_IDS", required=False, default="")
+ADMIN_IDS = [
+    int(x) for x in _raw_admins.split(",") if x.strip().isdigit()
+]
+
+# бонусы
+REF_BONUS = 3
+BONUS_AMOUNT = 3
+BONUS_COOLDOWN = 3600  # 1 час
