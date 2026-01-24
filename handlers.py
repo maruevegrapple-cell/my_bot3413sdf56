@@ -4,6 +4,8 @@ import random
 from aiogram import Router, Bot, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from config import *
 from db import cursor, conn
@@ -12,9 +14,13 @@ from keyboards import fake_menu, main_menu, video_menu
 router = Router()
 
 
-# ---------- ACCESS ----------
+# ================= STATES =================
+class TopUpState(StatesGroup):
+    waiting_amount = State()
+
+
+# ================= ACCESS =================
 def has_access(user_id: int) -> bool:
-    # 👑 Админ всегда имеет доступ
     if user_id in ADMINS:
         return True
 
@@ -26,19 +32,15 @@ def has_access(user_id: int) -> bool:
     return row and row[0] == 1
 
 
-# ---------- START ----------
+# ================= START =================
 @router.message(Command("start"))
 async def start_handler(message: Message):
-    # 👑 АДМИН — СРАЗУ В ОСНОВНОЕ МЕНЮ
     if message.from_user.id in ADMINS:
         await message.answer(
             "👑 Админ-доступ",
             reply_markup=main_menu
         )
         return
-
-    args = message.text.split()
-    ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (message.from_user.id,))
     exists = cursor.fetchone()
@@ -49,63 +51,32 @@ async def start_handler(message: Message):
             (
                 message.from_user.id,
                 message.from_user.username,
-                ref_id,
-                1 if ref_id else 0
+                None,
+                1
             )
         )
-
-        if ref_id:
-            cursor.execute(
-                "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-                (REF_BONUS, ref_id)
-            )
-
         conn.commit()
 
-    if has_access(message.from_user.id):
-        await message.answer(
-            "🎥 Видео платформа\n\nВыберите раздел:",
-            reply_markup=main_menu
-        )
-    else:
-        await message.answer(
-            "🎬 Онлайн сервис\n\nВыберите действие:",
-            reply_markup=fake_menu
-        )
+    await message.answer(
+        "🎥 Видео платформа\n\nВыберите раздел:",
+        reply_markup=main_menu if has_access(message.from_user.id) else fake_menu
+    )
 
 
-# ---------- FAKE MENU ----------
-@router.callback_query(F.data.startswith("fake_"))
-async def fake_actions(call: CallbackQuery):
-    if call.data == "fake_download":
-        await call.answer("❌ Ошибка загрузки", show_alert=True)
-
-    elif call.data == "fake_rate":
-        rate = random.randint(60, 120)
-        await call.answer(f"💱 Текущий курс: {rate}", show_alert=True)
-
-    elif call.data == "fake_dice":
-        await call.answer(f"🎲 Выпало: {random.randint(1,6)}", show_alert=True)
-
-
-# ---------- MENU ----------
+# ================= MENU =================
 @router.callback_query(F.data == "menu")
 async def back_to_menu(call: CallbackQuery):
-    if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
-        return
-
     await call.message.answer(
         "🎥 Видео платформа\n\nВыберите раздел:",
         reply_markup=main_menu
     )
 
 
-# ---------- VIDEOS ----------
+# ================= VIDEOS =================
 @router.callback_query(F.data == "videos")
-async def next_video(call: CallbackQuery):
+async def videos_handler(call: CallbackQuery):
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
+        await call.answer("❌ Нет доступа", show_alert=True)
         return
 
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (call.from_user.id,))
@@ -120,7 +91,6 @@ async def next_video(call: CallbackQuery):
         WHERE id NOT IN (
             SELECT video_id FROM user_videos WHERE user_id = ?
         )
-        ORDER BY id ASC
         LIMIT 1
     """, (call.from_user.id,))
     video = cursor.fetchone()
@@ -132,8 +102,8 @@ async def next_video(call: CallbackQuery):
     video_id, file_id = video
 
     cursor.execute(
-        "UPDATE users SET balance = balance - 1 WHERE user_id = ?",
-        (call.from_user.id,)
+        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
+        (VIDEO_PRICE, call.from_user.id)
     )
     cursor.execute(
         "INSERT INTO user_videos VALUES (?, ?)",
@@ -148,70 +118,75 @@ async def next_video(call: CallbackQuery):
     )
 
 
-# ---------- BONUS ----------
+# ================= BONUS =================
 @router.callback_query(F.data == "bonus")
-async def bonus(call: CallbackQuery):
+async def bonus_handler(call: CallbackQuery):
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
+        await call.answer("❌ Нет доступа", show_alert=True)
         return
 
     now = int(time.time())
     cursor.execute("SELECT last_bonus FROM users WHERE user_id = ?", (call.from_user.id,))
     last = cursor.fetchone()[0]
 
-    if now - last < BONUS_COOLDOWN:
+    if last and now - last < BONUS_COOLDOWN:
         await call.answer("⏳ Бонус уже получен", show_alert=True)
         return
 
-    cursor.execute("""
-        UPDATE users
-        SET balance = balance + ?, last_bonus = ?
-        WHERE user_id = ?
-    """, (BONUS_AMOUNT, now, call.from_user.id))
+    cursor.execute(
+        "UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?",
+        (BONUS_AMOUNT, now, call.from_user.id)
+    )
     conn.commit()
 
-    await call.answer("🎁 +3 конфеты", show_alert=True)
+    await call.answer("🎁 Бонус получен!", show_alert=True)
 
 
-# ---------- SHOP ----------
-@router.callback_query(F.data == "shop")
-async def shop(call: CallbackQuery, bot: Bot):
-    if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
-        return
-
-    await call.message.answer(PAYMENT_TEXT)
-
-    for admin in ADMINS:
-        await bot.send_message(
-            admin,
-            f"💰 Запрос на покупку\n"
-            f"👤 @{call.from_user.username}\n"
-            f"🆔 {call.from_user.id}"
-        )
-
-
-# ---------- PROFILE ----------
+# ================= PROFILE =================
 @router.callback_query(F.data == "profile")
-async def profile(call: CallbackQuery):
+async def profile_handler(call: CallbackQuery):
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
+        await call.answer("❌ Нет доступа", show_alert=True)
         return
 
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (call.from_user.id,))
     balance = cursor.fetchone()[0]
 
-    ref_link = f"https://t.me/{BOT_USERNAME}?start={call.from_user.id}"
-
     await call.message.answer(
         f"👤 Профиль\n\n"
-        f"🍬 Баланс: {balance}\n\n"
-        f"🔗 Реферальная ссылка:\n{ref_link}\n\n"
-        f"🎁 За каждого друга: +3 конфеты"
+        f"🍬 Баланс: {balance}"
     )
 
 
-# ---------- ADMIN: ADD VIDEO ----------
+# ================= TOP UP =================
+@router.callback_query(F.data == "shop")
+async def shop_handler(call: CallbackQuery, state: FSMContext):
+    await state.set_state(TopUpState.waiting_amount)
+    await call.message.answer("💰 Введите сумму пополнения:")
+
+
+@router.message(TopUpState.waiting_amount)
+async def process_amount(message: Message, state: FSMContext, bot: Bot):
+    if not message.text.isdigit():
+        await message.answer("❌ Введите число")
+        return
+
+    amount = int(message.text)
+
+    for admin in ADMINS:
+        await bot.send_message(
+            admin,
+            f"💰 Запрос на пополнение\n"
+            f"👤 @{message.from_user.username}\n"
+            f"🆔 {message.from_user.id}\n"
+            f"💵 Сумма: {amount}"
+        )
+
+    await message.answer("✅ Запрос отправлен администратору")
+    await state.clear()
+
+
+# ================= ADMIN ADD VIDEO =================
 @router.message(F.video, F.from_user.id.in_(ADMINS))
 async def add_video(message: Message):
     cursor.execute(
@@ -219,4 +194,4 @@ async def add_video(message: Message):
         (message.video.file_id,)
     )
     conn.commit()
-    await message.answer("✅ Видео добавлено в базу")
+    await message.answer("✅ Видео добавлено")
