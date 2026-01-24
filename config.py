@@ -1,23 +1,13 @@
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+BOT_TOKEN = os.getenv("8405907915:AAHG8r-Dg0hrucmMe0G3rdQnpUQIXDJJFSc")
 
-def get_env(name: str, default=None):
-    value = os.getenv(name, default)
-    if value is None:
-        raise RuntimeError(f"❌ {name} is not set (.env or Railway Variables)")
-    return value
+ADMIN_IDS = [5925859280]  # свой ID
 
-# === REQUIRED ===
-BOT_TOKEN = get_env("BOT_TOKEN")
+BOT_USERNAME = "@CandyBlossom34_bot"
 
-# === ADMINS ===
-ADMIN_IDS = [
-    int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
-]
+REF_BONUS = 3
+BONUS_PER_HOUR = 3600
+VIDEO_PRICE = 1
 
-# === REF / BONUS ===
-REF_BONUS = int(os.getenv("REF_BONUS", 3))
-BONUS_AMOUNT = int(os.getenv("BONUS_AMOUNT", 3))
-BONUS_COOLDOWN = int(os.getenv("BONUS_COOLDOWN", 3600))
+RESERVE_CHANNEL_URL = "https://t.me/+JZdfikxXx-M0ZDll"
