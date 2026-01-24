@@ -1,3 +1,5 @@
+from config import ADMIN_ID
+from keyboards import main_menu_keyboard
 import time, random
 from aiogram import Router, Bot, F
 from aiogram.types import Message, CallbackQuery
