@@ -1,4 +1,3 @@
-input("BOT FILE EXECUTED. PRESS ENTER")
 import asyncio
 from aiogram import Bot, Dispatcher
 from config import BOT_TOKEN
