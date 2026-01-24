@@ -1,35 +1,25 @@
 import time, random
-from aiogram import Router, F, Bot
+from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart
 
-from config import (
-    ADMIN_ID, ADMINS, BOT_USERNAME,
-    VIDEO_PRICE, BONUS_AMOUNT, BONUS_COOLDOWN,
-    PAYMENT_TEXT
-)
+from config import *
 from db import cursor, conn
 from keyboards import fake_menu, main_menu, video_menu
 
 router = Router()
 
 
-# ---------- ACCESS ----------
 def has_access(user_id: int) -> bool:
     cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    return bool(row and row[0] == 1)
+    return row and row[0] == 1
 
 
-# ---------- START ----------
 @router.message(CommandStart())
-async def start_handler(message: Message):
-    # АДМИН СРАЗУ В МЕНЮ
+async def start(message: Message):
     if message.from_user.id == ADMIN_ID:
-        await message.answer(
-            "👑 Админ-доступ",
-            reply_markup=main_menu
-        )
+        await message.answer("👑 Админ-доступ", reply_markup=main_menu)
         return
 
     args = message.text.split()
@@ -52,54 +42,39 @@ async def start_handler(message: Message):
         if ref_id:
             cursor.execute(
                 "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-                (3, ref_id)
+                (REF_BONUS, ref_id)
             )
 
         conn.commit()
 
     if has_access(message.from_user.id):
-        await message.answer(
-            "🎥 Видео платформа\n\nВыберите раздел:",
-            reply_markup=main_menu
-        )
+        await message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
-        await message.answer(
-            "🎬 Онлайн сервис\n\nВыберите действие:",
-            reply_markup=fake_menu
-        )
+        await message.answer("🎬 Онлайн сервис", reply_markup=fake_menu)
 
 
-# ---------- FAKE MENU ----------
 @router.callback_query(F.data.startswith("fake_"))
-async def fake_actions(call: CallbackQuery):
+async def fake(call: CallbackQuery):
     if call.data == "fake_download":
         await call.answer("❌ Ошибка загрузки", show_alert=True)
-
     elif call.data == "fake_rate":
         await call.answer(f"💱 Курс: {random.randint(60,120)}", show_alert=True)
-
     elif call.data == "fake_dice":
         await call.answer(f"🎲 Выпало: {random.randint(1,6)}", show_alert=True)
 
 
-# ---------- BACK TO MENU ----------
 @router.callback_query(F.data == "menu")
-async def back_to_menu(call: CallbackQuery):
+async def back(call: CallbackQuery):
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
+        await call.answer("❌ Нет доступа", show_alert=True)
         return
-
-    await call.message.answer(
-        "🎥 Видео платформа\n\nВыберите раздел:",
-        reply_markup=main_menu
-    )
+    await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
 
 
-# ---------- VIDEOS ----------
 @router.callback_query(F.data == "videos")
-async def next_video(call: CallbackQuery):
+async def videos(call: CallbackQuery):
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
+        await call.answer("❌ Нет доступа", show_alert=True)
         return
 
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (call.from_user.id,))
@@ -114,8 +89,7 @@ async def next_video(call: CallbackQuery):
         WHERE id NOT IN (
             SELECT video_id FROM user_videos WHERE user_id = ?
         )
-        ORDER BY id ASC
-        LIMIT 1
+        ORDER BY id ASC LIMIT 1
     """, (call.from_user.id,))
     video = cursor.fetchone()
 
@@ -129,18 +103,13 @@ async def next_video(call: CallbackQuery):
     cursor.execute("INSERT INTO user_videos VALUES (?, ?)", (call.from_user.id, video_id))
     conn.commit()
 
-    await call.message.answer_video(
-        file_id,
-        caption="🎥 Видео\n🍬 -1 конфета",
-        reply_markup=video_menu
-    )
+    await call.message.answer_video(file_id, caption="🎥 Видео\n🍬 -1", reply_markup=video_menu)
 
 
-# ---------- BONUS ----------
 @router.callback_query(F.data == "bonus")
 async def bonus(call: CallbackQuery):
     if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
+        await call.answer("❌ Нет доступа", show_alert=True)
         return
 
     now = int(time.time())
@@ -157,48 +126,24 @@ async def bonus(call: CallbackQuery):
     )
     conn.commit()
 
-    await call.answer("🎁 Бонус получен", show_alert=True)
+    await call.answer("🎁 +3 конфеты", show_alert=True)
 
 
-# ---------- SHOP ----------
-@router.callback_query(F.data == "shop")
-async def shop(call: CallbackQuery):
-    if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
-        return
-
-    await call.message.answer(PAYMENT_TEXT)
-    await call.answer()
-
-
-# ---------- PROFILE ----------
 @router.callback_query(F.data == "profile")
 async def profile(call: CallbackQuery):
-    if not has_access(call.from_user.id):
-        await call.answer("❌ Ошибка", show_alert=True)
-        return
-
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (call.from_user.id,))
     balance = cursor.fetchone()[0]
 
-    ref_link = f"https://t.me/{BOT_USERNAME}?start={call.from_user.id}"
+    ref = f"https://t.me/{BOT_USERNAME}?start={call.from_user.id}"
 
     await call.message.answer(
         f"👤 Профиль\n\n"
         f"🍬 Баланс: {balance}\n\n"
-        f"🔗 Реферальная ссылка:\n{ref_link}"
+        f"🔗 Реферальная ссылка:\n{ref}\n\n"
+        f"🎁 +3 конфеты за друга"
     )
 
 
-# ---------- ADMIN: ADD VIDEO ----------
-@router.message(F.video)
-async def add_video(message: Message):
-    if message.from_user.id not in ADMINS:
-        return
-
-    cursor.execute(
-        "INSERT OR IGNORE INTO videos (file_id) VALUES (?)",
-        (message.video.file_id,)
-    )
-    conn.commit()
-    await message.answer("✅ Видео добавлено")
+@router.callback_query(F.data == "shop")
+async def shop(call: CallbackQuery):
+    await call.message.answer(PAYMENT_TEXT)
