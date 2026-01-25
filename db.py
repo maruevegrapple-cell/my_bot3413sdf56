@@ -1,24 +1,26 @@
 import sqlite3
 
-conn = sqlite3.connect("database.db")
+conn = sqlite3.connect(
+    "database.db",
+    check_same_thread=False
+)
+
+conn.row_factory = sqlite3.Row
 cursor = conn.cursor()
 
 
 def init_db():
-    # ================= USERS =================
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         balance INTEGER DEFAULT 0,
         referrer INTEGER,
-        is_verified INTEGER DEFAULT 0,
         last_bonus INTEGER DEFAULT 0,
-        waiting_promo INTEGER DEFAULT 0
+        is_verified INTEGER DEFAULT 0
     )
     """)
 
-    # ================= VIDEOS =================
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS videos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +28,6 @@ def init_db():
     )
     """)
 
-    # ================= USER VIDEOS =================
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_videos (
         user_id INTEGER,
@@ -35,16 +36,14 @@ def init_db():
     )
     """)
 
-    # ================= PROMOCODES =================
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS promocodes (
         code TEXT PRIMARY KEY,
-        reward INTEGER NOT NULL,
-        activations_left INTEGER NOT NULL
+        reward INTEGER,
+        activations_left INTEGER
     )
     """)
 
-    # ================= PROMO USES =================
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS promo_uses (
         user_id INTEGER,
@@ -54,4 +53,3 @@ def init_db():
     """)
 
     conn.commit()
-
