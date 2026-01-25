@@ -1,5 +1,6 @@
 import time
 import random
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
@@ -14,32 +15,19 @@ router = Router()
 def has_access(user_id: int) -> bool:
     cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    return row and row[0] == 1
+    return bool(row and row[0] == 1)
 
 
 # ================= START =================
 @router.message(CommandStart())
 async def start(message: Message):
-    if message.from_user.id == ADMIN_ID:
-        cursor.execute(
-            "INSERT OR IGNORE INTO users (user_id, username, is_verified) VALUES (?, ?, 1)",
-            (message.from_user.id, message.from_user.username)
-        )
-        cursor.execute(
-            "UPDATE users SET is_verified = 1 WHERE user_id = ?",
-            (message.from_user.id,)
-        )
-        conn.commit()
-        await message.answer("👑 Админ-доступ", reply_markup=main_menu)
-        return
-
     args = message.text.split()
     ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (message.from_user.id,))
-    exists = cursor.fetchone()
+    cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (message.from_user.id,))
+    row = cursor.fetchone()
 
-    if not exists:
+    if not row:
         cursor.execute(
             "INSERT INTO users (user_id, username, referrer, is_verified) VALUES (?, ?, ?, ?)",
             (
@@ -58,6 +46,22 @@ async def start(message: Message):
 
         conn.commit()
 
+    elif ref_id and row[0] == 0:
+        cursor.execute(
+            "UPDATE users SET is_verified = 1 WHERE user_id = ?",
+            (message.from_user.id,)
+        )
+        conn.commit()
+
+    if message.from_user.id == ADMIN_ID:
+        cursor.execute(
+            "UPDATE users SET is_verified = 1 WHERE user_id = ?",
+            (message.from_user.id,)
+        )
+        conn.commit()
+        await message.answer("👑 Админ-доступ", reply_markup=main_menu)
+        return
+
     if has_access(message.from_user.id):
         await message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
@@ -75,7 +79,7 @@ async def fake_menu_actions(call: CallbackQuery):
         await call.answer(f"🎲 Выпало: {random.randint(1,6)}", show_alert=True)
 
 
-# ================= MENU =================
+# ================= BACK TO MENU =================
 @router.callback_query(F.data == "menu")
 async def back_to_menu(call: CallbackQuery):
     if not has_access(call.from_user.id):
@@ -114,8 +118,14 @@ async def videos(call: CallbackQuery):
 
     video_id, file_id = video
 
-    cursor.execute("UPDATE users SET balance = balance - 1 WHERE user_id = ?", (call.from_user.id,))
-    cursor.execute("INSERT INTO user_videos VALUES (?, ?)", (call.from_user.id, video_id))
+    cursor.execute(
+        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
+        (VIDEO_PRICE, call.from_user.id)
+    )
+    cursor.execute(
+        "INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)",
+        (call.from_user.id, video_id)
+    )
     conn.commit()
 
     await call.message.answer_video(
@@ -186,19 +196,12 @@ async def promo_button(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
-
     promo_wait.add(call.from_user.id)
     await call.message.answer("🎟 Введите промокод:")
 
 
-@router.message()
+@router.message(F.text & ~F.text.startswith("/"))
 async def promo_input(message: Message):
-    if not message.text:
-        return
-
-    if message.text.startswith("/"):
-        return
-
     if message.from_user.id not in promo_wait:
         return
 
@@ -212,33 +215,32 @@ async def promo_input(message: Message):
         await message.answer("❌ Неверный промокод")
         return
 
-    reward = promo[0]
-
     cursor.execute(
         "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-        (reward, message.from_user.id)
+        (promo[0], message.from_user.id)
     )
     cursor.execute("DELETE FROM promocodes WHERE code = ?", (code,))
     conn.commit()
 
-    await message.answer(f"🎉 Промокод активирован! +{reward} 🍬")
+    await message.answer(f"🎉 Промокод активирован! +{promo[0]} 🍬")
 
 
-# ================= ADMIN =================
+# ================= ADMIN: UPLOAD VIDEO =================
 @router.message(F.video)
 async def upload_video(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
     cursor.execute(
-        "INSERT INTO videos (file_id) VALUES (?)",
+        "INSERT OR IGNORE INTO videos (file_id) VALUES (?)",
         (message.video.file_id,)
     )
     conn.commit()
 
-    await message.answer("✅ Видео загружено и добавлено в очередь")
+    await message.answer("✅ Видео добавлено")
 
 
+# ================= ADMIN COMMANDS =================
 @router.message(Command("add_balance"))
 async def add_balance(message: Message):
     if message.from_user.id != ADMIN_ID:
