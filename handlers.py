@@ -42,7 +42,7 @@ async def start(message: Message):
         (user_id,)
     ).fetchone()
 
-    # админ всегда с доступом
+    # админ
     if user_id == ADMIN_ID:
         cursor.execute("""
             INSERT OR IGNORE INTO users (user_id, username, is_verified)
@@ -69,10 +69,9 @@ async def start(message: Message):
                 "UPDATE users SET balance = balance + ? WHERE user_id = ?",
                 (REF_BONUS, ref_id)
             )
-
         conn.commit()
 
-    # старый пользователь, но пришёл по рефке → открыть доступ НАВСЕГДА
+    # старый пользователь, пришёл по рефке
     elif ref_id:
         cursor.execute(
             "UPDATE users SET is_verified = 1 WHERE user_id = ?",
@@ -97,7 +96,7 @@ async def fake_menu_actions(call: CallbackQuery):
         await call.answer(f"🎲 Выпало: {random.randint(1,6)}", show_alert=True)
 
 
-# ================= BACK TO MENU =================
+# ================= BACK =================
 @router.callback_query(F.data == "menu")
 async def back_to_menu(call: CallbackQuery):
     if not has_access(call.from_user.id):
@@ -228,7 +227,66 @@ async def promo_button(call: CallbackQuery):
     await call.message.answer("🎟 Введите промокод:")
 
 
-# ================= PROMO INPUT =================
+# ================= ADMIN =================
+@router.message(F.video)
+async def upload_video(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    cursor.execute(
+        "INSERT OR IGNORE INTO videos (file_id) VALUES (?)",
+        (message.video.file_id,)
+    )
+    conn.commit()
+
+    await message.answer("✅ Видео добавлено")
+
+
+@router.message(Command("add_balance"))
+async def add_balance(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    _, user_id, amount = message.text.split()
+    cursor.execute(
+        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+        (int(amount), int(user_id))
+    )
+    conn.commit()
+    await message.answer("✅ Баланс пополнен")
+
+
+@router.message(Command("remove_balance"))
+async def remove_balance(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    _, user_id, amount = message.text.split()
+    cursor.execute(
+        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
+        (int(amount), int(user_id))
+    )
+    conn.commit()
+    await message.answer("✅ Баланс уменьшен")
+
+
+@router.message(Command("add_promo"))
+async def add_promo(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    _, code, reward, count = message.text.split()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO promocodes (code, reward, activations_left)
+        VALUES (?, ?, ?)
+    """, (code.upper(), int(reward), int(count)))
+
+    conn.commit()
+    await message.answer("✅ Промокод добавлен")
+
+
+# ================= PROMO INPUT (СТРОГО В КОНЦЕ) =================
 @router.message(F.text)
 async def promo_input(message: Message):
     if message.text.startswith("/"):
@@ -291,64 +349,3 @@ async def promo_input(message: Message):
     conn.commit()
 
     await message.answer(f"🎉 Промокод активирован! +{reward} 🍬")
-
-
-# ================= ADMIN =================
-@router.message(F.video)
-async def upload_video(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    cursor.execute(
-        "INSERT OR IGNORE INTO videos (file_id) VALUES (?)",
-        (message.video.file_id,)
-    )
-    conn.commit()
-
-    await message.answer("✅ Видео добавлено")
-
-
-@router.message(Command("add_balance"))
-async def add_balance(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    _, user_id, amount = message.text.split()
-    cursor.execute(
-        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-        (int(amount), int(user_id))
-    )
-    conn.commit()
-
-    await message.answer("✅ Баланс пополнен")
-
-
-@router.message(Command("remove_balance"))
-async def remove_balance(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    _, user_id, amount = message.text.split()
-    cursor.execute(
-        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
-        (int(amount), int(user_id))
-    )
-    conn.commit()
-
-    await message.answer("✅ Баланс уменьшен")
-
-
-@router.message(Command("add_promo"))
-async def add_promo(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    _, code, reward, count = message.text.split()
-
-    cursor.execute("""
-        INSERT OR REPLACE INTO promocodes (code, reward, activations_left)
-        VALUES (?, ?, ?)
-    """, (code.upper(), int(reward), int(count)))
-
-    conn.commit()
-    await message.answer("✅ Промокод добавлен")
