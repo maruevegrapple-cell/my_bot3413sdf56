@@ -33,7 +33,16 @@ def init_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS promocodes (
         code TEXT PRIMARY KEY,
-        reward INTEGER
+        reward INTEGER,
+        activations_left INTEGER
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS promo_uses (
+        user_id INTEGER,
+        code TEXT,
+        UNIQUE(user_id, code)
     )
     """)
 
