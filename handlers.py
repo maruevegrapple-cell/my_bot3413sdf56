@@ -1,10 +1,20 @@
 import time
 import random
+
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import CommandStart, Command
 
-from config import *
+from config import (
+    ADMIN_ID,
+    BOT_USERNAME,
+    REF_BONUS,
+    BONUS_AMOUNT,
+    BONUS_COOLDOWN,
+    VIDEO_PRICE,
+    PAYMENT_TEXT
+)
+
 from db import cursor, conn
 from keyboards import fake_menu, main_menu, video_menu
 
@@ -24,29 +34,35 @@ def has_access(user_id: int) -> bool:
 async def start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username
-
     args = message.text.split()
     ref_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
-    user = cursor.execute(
-        "SELECT is_verified FROM users WHERE user_id = ?",
+    row = cursor.execute(
+        "SELECT user_id, is_verified FROM users WHERE user_id = ?",
         (user_id,)
     ).fetchone()
 
-    # --- новый пользователь ---
-    if not user:
+    # админ всегда с доступом
+    if user_id == ADMIN_ID:
+        cursor.execute("""
+            INSERT OR IGNORE INTO users (user_id, username, is_verified)
+            VALUES (?, ?, 1)
+        """, (user_id, username))
         cursor.execute(
-            """
+            "UPDATE users SET is_verified = 1 WHERE user_id = ?",
+            (user_id,)
+        )
+        conn.commit()
+        await message.answer("👑 Админ-доступ", reply_markup=main_menu)
+        return
+
+    # новый пользователь
+    if not row:
+        verified = 1 if ref_id else 0
+        cursor.execute("""
             INSERT INTO users (user_id, username, referrer, is_verified)
             VALUES (?, ?, ?, ?)
-            """,
-            (
-                user_id,
-                username,
-                ref_id,
-                1 if ref_id else 0
-            )
-        )
+        """, (user_id, username, ref_id, verified))
 
         if ref_id:
             cursor.execute(
@@ -56,8 +72,8 @@ async def start(message: Message):
 
         conn.commit()
 
-    # --- старый пользователь, но зашёл по рефке ---
-    elif ref_id and user[0] == 0:
+    # старый пользователь, но пришёл по рефке → открыть доступ НАВСЕГДА
+    elif ref_id:
         cursor.execute(
             "UPDATE users SET is_verified = 1 WHERE user_id = ?",
             (user_id,)
@@ -106,17 +122,14 @@ async def videos(call: CallbackQuery):
         await call.answer("❌ Недостаточно конфет", show_alert=True)
         return
 
-    video = cursor.execute(
-        """
+    video = cursor.execute("""
         SELECT id, file_id FROM videos
         WHERE id NOT IN (
             SELECT video_id FROM user_videos WHERE user_id = ?
         )
         ORDER BY id ASC
         LIMIT 1
-        """,
-        (call.from_user.id,)
-    ).fetchone()
+    """, (call.from_user.id,)).fetchone()
 
     if not video:
         await call.answer("❌ Видео закончились", show_alert=True)
@@ -129,7 +142,7 @@ async def videos(call: CallbackQuery):
         (call.from_user.id,)
     )
     cursor.execute(
-        "INSERT INTO user_videos VALUES (?, ?)",
+        "INSERT INTO user_videos (user_id, video_id) VALUES (?, ?)",
         (call.from_user.id, video_id)
     )
     conn.commit()
@@ -158,13 +171,14 @@ async def bonus(call: CallbackQuery):
         await call.answer("⏳ Бонус уже получен", show_alert=True)
         return
 
-    cursor.execute(
-        "UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?",
-        (BONUS_AMOUNT, now, call.from_user.id)
-    )
+    cursor.execute("""
+        UPDATE users
+        SET balance = balance + ?, last_bonus = ?
+        WHERE user_id = ?
+    """, (BONUS_AMOUNT, now, call.from_user.id))
     conn.commit()
 
-    await call.answer("🎁 +3 конфеты", show_alert=True)
+    await call.answer(f"🎁 +{BONUS_AMOUNT} конфеты", show_alert=True)
 
 
 # ================= PROFILE =================
@@ -198,7 +212,7 @@ async def shop(call: CallbackQuery):
     await call.message.answer(PAYMENT_TEXT)
 
 
-# ================= PROMO =================
+# ================= PROMO BUTTON =================
 @router.callback_query(F.data == "promo")
 async def promo_button(call: CallbackQuery):
     if not has_access(call.from_user.id):
@@ -214,8 +228,12 @@ async def promo_button(call: CallbackQuery):
     await call.message.answer("🎟 Введите промокод:")
 
 
-@router.message(F.text & ~Command())
+# ================= PROMO INPUT =================
+@router.message(F.text)
 async def promo_input(message: Message):
+    if message.text.startswith("/"):
+        return
+
     user_id = message.from_user.id
 
     row = cursor.execute(
@@ -326,10 +344,11 @@ async def add_promo(message: Message):
         return
 
     _, code, reward, count = message.text.split()
-    cursor.execute(
-        "INSERT OR REPLACE INTO promocodes (code, reward, activations_left) VALUES (?, ?, ?)",
-        (code.upper(), int(reward), int(count))
-    )
-    conn.commit()
 
+    cursor.execute("""
+        INSERT OR REPLACE INTO promocodes (code, reward, activations_left)
+        VALUES (?, ?, ?)
+    """, (code.upper(), int(reward), int(count)))
+
+    conn.commit()
     await message.answer("✅ Промокод добавлен")
