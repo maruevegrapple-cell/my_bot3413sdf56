@@ -1,16 +1,13 @@
 import os
 import sqlite3
 
-DB_PATH = "/data/database.db"
-os.makedirs("/data", exist_ok=True)
+DB_PATH = "database.db"
 
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 conn.row_factory = sqlite3.Row
 cursor = conn.cursor()
 
-
 def init_db():
-    # USERS
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -22,7 +19,6 @@ def init_db():
     )
     """)
 
-    # VIDEOS
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS videos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,7 +26,6 @@ def init_db():
     )
     """)
 
-    # USER → VIDEO
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_videos (
         user_id INTEGER,
@@ -39,7 +34,6 @@ def init_db():
     )
     """)
 
-    # PROMOCODES
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS promocodes (
         code TEXT PRIMARY KEY,
@@ -48,12 +42,19 @@ def init_db():
     )
     """)
 
-    # USED PROMOCODES (1 КОД = 1 РАЗ НА ЮЗЕРА)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS used_promocodes (
         user_id INTEGER,
         code TEXT,
         UNIQUE(user_id, code)
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS payments (
+        invoice_id TEXT PRIMARY KEY,
+        user_id INTEGER,
+        amount INTEGER
     )
     """)
 

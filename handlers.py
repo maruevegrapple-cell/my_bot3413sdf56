@@ -1,12 +1,26 @@
 import time
 import random
+
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command
 
-from config import *
+from config import (
+    ADMIN_ID,
+    BOT_USERNAME,
+    VIDEO_PRICE,
+    BONUS_AMOUNT,
+    BONUS_COOLDOWN,
+    REF_BONUS,
+)
 from db import cursor, conn
-from keyboards import fake_menu, main_menu, video_menu
+from keyboards import (
+    fake_menu,
+    main_menu,
+    video_menu,
+    shop_menu,
+)
+from payments import create_invoice, check_invoice
 
 router = Router()
 
@@ -137,8 +151,8 @@ async def videos(call: CallbackQuery):
         return
 
     cursor.execute(
-        "UPDATE users SET balance = balance - 1 WHERE user_id = ?",
-        (user_id,)
+        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
+        (VIDEO_PRICE, user_id)
     )
     cursor.execute(
         "INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)",
@@ -180,7 +194,7 @@ async def bonus(call: CallbackQuery):
     """, (BONUS_AMOUNT, now, user_id))
     conn.commit()
 
-    await call.answer("🎁 +3 конфеты", show_alert=True)
+    await call.answer(f"🎁 +{BONUS_AMOUNT} 🍬", show_alert=True)
 
 
 # ================= PROFILE =================
@@ -204,7 +218,7 @@ async def profile(call: CallbackQuery):
         f"👤 Профиль\n\n"
         f"🍬 Баланс: {balance}\n\n"
         f"🔗 Реферальная ссылка:\n{ref_link}\n\n"
-        f"🎁 За друга: +3 🍬"
+        f"🎁 За друга: +{REF_BONUS} 🍬"
     )
 
 
@@ -214,7 +228,84 @@ async def shop(call: CallbackQuery):
     if not has_access(call.from_user.id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
-    await call.message.answer(PAYMENT_TEXT)
+
+    await call.message.answer(
+        "🍬 <b>Магазин конфет</b>\n\n"
+        "⭐ Для оплаты звездами, свяжитесь с @balikcyda\n"
+        "📊 Курс звезд Telegram:\n"
+        "100 ⭐ = 299 🍬",
+        parse_mode="HTML",
+        reply_markup=shop_menu
+    )
+
+
+# ================= PAY =================
+@router.callback_query(F.data.startswith("pay_"))
+async def pay(call: CallbackQuery):
+    prices = {
+        "pay_50": (50, 0.2),
+        "pay_100": (100, 0.3),
+        "pay_140": (140, 0.4),
+        "pay_170": (170, 0.5),
+        "pay_200": (200, 0.6),
+        "pay_333": (333, 1.0),
+    }
+
+    amount, usdt = prices[call.data]
+    invoice = create_invoice(usdt)
+
+    cursor.execute("""
+        INSERT INTO payments (invoice_id, user_id, amount)
+        VALUES (?, ?, ?)
+    """, (invoice["invoice_id"], call.from_user.id, amount))
+    conn.commit()
+
+    await call.message.answer(
+        f"💳 <b>Оплата</b>\n\n"
+        f"🍬 Конфеты: <b>{amount}</b>\n"
+        f"💵 Сумма: <b>{usdt} USDT</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Оплатить", url=invoice["pay_url"])],
+            [InlineKeyboardButton(
+                text="🔄 Проверить оплату",
+                callback_data=f"check_{invoice['invoice_id']}"
+            )]
+        ])
+    )
+
+
+# ================= CHECK =================
+@router.callback_query(F.data.startswith("check_"))
+async def check(call: CallbackQuery):
+    invoice_id = call.data.split("_", 1)[1]
+
+    cursor.execute(
+        "SELECT user_id, amount FROM payments WHERE invoice_id = ?",
+        (invoice_id,)
+    )
+    row = cursor.fetchone()
+
+    if not row:
+        await call.answer("❌ Платёж не найден", show_alert=True)
+        return
+
+    if check_invoice(invoice_id):
+        cursor.execute(
+            "UPDATE users SET balance = balance + ? WHERE user_id = ?",
+            (row["amount"], row["user_id"])
+        )
+        cursor.execute(
+            "DELETE FROM payments WHERE invoice_id = ?",
+            (invoice_id,)
+        )
+        conn.commit()
+
+        await call.message.answer(
+            f"✅ Оплата прошла!\n🍬 +{row['amount']}"
+        )
+    else:
+        await call.answer("⏳ Платёж не найден", show_alert=True)
 
 
 # ================= PROMO =================
@@ -314,31 +405,3 @@ async def add_promo(message: Message):
     conn.commit()
 
     await message.answer("✅ Промокод добавлен")
-
-
-@router.message(Command("add_balance"))
-async def add_balance(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    _, user_id, amount = message.text.split()
-    cursor.execute(
-        "UPDATE users SET balance = balance + ? WHERE user_id = ?",
-        (int(amount), int(user_id))
-    )
-    conn.commit()
-    await message.answer("✅ Баланс пополнен")
-
-
-@router.message(Command("remove_balance"))
-async def remove_balance(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    _, user_id, amount = message.text.split()
-    cursor.execute(
-        "UPDATE users SET balance = balance - ? WHERE user_id = ?",
-        (int(amount), int(user_id))
-    )
-    conn.commit()
-    await message.answer("✅ Баланс уменьшен")
