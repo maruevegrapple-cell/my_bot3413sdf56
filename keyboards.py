@@ -39,3 +39,4 @@ shop_menu = InlineKeyboardMarkup(inline_keyboard=[
 video_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
     [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
+])
