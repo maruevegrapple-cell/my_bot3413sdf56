@@ -1,6 +1,6 @@
 # ================= BOT =================
-BOT_TOKEN = "8405907915:AAHG8r-Dg0hrucmMe0G3rdQnpUQIXDJJFSc"
-BOT_USERNAME = "CandyBlossom34_bot"   # без @
+BOT_TOKEN = "8570974043:AAHFwYZzzTBbSzQlH1xk_x-zBOm25I_K37Y"
+BOT_USERNAME = "CandyYTDownloader_bot"   # без @
 
 
 # ================= ADMIN =================
