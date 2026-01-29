@@ -1,10 +1,10 @@
 # ================= BOT =================
-BOT_TOKEN = "8321586206:AAFK6GYxFJDJiKaEpanDDa8JnkfYy5ysJsU"
-BOT_USERNAME = "asdasdasd123sadsad_bot"   # без @
+BOT_TOKEN = "BOT_TOKEN"
+BOT_USERNAME = "CandyStorm_bot"   # без @
 
 
 # ================= ADMIN =================
-ADMIN_ID = 5925859280   # твой Telegram ID
+ADMIN_ID = 6067817907   # твой Telegram ID
 
 
 # ================= CRYPTOBOT =================
@@ -12,7 +12,7 @@ ADMIN_ID = 5925859280   # твой Telegram ID
 CRYPTOBOT_API = "https://pay.crypt.bot/api"
 
 # ❗ Токен берётся в @CryptoBot → /mytokens
-CRYPTOBOT_TOKEN = "523703:AAomiBpggB3RWE4pNOR75mTP4UDr88W9fQY"
+CRYPTOBOT_TOKEN = "CRYPTOBOT_TOKEN"
 
 
 # ================= ECONOMY =================
