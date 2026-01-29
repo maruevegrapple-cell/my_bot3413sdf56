@@ -1,6 +1,12 @@
+import os
+
 # ================= BOT =================
-BOT_TOKEN = "BOT_TOKEN"
+# токен берётся из Railway / env
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_USERNAME = "CandyStorm_bot"   # без @
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN not found in environment variables")
 
 
 # ================= ADMIN =================
@@ -11,8 +17,11 @@ ADMIN_ID = 6067817907   # твой Telegram ID
 # ❗ API URL НЕ МЕНЯЕТСЯ
 CRYPTOBOT_API = "https://pay.crypt.bot/api"
 
-# ❗ Токен берётся в @CryptoBot → /mytokens
-CRYPTOBOT_TOKEN = "CRYPTOBOT_TOKEN"
+# токен из env
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
+
+if not CRYPTOBOT_TOKEN:
+    raise RuntimeError("CRYPTOBOT_TOKEN not found in environment variables")
 
 
 # ================= ECONOMY =================
