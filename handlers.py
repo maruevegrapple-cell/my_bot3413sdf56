@@ -25,10 +25,10 @@ promo_wait = set()
 custom_pay_wait = set()
 captcha_wait = {}
 
-# ================= BLOCK FORWARDS =================
+# ================= BLOCK FORWARD =================
 @router.message(F.forward_from | F.forward_from_chat)
 async def block_forward(message: Message):
-    await message.answer("❌ Пересылка сообщений запрещена", protect_content=True)
+    await message.delete()
 
 # ================= CAPTCHA =================
 def gen_captcha():
@@ -67,28 +67,84 @@ async def start(message: Message):
     if not user:
         cursor.execute("""
             INSERT INTO users (user_id, username, referrer, is_verified)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, username, ref_id, 0))
+            VALUES (?, ?, ?, 0)
+        """, (user_id, username, ref_id))
         conn.commit()
 
     a, b, res = gen_captcha()
     captcha_wait[user_id] = res
     await message.answer(f"🤖 Реши пример: {a} + {b} = ?", protect_content=True)
 
-# ================= CAPTCHA CHECK =================
+# ================= TEXT ROUTER (ЕДИНЫЙ) =================
 @router.message(F.text)
-async def captcha_check(message: Message):
+async def text_router(message: Message):
     user_id = message.from_user.id
-    if user_id not in captcha_wait:
+    text = message.text.strip()
+
+    # CAPTCHA
+    if user_id in captcha_wait:
+        if text == str(captcha_wait[user_id]):
+            del captcha_wait[user_id]
+            cursor.execute("UPDATE users SET is_verified = 1 WHERE user_id = ?", (user_id,))
+            conn.commit()
+            await message.answer("✅ Доступ открыт", reply_markup=main_menu, protect_content=True)
+        else:
+            await message.answer("❌ Неверно, попробуй ещё", protect_content=True)
         return
 
-    if message.text.strip() == str(captcha_wait[user_id]):
-        del captcha_wait[user_id]
-        cursor.execute("UPDATE users SET is_verified = 1 WHERE user_id = ?", (user_id,))
+    # CUSTOM PAY
+    if user_id in custom_pay_wait:
+        custom_pay_wait.remove(user_id)
+
+        if not text.isdigit():
+            await message.answer("❌ Введите число", protect_content=True)
+            return
+
+        amount = int(text)
+        usdt = round(amount / 333, 2)
+        invoice = create_invoice(usdt)
+
+        cursor.execute(
+            "INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)",
+            (invoice["invoice_id"], user_id, amount)
+        )
         conn.commit()
-        await message.answer("✅ Доступ открыт", reply_markup=main_menu, protect_content=True)
-    else:
-        await message.answer("❌ Неверно, попробуй ещё", protect_content=True)
+
+        await message.answer(
+            f"💳 <b>Оплата</b>\n\n🍬 {amount}\n💵 {usdt} USDT",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💰 Оплатить", url=invoice["pay_url"])],
+                [InlineKeyboardButton(text="🔄 Проверить", callback_data=f"check_{invoice['invoice_id']}")]
+            ]),
+            protect_content=True
+        )
+        return
+
+    # PROMO
+    if user_id in promo_wait:
+        promo_wait.remove(user_id)
+        code = text
+
+        cursor.execute("SELECT * FROM promocodes WHERE code = ?", (code,))
+        promo = cursor.fetchone()
+
+        if not promo or promo["activations_left"] <= 0:
+            await message.answer("❌ Неверный или закончился", protect_content=True)
+            return
+
+        cursor.execute("SELECT 1 FROM used_promocodes WHERE user_id = ? AND code = ?", (user_id, code))
+        if cursor.fetchone():
+            await message.answer("❌ Вы уже использовали этот код", protect_content=True)
+            return
+
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (promo["reward"], user_id))
+        cursor.execute("UPDATE promocodes SET activations_left = activations_left - 1 WHERE code = ?", (code,))
+        cursor.execute("INSERT INTO used_promocodes (user_id, code) VALUES (?, ?)", (user_id, code))
+        conn.commit()
+
+        await message.answer(f"🎉 +{promo['reward']} 🍬", protect_content=True)
+        return
 
 # ================= FAKE MENU =================
 @router.callback_query(F.data.startswith("fake_"))
@@ -170,21 +226,26 @@ async def bonus(call: CallbackQuery):
         await call.answer("⏳ Бонус уже получен", show_alert=True)
         return
 
-    cursor.execute("UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?",
-                   (BONUS_AMOUNT, now, user_id))
+    cursor.execute(
+        "UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?",
+        (BONUS_AMOUNT, now, user_id)
+    )
     conn.commit()
+
     await call.answer(f"🎁 +{BONUS_AMOUNT} 🍬", show_alert=True)
 
 # ================= PROFILE =================
 @router.callback_query(F.data == "profile")
 async def profile(call: CallbackQuery):
     user_id = call.from_user.id
+
     if not has_access(user_id):
         await call.answer("❌ Нет доступа", show_alert=True)
         return
 
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     balance = cursor.fetchone()["balance"]
+
     ref_link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
 
     await call.message.answer(
@@ -247,49 +308,6 @@ async def pay(call: CallbackQuery):
         protect_content=True
     )
 
-# ================= CUSTOM PAY =================
-@router.callback_query(F.data == "pay_custom")
-async def pay_custom(call: CallbackQuery):
-    if not has_access(call.from_user.id):
-        await call.answer("❌ Нет доступа", show_alert=True)
-        return
-
-    custom_pay_wait.add(call.from_user.id)
-    await call.message.answer("✏️ Введите количество 🍬:", protect_content=True)
-
-@router.message(F.text)
-async def custom_pay_input(message: Message):
-    user_id = message.from_user.id
-    if user_id not in custom_pay_wait:
-        return
-
-    custom_pay_wait.remove(user_id)
-
-    if not message.text.isdigit():
-        await message.answer("❌ Введите число", protect_content=True)
-        return
-
-    amount = int(message.text)
-    usdt = round(amount / 333, 2)
-
-    invoice = create_invoice(usdt)
-
-    cursor.execute(
-        "INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)",
-        (invoice["invoice_id"], user_id, amount)
-    )
-    conn.commit()
-
-    await message.answer(
-        f"💳 <b>Оплата</b>\n\n🍬 {amount}\n💵 {usdt} USDT",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Оплатить", url=invoice["pay_url"])],
-            [InlineKeyboardButton(text="🔄 Проверить", callback_data=f"check_{invoice['invoice_id']}")]
-        ]),
-        protect_content=True
-    )
-
 # ================= CHECK =================
 @router.callback_query(F.data.startswith("check_"))
 async def check(call: CallbackQuery):
@@ -310,45 +328,7 @@ async def check(call: CallbackQuery):
     else:
         await call.answer("⏳ Платёж не найден", show_alert=True)
 
-# ================= PROMO =================
-@router.callback_query(F.data == "promo")
-async def promo_button(call: CallbackQuery):
-    if not has_access(call.from_user.id):
-        await call.answer("❌ Нет доступа", show_alert=True)
-        return
-
-    promo_wait.add(call.from_user.id)
-    await call.message.answer("🎟 Введите промокод:", protect_content=True)
-
-@router.message(F.text)
-async def promo_input(message: Message):
-    user_id = message.from_user.id
-    if user_id not in promo_wait:
-        return
-
-    promo_wait.remove(user_id)
-    code = message.text.strip()
-
-    cursor.execute("SELECT * FROM promocodes WHERE code = ?", (code,))
-    promo = cursor.fetchone()
-
-    if not promo or promo["activations_left"] <= 0:
-        await message.answer("❌ Неверный или закончился", protect_content=True)
-        return
-
-    cursor.execute("SELECT 1 FROM used_promocodes WHERE user_id = ? AND code = ?", (user_id, code))
-    if cursor.fetchone():
-        await message.answer("❌ Вы уже использовали этот код", protect_content=True)
-        return
-
-    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (promo["reward"], user_id))
-    cursor.execute("UPDATE promocodes SET activations_left = activations_left - 1 WHERE code = ?", (code,))
-    cursor.execute("INSERT INTO used_promocodes (user_id, code) VALUES (?, ?)", (user_id, code))
-    conn.commit()
-
-    await message.answer(f"🎉 +{promo['reward']} 🍬", protect_content=True)
-
-# ================= ADMIN UPLOAD =================
+# ================= ADMIN =================
 @router.message(F.video)
 async def upload_video(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -371,15 +351,14 @@ async def add_promo(message: Message):
         await message.answer("❌ Формат: /add_promo CODE REWARD COUNT", protect_content=True)
         return
 
-    cursor.execute("""
-        INSERT OR REPLACE INTO promocodes (code, reward, activations_left)
-        VALUES (?, ?, ?)
-    """, (code, reward, count))
+    cursor.execute(
+        "INSERT OR REPLACE INTO promocodes (code, reward, activations_left) VALUES (?, ?, ?)",
+        (code, reward, count)
+    )
     conn.commit()
 
     await message.answer("✅ Промокод добавлен", protect_content=True)
 
-# ================= ADMIN BROADCAST =================
 @router.message(Command("broadcast"))
 async def broadcast(message: Message):
     if message.from_user.id != ADMIN_ID:
