@@ -7,10 +7,17 @@ from db import init_db
 
 async def main():
     init_db()
-    bot = Bot(token=BOT_TOKEN)
+
+    # ✅ ВКЛЮЧАЕМ PROTECT_CONTENT ГЛОБАЛЬНО
+    bot = Bot(
+        token=BOT_TOKEN,
+        protect_content=True
+    )
+
     dp = Dispatcher()
     dp.include_router(router)
 
+    # ❌ Блок пересыла (дополнительно, если вдруг что-то проскочит)
     @dp.message(F.forward_from | F.forward_from_chat)
     async def block_forward(message: Message):
         await message.delete()
