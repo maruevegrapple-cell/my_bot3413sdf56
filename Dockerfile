@@ -2,13 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Копируем только requirements.txt сначала
-COPY requirements.txt .
+# Устанавливаем пакеты напрямую (без requirements.txt)
+RUN pip install --no-cache-dir aiogram==3.4.1 pillow==10.2.0 requests==2.31.0 python-dotenv==1.0.0
 
-# Устанавливаем зависимости с дополнительными флагами
-RUN pip install --no-cache-dir --default-timeout=100 -r requirements.txt
-
-# Копируем остальной код
 COPY . .
 
 CMD ["python", "bot.py"]
