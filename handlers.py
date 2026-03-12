@@ -595,16 +595,23 @@ async def start(message: Message, state: FSMContext):
             referrer_id = referrer["user_id"]
             if referrer_id != user_id:
                 has_ref_in_link = True
+                logger.info(f"🔗 Реферальная ссылка обнаружена! Код: {ref_code}, Реферер: {referrer_id}")
     
-    # ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД - ПРОПУСКАЕМ ФЕЙК МЕНЮ!
+    # ========== ВАЖНО: ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД ==========
     if has_ref_in_link:
-        # Если пользователь уже есть и у него нет реферера - обновляем
+        logger.info(f"✅ Пользователь {user_id} перешел по реферальной ссылке")
+        
+        # Если пользователь уже существует и у него нет реферера - обновляем
         if user and not user["referrer"]:
+            logger.info(f"🔄 Обновляем реферера для пользователя {user_id} -> {referrer_id}")
             cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
+            
+            # Начисляем бонус рефереру
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
                           (REF_BONUS, referrer_id))
             conn.commit()
             
+            # Уведомляем реферера
             try:
                 await message.bot.send_message(
                     referrer_id,
@@ -616,8 +623,9 @@ async def start(message: Message, state: FSMContext):
             except:
                 pass
         
-        # Если не верифицирован - капча
+        # Если не верифицирован - отправляем на капчу
         if not is_verified(user_id):
+            logger.info(f"🔐 Пользователь {user_id} не верифицирован, отправляем капчу")
             if user_id in captcha_attempts:
                 del captcha_attempts[user_id]
             
@@ -637,6 +645,7 @@ async def start(message: Message, state: FSMContext):
         
         # Если верифицирован - проверяем подписку
         if is_verified(user_id):
+            logger.info(f"✅ Пользователь {user_id} верифицирован, проверяем подписку")
             is_subscribed = await check_subscription(message.bot, user_id)
             if not is_subscribed:
                 await state.set_state(SubscribeStates.waiting_for_subscribe)
@@ -648,8 +657,11 @@ async def start(message: Message, state: FSMContext):
                 )
                 return
             
+            logger.info(f"🎉 Пользователь {user_id} получает доступ к основному меню!")
             await message.answer("🎥 Видео платформа", reply_markup=main_menu)
             return
+    
+    # ========== ЕСЛИ В ССЫЛКЕ НЕТ РЕФ КОДА ==========
     
     # Создание нового пользователя, если его нет
     if not user:
