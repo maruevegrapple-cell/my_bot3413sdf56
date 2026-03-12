@@ -1,28 +1,50 @@
 import asyncio
+import logging
+import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+
 from config import BOT_TOKEN
 from handlers import router
 from db import init_db
 
-async def main():
-    init_db()
+logging.basicConfig(level=logging.INFO)
 
-    # ✅ ВКЛЮЧАЕМ PROTECT_CONTENT ГЛОБАЛЬНО
+async def main():
+    # Инициализируем БД
+    init_db()
+    
+    # Создаем директорию для временных видео
+    TEMP_DIR = "temp_videos"
+    os.makedirs(TEMP_DIR, exist_ok=True)
+
     bot = Bot(
         token=BOT_TOKEN,
-        protect_content=True
+        default=DefaultBotProperties(
+            parse_mode=ParseMode.HTML,
+            protect_content=True
+        )
     )
 
-    dp = Dispatcher()
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
+    
     dp.include_router(router)
 
-    # ❌ Блок пересыла (дополнительно, если вдруг что-то проскочит)
     @dp.message(F.forward_from | F.forward_from_chat)
     async def block_forward(message: Message):
         await message.delete()
 
+    print("✅ Бот запущен и готов к работе!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("👋 Бот остановлен пользователем")
+    except Exception as e:
+        print(f"❌ Критическая ошибка: {e}")

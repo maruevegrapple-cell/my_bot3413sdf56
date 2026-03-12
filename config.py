@@ -1,43 +1,41 @@
 import os
+from dotenv import load_dotenv
+from db import get_main_admin_id
+
+load_dotenv(override=True)
 
 # ================= BOT =================
-# токен берётся из Railway / env
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-BOT_USERNAME = "CandyStorm_bot"   # без @
+BOT_TOKEN = os.getenv("BOT_TOKEN", "864017469:AAGv2wgHYdV9hwXA2fJsJZwOnpoTvDrAcMg")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "AnonkaBot34bot")
 
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN not found in environment variables")
-
+    raise RuntimeError("BOT_TOKEN not found")
 
 # ================= ADMIN =================
-ADMIN_ID = 6067817907   # твой Telegram ID
-
+# Главный админ (загружается из БД)
+MAIN_ADMIN_ID = get_main_admin_id()
 
 # ================= CRYPTOBOT =================
-# ❗ API URL НЕ МЕНЯЕТСЯ
-CRYPTOBOT_API = "https://pay.crypt.bot/api"
-
-# токен из env
-CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
-
-if not CRYPTOBOT_TOKEN:
-    raise RuntimeError("CRYPTOBOT_TOKEN not found in environment variables")
-
+CRYPTOBOT_API = os.getenv("CRYPTOBOT_API", "https://pay.crypt.bot/api")
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN", "8640174691:AAGPmiXVHxJnat9gHGsUBaEab0hPsyE13Xw")
 
 # ================= ECONOMY =================
-VIDEO_PRICE = 1        # цена видео в 🍬
-BONUS_AMOUNT = 3       # бонус
-BONUS_COOLDOWN = 3600  # сек
-REF_BONUS = 3          # реф бонус
-
+VIDEO_PRICE = int(os.getenv("VIDEO_PRICE", "1"))
+BONUS_AMOUNT = int(os.getenv("BONUS_AMOUNT", "3"))
+BONUS_COOLDOWN = int(os.getenv("BONUS_COOLDOWN", "3600"))
+REF_BONUS = int(os.getenv("REF_BONUS", "6"))
+REF_PERCENT = int(os.getenv("REF_PERCENT", "10"))
+SUBSCRIBE_BONUS = int(os.getenv("SUBSCRIBE_BONUS", "6"))
 
 # ================= CHANNEL =================
-RESERVE_CHANNEL = "https://t.me/+SI1UQQWZix1hZmEx"
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://t.me/+Dn7pNdHVYPM4ODgx")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1003707313473"))
+ANON_CHAT_LINK = os.getenv("ANON_CHAT_LINK", "https://t.me/anonaskbot?start=f21rnoq")
 
+# ================= SPAM PROTECTION =================
+SPAM_COOLDOWN = int(os.getenv("SPAM_COOLDOWN", "3"))
 
-# ================= PAY PACKS =================
-# 🍬 начисления (функционал НЕ менялся)
-PAY_TEST = 1     # 0.1 USDT → 1 🍬 (тест для админа)
-PAY_10 = 10      # 1 USDT
-PAY_50 = 50      # 5 USDT
-PAY_100 = 100    # 10 USDT
+print("✅ Конфигурация загружена!")
+print(f"🤖 BOT_TOKEN: {BOT_TOKEN[:10]}...")
+print(f"👑 Главный админ: {MAIN_ADMIN_ID}")
+print(f"📢 Канал: {CHANNEL_LINK}")
