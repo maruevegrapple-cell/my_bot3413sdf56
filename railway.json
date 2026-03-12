@@ -1,5 +1,1 @@
-echo { > railway.json
-echo   "build": { >> railway.json
-echo     "builder": "DOCKERFILE" >> railway.json
-echo   } >> railway.json
-echo } >> railway.json
+{"build":{"builder":"DOCKERFILE"}} 
