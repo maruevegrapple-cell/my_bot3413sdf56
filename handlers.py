@@ -544,6 +544,7 @@ async def start(message: Message, state: FSMContext):
     
     logger.info(f"🟢 START command from user {user_id} (@{username})")
     
+    # Проверка на бан
     banned, ban_until = is_banned(user_id)
     if banned:
         remaining = ban_until - datetime.now()
@@ -556,6 +557,7 @@ async def start(message: Message, state: FSMContext):
         )
         return
     
+    # Проверка на админа
     has_access, _, is_main, can_manage = check_admin_access(user_id)
     
     if has_access:
@@ -576,9 +578,11 @@ async def start(message: Message, state: FSMContext):
         await message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
         return
     
+    # Получаем информацию о пользователе
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = cursor.fetchone()
     
+    # Проверка на реферальный код
     args = message.text.split()
     referrer_id = None
     has_ref_in_link = False
@@ -592,29 +596,62 @@ async def start(message: Message, state: FSMContext):
             if referrer_id != user_id:
                 has_ref_in_link = True
     
-    was_in_fake_before = user and not user["referrer"] and not referrer_id
-    
-    if user and not user["referrer"] and referrer_id and referrer_id != user_id:
-        cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
+    # ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД - ПРОПУСКАЕМ ФЕЙК МЕНЮ!
+    if has_ref_in_link:
+        # Если пользователь уже есть и у него нет реферера - обновляем
+        if user and not user["referrer"]:
+            cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
+                          (REF_BONUS, referrer_id))
+            conn.commit()
+            
+            try:
+                await message.bot.send_message(
+                    referrer_id,
+                    f"🎁 <b>Новый реферал!</b>\n\n"
+                    f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
+                    f"➕ Вам начислено +{REF_BONUS} 🍬",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
         
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
-                      (REF_BONUS, referrer_id))
-        conn.commit()
-        
-        try:
-            await message.bot.send_message(
-                referrer_id,
-                f"🎁 <b>Новый реферал!</b>\n\n"
-                f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
-                f"➕ Вам начислено +{REF_BONUS} 🍬",
-                parse_mode="HTML"
+        # Если не верифицирован - капча
+        if not is_verified(user_id):
+            if user_id in captcha_attempts:
+                del captcha_attempts[user_id]
+            
+            image_bytes, captcha_code = generate_captcha_image()
+            captcha_data[user_id] = captcha_code
+            await state.update_data(captcha_code=captcha_code)
+            await state.set_state(CaptchaStates.waiting_for_captcha)
+            
+            await message.answer_photo(
+                photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
+                caption="🔐 <b>ПОДТВЕРЖДЕНИЕ</b>\n\n"
+                        "Введите код с картинки:\n"
+                        "⚠️ Только заглавные буквы и цифры\n"
+                        "📊 Осталось попыток: 3/3"
             )
-        except:
-            pass
+            return
         
-        if was_in_fake_before:
-            await state.clear()
+        # Если верифицирован - проверяем подписку
+        if is_verified(user_id):
+            is_subscribed = await check_subscription(message.bot, user_id)
+            if not is_subscribed:
+                await state.set_state(SubscribeStates.waiting_for_subscribe)
+                await message.answer(
+                    f"<b>{first_name}🥰!</b>\n\n"
+                    f"Для доступа к боту, вам нужно подписаться на наш канал!\n"
+                    f"— ведь за подписку мы дарим каждый день по {SUBSCRIBE_BONUS} 🍬!",
+                    reply_markup=subscribe_menu
+                )
+                return
+            
+            await message.answer("🎥 Видео платформа", reply_markup=main_menu)
+            return
     
+    # Создание нового пользователя, если его нет
     if not user:
         new_ref_code = generate_ref_code()
         
@@ -646,40 +683,7 @@ async def start(message: Message, state: FSMContext):
                           (new_ref_code, user_id))
             conn.commit()
     
-    if has_ref_in_link:
-        if not is_verified(user_id):
-            if user_id in captcha_attempts:
-                del captcha_attempts[user_id]
-            
-            image_bytes, captcha_code = generate_captcha_image()
-            captcha_data[user_id] = captcha_code
-            await state.update_data(captcha_code=captcha_code)
-            await state.set_state(CaptchaStates.waiting_for_captcha)
-            
-            await message.answer_photo(
-                photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
-                caption="🔐 <b>ПОДТВЕРЖДЕНИЕ</b>\n\n"
-                        "Введите код с картинки:\n"
-                        "⚠️ Только заглавные буквы и цифры\n"
-                        "📊 Осталось попыток: 3/3"
-            )
-            return
-        
-        if is_verified(user_id):
-            is_subscribed = await check_subscription(message.bot, user_id)
-            if not is_subscribed:
-                await state.set_state(SubscribeStates.waiting_for_subscribe)
-                await message.answer(
-                    f"<b>{first_name}🥰!</b>\n\n"
-                    f"Для доступа к боту, вам нужно подписаться на наш канал!\n"
-                    f"— ведь за подписку мы дарим каждый день по {SUBSCRIBE_BONUS} 🍬!",
-                    reply_markup=subscribe_menu
-                )
-                return
-            
-            await message.answer("🎥 Видео платформа", reply_markup=main_menu)
-            return
-    
+    # Если у пользователя нет реферера (и не получил сейчас) - показываем фейк меню
     if not has_referrer(user_id) and not referrer_id:
         await message.answer(
             f"Привет, @{username}. Добро пожаловать в главное меню!",
@@ -687,6 +691,7 @@ async def start(message: Message, state: FSMContext):
         )
         return
     
+    # Если есть реферальная ссылка (была раньше или сейчас), но не верифицирован - капча
     if not is_verified(user_id):
         if user_id in captcha_attempts:
             del captcha_attempts[user_id]
@@ -705,6 +710,7 @@ async def start(message: Message, state: FSMContext):
         )
         return
     
+    # Если верифицирован - проверяем подписку
     if is_verified(user_id):
         is_subscribed = await check_subscription(message.bot, user_id)
         if not is_subscribed:
@@ -2285,6 +2291,3 @@ async def check_balance_command(message: Message):
         return
     
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
-
-# ================= ВАЖНО: УДАЛЯЕМ MIDDLEWARE! =================
-# Весь middleware удален, проверка подписки делается через check_access
