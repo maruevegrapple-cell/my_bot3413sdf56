@@ -4,9 +4,12 @@ from db import get_main_admin_id
 
 load_dotenv(override=True)
 
+# ПРИНУДИТЕЛЬНО берем токен из переменных окружения
+_BOT_TOKEN_FROM_ENV = os.getenv("BOT_TOKEN")
+print(f"!!! DEBUG - raw BOT_TOKEN from env: {_BOT_TOKEN_FROM_ENV}")
+
 # ================= BOT =================
-# Берем токен ТОЛЬКО из переменных окружения!
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = _BOT_TOKEN_FROM_ENV
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AnonkaBot34bot")
 
 if not BOT_TOKEN:
