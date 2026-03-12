@@ -5,19 +5,19 @@ from db import get_main_admin_id
 load_dotenv(override=True)
 
 # ================= BOT =================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8640174691:AAGPmiXVHxJnat9gHGsUBaEab0hPsyE13Xw")
+# Токен берется ТОЛЬКО из переменных окружения!
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AnonkaBot34bot")
 
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN not found")
+    raise RuntimeError("BOT_TOKEN not found in environment variables")
 
 # ================= ADMIN =================
-# Главный админ (загружается из БД)
 MAIN_ADMIN_ID = get_main_admin_id()
 
 # ================= CRYPTOBOT =================
 CRYPTOBOT_API = os.getenv("CRYPTOBOT_API", "https://pay.crypt.bot/api")
-CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN", "8640174691:AAGPmiXVHxJnat9gHGsUBaEab0hPsyE13Xw")
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN", "543615:AAEUVnLPOYGnEc0gR93BpjsaDiql8TkSY6G")
 
 # ================= ECONOMY =================
 VIDEO_PRICE = int(os.getenv("VIDEO_PRICE", "1"))
