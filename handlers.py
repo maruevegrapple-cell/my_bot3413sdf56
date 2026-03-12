@@ -231,23 +231,26 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
 # ================= ГЕНЕРАЦИЯ КАПЧИ =================
 def generate_captcha_image() -> tuple:
     """Генерация изображения капчи с правильным размером"""
-    length = random.randint(4, 5)
+    length = random.randint(5, 6)  # Длина кода
     chars = string.ascii_uppercase + string.digits
     chars = chars.replace('O', '').replace('0', '').replace('I', '').replace('1', '')
     chars = chars.replace('S', '').replace('5', '').replace('Z', '').replace('2', '')
     code = ''.join(random.choices(chars, k=length))
     
-    width, height = 500, 150
+    # ОПТИМАЛЬНЫЙ РАЗМЕР
+    width, height = 600, 200
     image = Image.new('RGB', (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(image)
     
+    # Градиентный фон
     for y in range(height):
         r = int(150 + 105 * (y / height))
         g = int(100 + 155 * (y / height))
         b = int(200 + 55 * (y / height))
         draw.line([(0, y), (width, y)], fill=(r, g, b))
     
-    for _ in range(random.randint(8, 12)):
+    # Линии
+    for _ in range(random.randint(12, 18)):
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
         x2 = random.randint(0, width)
@@ -255,52 +258,52 @@ def generate_captcha_image() -> tuple:
         line_color = (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100))
         draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(1, 2))
     
-    for _ in range(random.randint(300, 500)):
+    # Шум
+    for _ in range(random.randint(400, 600)):
         x = random.randint(0, width)
         y = random.randint(0, height)
         point_color = (random.randint(0, 120), random.randint(0, 120), random.randint(0, 120))
         draw.point((x, y), fill=point_color)
     
-    for _ in range(random.randint(2, 4)):
-        x1 = random.randint(0, width)
-        y1 = random.randint(0, height)
-        x2 = random.randint(x1, min(x1 + 80, width))
-        y2 = random.randint(y1, min(y1 + 40, height))
-        shape_color = (random.randint(100, 180), random.randint(100, 180), random.randint(100, 180))
-        draw.rectangle([(x1, y1), (x2, y2)], fill=shape_color, outline=None)
-    
+    # Шрифт - СРЕДНИЙ РАЗМЕР
     try:
-        font = ImageFont.truetype("arial.ttf", 40)
+        font = ImageFont.truetype("arial.ttf", 60)
     except:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.truetype("C:\\Windows\\Fonts\\Arial.ttf", 60)
+        except:
+            font = ImageFont.load_default()
     
-    x_offset = 30
+    # Рисуем символы
+    x_offset = 40
     positions = []
     
     for char in code:
-        char_img = Image.new('RGBA', (60, 80), (0, 0, 0, 0))
+        char_img = Image.new('RGBA', (100, 120), (0, 0, 0, 0))
         char_draw = ImageDraw.Draw(char_img)
         color = (random.randint(20, 80), random.randint(20, 80), random.randint(20, 80))
-        char_draw.text((10, 20), char, fill=color, font=font)
+        char_draw.text((15, 25), char, fill=color, font=font)
         angle = random.randint(-20, 20)
         char_img = char_img.rotate(angle, expand=1, fillcolor=(0, 0, 0, 0))
         positions.append((x_offset, char_img))
-        x_offset += char_img.width + random.randint(10, 20)
+        x_offset += char_img.width + random.randint(15, 25)
     
+    # Центрируем
     if positions:
         total_width = positions[-1][0] + positions[-1][1].width - positions[0][0]
         start_x = (width - total_width) // 2
-        y_pos = (height - 80) // 2 + random.randint(-10, 10)
+        y_pos = (height - 120) // 2 + random.randint(-15, 15)
         
         for x, char_img in positions:
             new_x = start_x + (x - positions[0][0])
             if new_x + char_img.width < width and new_x > 0:
                 image.paste(char_img, (new_x, y_pos), char_img)
     
-    image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.3, 0.6)))
+    # Легкое размытие
+    image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.4, 0.7)))
     
     bio = io.BytesIO()
-    image.save(bio, 'PNG', quality=85)
+    image.save(bio, 'PNG', quality=88)
     bio.seek(0)
     
     return bio.getvalue(), code
