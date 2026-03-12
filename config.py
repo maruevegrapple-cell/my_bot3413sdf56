@@ -5,7 +5,7 @@ from db import get_main_admin_id
 load_dotenv(override=True)
 
 # ================= BOT =================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "864017469:AAGv2wgHYdV9hwXA2fJsJZwOnpoTvDrAcMg")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8640174691:AAGPmiXVHxJnat9gHGsUBaEab0hPsyE13Xw")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "AnonkaBot34bot")
 
 if not BOT_TOKEN:
