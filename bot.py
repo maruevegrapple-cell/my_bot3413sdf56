@@ -7,6 +7,18 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
+# ========== ДИАГНОСТИКА ==========
+print("="*50)
+print("ДИАГНОСТИКА ПЕРЕМЕННЫХ")
+print("="*50)
+print(f"BOT_TOKEN из os.environ: {os.getenv('BOT_TOKEN', 'НЕ НАЙДЕН!')}")
+print(f"BOT_TOKEN длина: {len(os.getenv('BOT_TOKEN', ''))}")
+print(f"Все переменные окружения:")
+for key in os.environ.keys():
+    if "TOKEN" in key or "BOT" in key:
+        print(f"  {key}: {os.environ[key][:10]}...")
+print("="*50)
+
 from config import BOT_TOKEN
 from handlers import router
 from db import init_db
@@ -20,6 +32,8 @@ async def main():
     # Создаем директорию для временных видео
     TEMP_DIR = "temp_videos"
     os.makedirs(TEMP_DIR, exist_ok=True)
+
+    print(f"✅ Используется токен: {BOT_TOKEN[:10]}...")
 
     bot = Bot(
         token=BOT_TOKEN,
