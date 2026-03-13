@@ -10,8 +10,10 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# ДОСТУПНЫЕ ВАЛЮТЫ В CRYPTO BOT
-AVAILABLE_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BUSD"]
+# ДОСТУПНЫЕ ВАЛЮТЫ В CRYPTO BOT (РАСШИРЕННЫЙ СПИСОК)
+AVAILABLE_ASSETS = [
+    "BTC", "TON", "ETH", "USDT", "USDC", "BUSD", "BNB", "TRX", "SOL", "ADA"
+]
 
 def get_asset_icon(asset: str) -> str:
     """Иконки для валют"""
@@ -21,7 +23,11 @@ def get_asset_icon(asset: str) -> str:
         "ETH": "Ξ",
         "USDT": "💵",
         "USDC": "💲", 
-        "BUSD": "🪙"
+        "BUSD": "🪙",
+        "BNB": "🔶",
+        "TRX": "🌞",
+        "SOL": "◎",
+        "ADA": "🌿"
     }
     return icons.get(asset, "🪙")
 
@@ -79,13 +85,18 @@ def get_exchange_rates():
     """Получение курсов валют к USD"""
     try:
         if not CRYPTOBOT_TOKEN:
+            # Тестовые курсы для локальной разработки
             return {
                 "BTC": 65000,
                 "TON": 5.5,
                 "ETH": 3500,
                 "USDT": 1,
                 "USDC": 1,
-                "BUSD": 1
+                "BUSD": 1,
+                "BNB": 500,
+                "TRX": 0.12,
+                "SOL": 150,
+                "ADA": 0.45
             }
         
         r = requests.post(
