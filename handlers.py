@@ -993,9 +993,61 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     
     await state.clear()
 
+# ================= ПРОВЕРКА ПОДПИСКИ (ИСПРАВЛЕНО) =================
+@router.callback_query(F.data == "check_subscribe")
+async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    await safe_answer(call)
+    
+    # Проверяем подписку на канал
+    is_subscribed = await check_subscription(call.bot, user_id)
+    
+    if is_subscribed:
+        # Проверяем, получал ли уже бонус
+        try:
+            bonus_received = has_received_subscribe_bonus(user_id)
+        except:
+            bonus_received = False
+        
+        if not bonus_received:
+            cursor.execute("""
+                UPDATE users 
+                SET balance = balance + ?, subscribe_bonus_received = 1 
+                WHERE user_id = ?
+            """, (SUBSCRIBE_BONUS, user_id))
+            conn.commit()
+            
+            bonus_text = f"\n\n🎁 Вам начислено +{SUBSCRIBE_BONUS} 🍬 за подписку!"
+        else:
+            bonus_text = ""
+        
+        await state.clear()
+        
+        try:
+            await call.message.delete()
+        except:
+            pass
+        
+        # Сначала отправляем сообщение о доступе
+        await call.message.answer(f"✅ <b>Доступ получен!</b>{bonus_text}")
+        
+        # Потом отправляем основное меню
+        await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
+    else:
+        try:
+            await call.message.answer("❌ Вы еще не подписались на канал!")
+        except:
+            pass
+
+# ================= ПРОВЕРКА ПЛАТЕЖА (ИСПРАВЛЕНО) =================
 @router.callback_query(F.data.startswith("check_"))
 async def check_payment(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
+    
+    # ВАЖНО: пропускаем check_subscribe
+    if call.data == "check_subscribe":
+        return
     
     if not await check_access(call.bot, user_id, state, call=call):
         return
@@ -1489,53 +1541,6 @@ async def process_op_channel_link(message: Message, state: FSMContext):
     
     await state.clear()
     await message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
-
-# ================= ПРОВЕРКА ПОДПИСКИ (ИСПРАВЛЕНО) =================
-@router.callback_query(F.data == "check_subscribe")
-async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    await safe_answer(call)
-    
-    # Проверяем подписку на канал
-    is_subscribed = await check_subscription(call.bot, user_id)
-    
-    if is_subscribed:
-        # Проверяем, получал ли уже бонус
-        try:
-            bonus_received = has_received_subscribe_bonus(user_id)
-        except:
-            bonus_received = False
-        
-        if not bonus_received:
-            cursor.execute("""
-                UPDATE users 
-                SET balance = balance + ?, subscribe_bonus_received = 1 
-                WHERE user_id = ?
-            """, (SUBSCRIBE_BONUS, user_id))
-            conn.commit()
-            
-            bonus_text = f"\n\n🎁 Вам начислено +{SUBSCRIBE_BONUS} 🍬 за подписку!"
-        else:
-            bonus_text = ""
-        
-        await state.clear()
-        
-        try:
-            await call.message.delete()
-        except:
-            pass
-        
-        # Сначала отправляем сообщение о доступе
-        await call.message.answer(f"✅ <b>Доступ получен!</b>{bonus_text}")
-        
-        # Потом отправляем основное меню
-        await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
-    else:
-        try:
-            await call.message.answer("❌ Вы еще не подписались на канал!")
-        except:
-            pass
 
 # ================= ОБРАБОТКА ФЕЙК МЕНЮ =================
 @router.callback_query(F.data.startswith("fake_"))
