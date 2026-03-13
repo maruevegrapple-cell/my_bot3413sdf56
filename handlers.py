@@ -910,67 +910,7 @@ async def process_custom_pay(message: Message, state: FSMContext):
         await message.answer("❌ Введите корректное число")
         return
 
-# ================= ОПЛАТА С ВЫБОРОМ КРИПТЫ =================
-@router.callback_query(F.data.startswith("pay_"))
-async def pay(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    logger.info(f"💰 pay called with data: {call.data}")
-    
-    if not await check_access(call.bot, user_id, state, call=call):
-        logger.warning(f"❌ Доступ запрещен для пользователя {user_id}")
-        return
-    
-    prices = {
-        "pay_50": (50, 0.2),
-        "pay_100": (100, 0.3),
-        "pay_140": (140, 0.4),
-        "pay_170": (170, 0.5),
-        "pay_200": (200, 0.6),
-        "pay_333": (333, 1.0),
-    }
-    
-    if call.data == "pay_custom":
-        await state.set_state(CustomPayStates.waiting_for_amount)
-        await call.message.answer("💰 Введите желаемое количество конфет (число):")
-        return
-    
-    if call.data not in prices:
-        logger.warning(f"❌ Unknown pay data: {call.data}")
-        return
-    
-    amount, usdt = prices[call.data]
-    logger.info(f"✅ Selected: {amount} candies for ${usdt}")
-    
-    # Сохраняем сумму в state для выбора валюты
-    await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
-    
-    # Показываем меню выбора валюты
-    keyboard = []
-    
-    # Сортируем валюты: USDT и TON первые
-    sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
-    
-    # Создаем ряды по 2 кнопки
-    row = []
-    for i, asset in enumerate(sorted_assets):
-        icon = get_asset_icon(asset)
-        row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
-        if (i + 1) % 2 == 0:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-    
-    await call.message.answer(
-        f"💳 <b>Выберите валюту для оплаты</b>\n\n"
-        f"🍬 Конфет: {amount}\n"
-        f"💵 Сумма: {usdt} USD\n\n"
-        f"Курс будет сконвертирован автоматически:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
-    )
-
-# ================= ОБРАБОТКА ВЫБОРА ВАЛЮТЫ (ИСПРАВЛЕННАЯ ВЕРСИЯ) =================
+# ================= ВАЖНО: СНАЧАЛА ОБРАБАТЫВАЕМ pay_asset_ (ВЫБОР ВАЛЮТЫ) =================
 @router.callback_query(F.data.startswith("pay_asset_"))
 async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -1069,6 +1009,70 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     # Очищаем state
     await state.clear()
     logger.info(f"✅ State очищен для пользователя {user_id}")
+
+# ================= ОПЛАТА С ВЫБОРОМ КРИПТЫ (ВТОРОЙ) =================
+@router.callback_query(F.data.startswith("pay_"))
+async def pay(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    # ВАЖНО: пропускаем pay_asset_
+    if call.data.startswith("pay_asset_"):
+        return
+    
+    logger.info(f"💰 pay called with data: {call.data}")
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        logger.warning(f"❌ Доступ запрещен для пользователя {user_id}")
+        return
+    
+    prices = {
+        "pay_50": (50, 0.2),
+        "pay_100": (100, 0.3),
+        "pay_140": (140, 0.4),
+        "pay_170": (170, 0.5),
+        "pay_200": (200, 0.6),
+        "pay_333": (333, 1.0),
+    }
+    
+    if call.data == "pay_custom":
+        await state.set_state(CustomPayStates.waiting_for_amount)
+        await call.message.answer("💰 Введите желаемое количество конфет (число):")
+        return
+    
+    if call.data not in prices:
+        logger.warning(f"❌ Unknown pay data: {call.data}")
+        return
+    
+    amount, usdt = prices[call.data]
+    logger.info(f"✅ Selected: {amount} candies for ${usdt}")
+    
+    # Сохраняем сумму в state для выбора валюты
+    await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
+    
+    # Показываем меню выбора валюты
+    keyboard = []
+    
+    # Сортируем валюты: USDT и TON первые
+    sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
+    
+    # Создаем ряды по 2 кнопки
+    row = []
+    for i, asset in enumerate(sorted_assets):
+        icon = get_asset_icon(asset)
+        row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
+        if (i + 1) % 2 == 0:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    await call.message.answer(
+        f"💳 <b>Выберите валюту для оплаты</b>\n\n"
+        f"🍬 Конфет: {amount}\n"
+        f"💵 Сумма: {usdt} USD\n\n"
+        f"Курс будет сконвертирован автоматически:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
 
 # ================= ПРОВЕРКА ПОДПИСКИ (ИСПРАВЛЕНО) =================
 @router.callback_query(F.data == "check_subscribe")
