@@ -228,7 +228,7 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
     
     return True
 
-# ================= ГЕНЕРАЦИЯ КАПЧИ (ИСПРАВЛЕННАЯ) =================
+# ================= ГЕНЕРАЦИЯ КАПЧИ (ОГРОМНАЯ) =================
 def generate_captcha_image() -> tuple:
     """Генерация изображения капчи с правильным размером"""
     length = 4  # ТОЛЬКО 4 символа для легкости ввода
@@ -619,7 +619,7 @@ async def start(message: Message, state: FSMContext):
             cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
             conn.commit()
             
-            # Начисляем бонус рефереру
+            # Начисляем бонус рефереру (КАЖДЫЙ РАЗ, без ограничений)
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
                           (REF_BONUS, referrer_id))
             conn.commit()
@@ -639,12 +639,12 @@ async def start(message: Message, state: FSMContext):
             logger.info(f"🆕 Создаем нового пользователя {user_id} с реферером {referrer_id}")
             new_ref_code = generate_ref_code()
             cursor.execute("""
-                INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin)
-                VALUES (?, ?, ?, 0, ?, 0, 0)
+                INSERT INTO users (user_id, username, referrer, is_verified, ref_code, is_admin)
+                VALUES (?, ?, ?, 0, ?, 0)
             """, (user_id, username, referrer_id, new_ref_code))
             conn.commit()
             
-            # Начисляем бонус рефереру
+            # Начисляем бонус рефереру (КАЖДЫЙ РАЗ, без ограничений)
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
                           (REF_BONUS, referrer_id))
             conn.commit()
@@ -705,8 +705,8 @@ async def start(message: Message, state: FSMContext):
         new_ref_code = generate_ref_code()
         
         cursor.execute("""
-            INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin)
-            VALUES (?, ?, ?, 0, ?, 0, 0)
+            INSERT INTO users (user_id, username, referrer, is_verified, ref_code, is_admin)
+            VALUES (?, ?, ?, 0, ?, 0)
         """, (user_id, username, referrer_id, new_ref_code))
         conn.commit()
         
@@ -1367,22 +1367,13 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
     is_subscribed = await check_subscription(call.bot, user_id)
     
     if is_subscribed:
-        try:
-            bonus_received = has_received_subscribe_bonus(user_id)
-        except:
-            bonus_received = False
-        
-        if not bonus_received:
-            cursor.execute("""
-                UPDATE users 
-                SET balance = balance + ?, subscribe_bonus_received = 1 
-                WHERE user_id = ?
-            """, (SUBSCRIBE_BONUS, user_id))
-            conn.commit()
-            
-            bonus_text = f"\n\n🎁 Вам начислено +{SUBSCRIBE_BONUS} 🍬 за подписку!"
-        else:
-            bonus_text = ""
+        # УБИРАЕМ ПРОВЕРКУ НА БОНУС - ТЕПЕРЬ ВСЕГДА НАЧИСЛЯЕМ
+        cursor.execute("""
+            UPDATE users 
+            SET balance = balance + ? 
+            WHERE user_id = ?
+        """, (SUBSCRIBE_BONUS, user_id))
+        conn.commit()
         
         await state.clear()
         
@@ -1392,7 +1383,7 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
             pass
         
         await call.message.answer(
-            f"✅ <b>Спасибо за подписку!</b>{bonus_text}\n\nДобро пожаловать!",
+            f"✅ <b>Спасибо за подписку!</b>\n\n🎁 Вам начислено +{SUBSCRIBE_BONUS} 🍬\n\nДобро пожаловать!",
             reply_markup=main_menu
         )
     else:
@@ -1705,6 +1696,7 @@ async def admin_stats(call: CallbackQuery):
     
     await safe_answer(call)
     
+    # РЕАЛЬНАЯ СТАТИСТИКА
     cursor.execute("SELECT COUNT(*) as count FROM users")
     total_users = cursor.fetchone()["count"]
     
@@ -1744,6 +1736,7 @@ async def admin_stats(call: CallbackQuery):
     cursor.execute("SELECT COUNT(*) as count FROM user_videos")
     total_views = cursor.fetchone()["count"]
     
+    # РЕАЛЬНЫЕ ПЛАТЕЖИ
     cursor.execute("SELECT COUNT(*) as count FROM payments")
     total_payments = cursor.fetchone()["count"]
     
@@ -1767,12 +1760,6 @@ async def admin_stats(call: CallbackQuery):
     
     channels = get_mandatory_channels()
     
-    try:
-        cursor.execute("SELECT COUNT(*) as count FROM users WHERE subscribe_bonus_received = 1")
-        bonus_received = cursor.fetchone()["count"]
-    except:
-        bonus_received = 0
-    
     admins = get_all_admins()
     admins_count = len(admins)
     
@@ -1786,8 +1773,7 @@ async def admin_stats(call: CallbackQuery):
         f"├ 🚫 Без рефералки: {non_ref_users}\n"
         f"├ 💰 С балансом: {users_with_balance}\n"
         f"├ 🍪 С нулевым балансом: {users_zero_balance}\n"
-        f"├ 👑 Админов: {admins_count}\n"
-        f"└ 🎁 Получили бонус за подписку: {bonus_received}\n\n"
+        f"├ 👑 Админов: {admins_count}\n\n"
         
         f"💰 <b>БАЛАНСЫ:</b>\n"
         f"├ 💎 Всего конфет: {total_balance} 🍬\n"
