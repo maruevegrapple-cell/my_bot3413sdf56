@@ -230,15 +230,16 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
 
 # ================= ГЕНЕРАЦИЯ КАПЧИ (ОГРОМНАЯ) =================
 def generate_captcha_image() -> tuple:
-    """Генерация изображения капчи с правильным размером"""
-    length = 4  # ТОЛЬКО 4 символа для легкости ввода
+    """Генерация изображения капчи - ОГРОМНЫЙ РАЗМЕР"""
+    length = 4  # ТОЛЬКО 4 символа
     chars = string.ascii_uppercase + string.digits
+    # Убираем похожие символы
     chars = chars.replace('O', '').replace('0', '').replace('I', '').replace('1', '')
     chars = chars.replace('S', '').replace('5', '').replace('Z', '').replace('2', '')
     code = ''.join(random.choices(chars, k=length))
     
-    # БОЛЬШОЙ РАЗМЕР для хорошей видимости (800x300)
-    width, height = 800, 300
+    # ОГРОМНЫЙ РАЗМЕР 1000x400 для максимальной видимости
+    width, height = 1000, 400
     image = Image.new('RGB', (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(image)
     
@@ -249,34 +250,27 @@ def generate_captcha_image() -> tuple:
         b = int(200 + 55 * (y / height))
         draw.line([(0, y), (width, y)], fill=(r, g, b))
     
-    # Линии
-    for _ in range(random.randint(15, 20)):
+    # Линии для защиты
+    for _ in range(random.randint(20, 25)):
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
         x2 = random.randint(0, width)
         y2 = random.randint(0, height)
         line_color = (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100))
-        draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(1, 3))
+        draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(2, 4))
     
     # Шум
-    for _ in range(random.randint(500, 700)):
+    for _ in range(random.randint(700, 900)):
         x = random.randint(0, width)
         y = random.randint(0, height)
         point_color = (random.randint(0, 120), random.randint(0, 120), random.randint(0, 120))
         draw.point((x, y), fill=point_color)
     
-    # Фигуры
-    for _ in range(random.randint(3, 5)):
-        x1 = random.randint(0, width)
-        y1 = random.randint(0, height)
-        x2 = random.randint(x1, min(x1 + 150, width))
-        y2 = random.randint(y1, min(y1 + 80, height))
-        shape_color = (random.randint(100, 180), random.randint(100, 180), random.randint(100, 180))
-        draw.rectangle([(x1, y1), (x2, y2)], fill=shape_color, outline=None)
-    
-    # Шрифт - БОЛЬШОЙ (90px)
+    # Шрифт - ОГРОМНЫЙ (120px)
     try:
+        # Пробуем разные шрифты
         font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux
             "arial.ttf",
             "C:\\Windows\\Fonts\\Arial.ttf",
             "C:\\Windows\\Fonts\\Impact.ttf",
@@ -284,47 +278,58 @@ def generate_captcha_image() -> tuple:
         font = None
         for path in font_paths:
             try:
-                font = ImageFont.truetype(path, 90)  # Увеличен с 60 до 90
+                font = ImageFont.truetype(path, 120)  # 120px - ОЧЕНЬ БОЛЬШОЙ
                 break
             except:
                 continue
         if not font:
             font = ImageFont.load_default()
+            print("⚠️ Используется шрифт по умолчанию")
     except:
         font = ImageFont.load_default()
     
-    # Рисуем символы
-    x_offset = 50
+    # Рисуем символы - каждый с поворотом
+    x_offset = 80
     positions = []
     
     for char in code:
-        char_img = Image.new('RGBA', (120, 150), (0, 0, 0, 0))
+        # Создаем отдельное изображение для каждого символа
+        char_img = Image.new('RGBA', (180, 200), (0, 0, 0, 0))
         char_draw = ImageDraw.Draw(char_img)
         color = (random.randint(20, 80), random.randint(20, 80), random.randint(20, 80))
-        char_draw.text((20, 30), char, fill=color, font=font)
-        angle = random.randint(-20, 20)
+        char_draw.text((30, 40), char, fill=color, font=font)
+        angle = random.randint(-25, 25)
         char_img = char_img.rotate(angle, expand=1, fillcolor=(0, 0, 0, 0))
         positions.append((x_offset, char_img))
-        x_offset += char_img.width + random.randint(20, 30)
+        x_offset += char_img.width + random.randint(30, 40)
     
-    # Центрируем
+    # Центрируем символы
     if positions:
         total_width = positions[-1][0] + positions[-1][1].width - positions[0][0]
         start_x = (width - total_width) // 2
-        y_pos = (height - 150) // 2 + random.randint(-15, 15)
+        y_pos = (height - 200) // 2 + random.randint(-20, 20)
         
         for x, char_img in positions:
             new_x = start_x + (x - positions[0][0])
             if new_x + char_img.width < width and new_x > 0:
                 image.paste(char_img, (new_x, y_pos), char_img)
     
+    # Добавляем шумовые линии поверх букв
+    for _ in range(random.randint(5, 8)):
+        x1 = random.randint(0, width)
+        y1 = random.randint(0, height)
+        x2 = random.randint(0, width)
+        y2 = random.randint(0, height)
+        draw.line([(x1, y1), (x2, y2)], fill=(random.randint(100, 150), random.randint(100, 150), random.randint(100, 150)), width=2)
+    
     # Легкое размытие
-    image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.5, 0.9)))
+    image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.8, 1.2)))
     
     bio = io.BytesIO()
-    image.save(bio, 'PNG', quality=92)
+    image.save(bio, 'PNG', quality=95)
     bio.seek(0)
     
+    print(f"✅ Капча сгенерирована: размер {width}x{height}, код={code}")
     return bio.getvalue(), code
 
 # ================= БЛОКИРОВКА ПЕРЕСЫЛКИ =================
@@ -609,42 +614,25 @@ async def start(message: Message, state: FSMContext):
                 has_ref_in_link = True
                 logger.info(f"🔗 Реферальная ссылка обнаружена! Код: {ref_code}, Реферер: {referrer_id}")
     
-    # ========== ВАЖНО: ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД ==========
+    # ========== ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД ==========
     if has_ref_in_link:
         logger.info(f"✅ Пользователь {user_id} перешел по реферальной ссылке")
         
-        # ЕСЛИ ПОЛЬЗОВАТЕЛЬ УЖЕ ЕСТЬ - ПРИНУДИТЕЛЬНО ОБНОВЛЯЕМ!
+        # Проверяем, существует ли пользователь
         if user:
-            logger.info(f"🔄 Пользователь {user_id} уже есть в БД. Обновляем реферера...")
-            cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
-            conn.commit()
-            
-            # Начисляем бонус рефереру (КАЖДЫЙ РАЗ, без ограничений)
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
-                          (REF_BONUS, referrer_id))
-            conn.commit()
-            
-            try:
-                await message.bot.send_message(
-                    referrer_id,
-                    f"🎁 <b>Новый реферал!</b>\n\n"
-                    f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
-                    f"➕ Вам начислено +{REF_BONUS} 🍬",
-                    parse_mode="HTML"
-                )
-            except:
-                pass
+            # Пользователь уже есть - НЕ НАЧИСЛЯЕМ БОНУС (не новый)
+            logger.info(f"🔄 Пользователь {user_id} уже существует. Бонус рефереру НЕ начислен.")
         else:
-            # Создаем нового пользователя с реферером
-            logger.info(f"🆕 Создаем нового пользователя {user_id} с реферером {referrer_id}")
+            # Создаем НОВОГО пользователя с реферером
+            logger.info(f"🆕 Создаем НОВОГО пользователя {user_id} с реферером {referrer_id}")
             new_ref_code = generate_ref_code()
             cursor.execute("""
-                INSERT INTO users (user_id, username, referrer, is_verified, ref_code, is_admin)
-                VALUES (?, ?, ?, 0, ?, 0)
+                INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin)
+                VALUES (?, ?, ?, 0, ?, 0, 0)
             """, (user_id, username, referrer_id, new_ref_code))
             conn.commit()
             
-            # Начисляем бонус рефереру (КАЖДЫЙ РАЗ, без ограничений)
+            # Начисляем бонус рефереру (ТОЛЬКО ЗА НОВОГО)
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
                           (REF_BONUS, referrer_id))
             conn.commit()
@@ -705,11 +693,12 @@ async def start(message: Message, state: FSMContext):
         new_ref_code = generate_ref_code()
         
         cursor.execute("""
-            INSERT INTO users (user_id, username, referrer, is_verified, ref_code, is_admin)
-            VALUES (?, ?, ?, 0, ?, 0)
+            INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin)
+            VALUES (?, ?, ?, 0, ?, 0, 0)
         """, (user_id, username, referrer_id, new_ref_code))
         conn.commit()
         
+        # Если есть реферер и пользователь новый - начисляем бонус
         if referrer_id:
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
                           (REF_BONUS, referrer_id))
@@ -1367,13 +1356,23 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
     is_subscribed = await check_subscription(call.bot, user_id)
     
     if is_subscribed:
-        # УБИРАЕМ ПРОВЕРКУ НА БОНУС - ТЕПЕРЬ ВСЕГДА НАЧИСЛЯЕМ
-        cursor.execute("""
-            UPDATE users 
-            SET balance = balance + ? 
-            WHERE user_id = ?
-        """, (SUBSCRIBE_BONUS, user_id))
-        conn.commit()
+        # Проверяем, получал ли уже бонус
+        try:
+            bonus_received = has_received_subscribe_bonus(user_id)
+        except:
+            bonus_received = False
+        
+        if not bonus_received:
+            cursor.execute("""
+                UPDATE users 
+                SET balance = balance + ?, subscribe_bonus_received = 1 
+                WHERE user_id = ?
+            """, (SUBSCRIBE_BONUS, user_id))
+            conn.commit()
+            
+            bonus_text = f"\n\n🎁 Вам начислено +{SUBSCRIBE_BONUS} 🍬 за подписку!"
+        else:
+            bonus_text = ""
         
         await state.clear()
         
@@ -1383,7 +1382,7 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
             pass
         
         await call.message.answer(
-            f"✅ <b>Спасибо за подписку!</b>\n\n🎁 Вам начислено +{SUBSCRIBE_BONUS} 🍬\n\nДобро пожаловать!",
+            f"✅ <b>Спасибо за подписку!</b>{bonus_text}\n\nДобро пожаловать!",
             reply_markup=main_menu
         )
     else:
@@ -1696,7 +1695,7 @@ async def admin_stats(call: CallbackQuery):
     
     await safe_answer(call)
     
-    # РЕАЛЬНАЯ СТАТИСТИКА
+    # РЕАЛЬНАЯ СТАТИСТИКА ИЗ БД
     cursor.execute("SELECT COUNT(*) as count FROM users")
     total_users = cursor.fetchone()["count"]
     
@@ -1736,7 +1735,6 @@ async def admin_stats(call: CallbackQuery):
     cursor.execute("SELECT COUNT(*) as count FROM user_videos")
     total_views = cursor.fetchone()["count"]
     
-    # РЕАЛЬНЫЕ ПЛАТЕЖИ
     cursor.execute("SELECT COUNT(*) as count FROM payments")
     total_payments = cursor.fetchone()["count"]
     
@@ -1760,6 +1758,9 @@ async def admin_stats(call: CallbackQuery):
     
     channels = get_mandatory_channels()
     
+    cursor.execute("SELECT COUNT(*) as count FROM users WHERE subscribe_bonus_received = 1")
+    bonus_received = cursor.fetchone()["count"] or 0
+    
     admins = get_all_admins()
     admins_count = len(admins)
     
@@ -1773,7 +1774,8 @@ async def admin_stats(call: CallbackQuery):
         f"├ 🚫 Без рефералки: {non_ref_users}\n"
         f"├ 💰 С балансом: {users_with_balance}\n"
         f"├ 🍪 С нулевым балансом: {users_zero_balance}\n"
-        f"├ 👑 Админов: {admins_count}\n\n"
+        f"├ 👑 Админов: {admins_count}\n"
+        f"└ 🎁 Получили бонус за подписку: {bonus_received}\n\n"
         
         f"💰 <b>БАЛАНСЫ:</b>\n"
         f"├ 💎 Всего конфет: {total_balance} 🍬\n"
