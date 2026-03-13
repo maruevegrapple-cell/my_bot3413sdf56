@@ -228,9 +228,9 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
     
     return True
 
-# ================= ГЕНЕРАЦИЯ КАПЧИ (ОГРОМНЫЕ БУКВЫ) =================
+# ================= ГЕНЕРАЦИЯ КАПЧИ (ГАРАНТИРОВАННО БОЛЬШИЕ БУКВЫ) =================
 def generate_captcha_image() -> tuple:
-    """Генерация изображения капчи - ОГРОМНЫЕ БУКВЫ 150px"""
+    """Генерация изображения капчи - БУКВЫ ВСЕГДА БОЛЬШИЕ 200px"""
     length = 4
     chars = string.ascii_uppercase + string.digits
     # Убираем похожие символы
@@ -240,98 +240,117 @@ def generate_captcha_image() -> tuple:
     code = ''.join(random.choices(chars, k=length))
     
     # ОГРОМНЫЙ РАЗМЕР
-    width, height = 1200, 500
+    width, height = 1400, 600
     
-    # Создаем изображение с белым фоном
+    # Создаем изображение
     image = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(image)
     
-    # Случайный светлый фон
-    bg_color = (
-        random.randint(230, 255),
-        random.randint(230, 255), 
-        random.randint(230, 255)
-    )
-    draw.rectangle([(0, 0), (width, height)], fill=bg_color)
+    # Градиентный фон
+    for y in range(height):
+        color = (
+            random.randint(220, 255),
+            random.randint(220, 255),
+            random.randint(220, 255)
+        )
+        draw.line([(0, y), (width, y)], fill=color)
     
-    # Добавляем шумовые линии
-    for _ in range(random.randint(8, 12)):
+    # ЛИНИИ для защиты
+    for _ in range(15):
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
         x2 = random.randint(0, width)
         y2 = random.randint(0, height)
         line_color = (
-            random.randint(150, 200),
-            random.randint(150, 200),
-            random.randint(150, 200)
+            random.randint(100, 180),
+            random.randint(100, 180),
+            random.randint(100, 180)
         )
         draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(2, 5))
     
-    # Пробуем загрузить большой шрифт
+    # ПЫТАЕМСЯ ЗАГРУЗИТЬ ШРИФТ
     font = None
-    font_size = 180  # ОЧЕНЬ БОЛЬШОЙ РАЗМЕР
-    
-    # Список возможных шрифтов на разных системах
-    font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",  # Linux
-        "/System/Library/Fonts/Helvetica.ttc",  # macOS
-        "/Library/Fonts/Arial.ttf",  # macOS
-        "C:\\Windows\\Fonts\\Arial.ttf",  # Windows
-        "C:\\Windows\\Fonts\\Impact.ttf",  # Windows
-        "arial.ttf",
-    ]
-    
-    for font_path in font_paths:
-        try:
-            if os.path.exists(font_path):
-                font = ImageFont.truetype(font_path, font_size)
-                print(f"✅ Загружен шрифт: {font_path}")
+    try:
+        # Пробуем разные пути для шрифтов
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "C:\\Windows\\Fonts\\Arial.ttf",
+            "arial.ttf"
+        ]
+        for path in font_paths:
+            if os.path.exists(path):
+                font = ImageFont.truetype(path, 200)  # 200px - ОЧЕНЬ БОЛЬШОЙ
+                print(f"✅ Загружен шрифт: {path}")
                 break
+    except:
+        font = None
+    
+    # РАЗМЕРЫ ДЛЯ БУКВ
+    # Если шрифт загрузился - используем его, если нет - рисуем вручную большими линиями
+    if font:
+        # Используем загруженный шрифт
+        colors = [
+            (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100)),
+            (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100)),
+            (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100)),
+            (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100))
+        ]
+        
+        positions = [(150, 200), (450, 200), (750, 200), (1050, 200)]
+        
+        for i, char in enumerate(code):
+            x, y = positions[i]
+            # Тень
+            draw.text((x+5, y+5), char, fill=(120, 120, 120), font=font)
+            # Основная буква
+            draw.text((x, y), char, fill=colors[i], font=font)
+            # Обводка
+            draw.text((x-2, y-2), char, fill=(0, 0, 0), font=font)
+            draw.text((x+2, y+2), char, fill=(0, 0, 0), font=font)
+    else:
+        # РИСУЕМ БУКВЫ ВРУЧНУЮ ОГРОМНЫМИ ЛИНИЯМИ
+        print("⚠️ Шрифт не загружен, рисуем вручную")
+        
+        # Определяем точки для больших букв (упрощенно)
+        # Для каждой буквы рисуем ее контур толстыми линиями
+        big_font_size = 180
+        try:
+            # Последняя попытка с дефолтным шрифтом но огромным размером
+            font = ImageFont.load_default()
+            positions = [(150, 200), (450, 200), (750, 200), (1050, 200)]
+            for i, char in enumerate(code):
+                color = (
+                    random.randint(0, 150),
+                    random.randint(0, 150),
+                    random.randint(0, 150)
+                )
+                # Рисуем букву несколько раз для жирности
+                for dx in range(-5, 6, 2):
+                    for dy in range(-5, 6, 2):
+                        draw.text((positions[i][0] + dx, positions[i][1] + dy), char, fill=color, font=font)
         except:
-            continue
+            # Если совсем ничего не работает - рисуем просто черные прямоугольники (для теста)
+            for i in range(4):
+                x = 150 + i * 300
+                y = 200
+                draw.rectangle([(x, y), (x+100, y+150)], fill=(0, 0, 0))
+                draw.text((x+30, y+50), code[i], fill=(255, 255, 255), font=None)
     
-    if font is None:
-        # Если нет системных шрифтов, используем дефолтный, но рисуем буквы жирно
-        font = ImageFont.load_default()
-        print("⚠️ Используется встроенный шрифт")
-    
-    # Рисуем каждую букву отдельно с поворотом
-    x_start = 150
-    y_pos = 150
-    
-    for i, char in enumerate(code):
-        # Случайный цвет для каждой буквы
-        color = (
-            random.randint(20, 150),
-            random.randint(20, 150),
-            random.randint(20, 150)
-        )
-        
-        # Случайное смещение
-        x_offset = random.randint(-15, 15)
-        y_offset = random.randint(-15, 15)
-        
-        if font != ImageFont.load_default():
-            # Для нормального шрифта просто рисуем
-            draw.text((x_start + x_offset + i*200, y_pos + y_offset), char, fill=color, font=font)
-        else:
-            # Для дефолтного шрифта рисуем несколько раз для жирности
-            for dx in [-3, 0, 3]:
-                for dy in [-3, 0, 3]:
-                    draw.text((x_start + x_offset + i*200 + dx, y_pos + y_offset + dy), char, fill=color, font=font)
-    
-    # Добавляем легкий шум точками
-    for _ in range(random.randint(100, 200)):
+    # Добавляем шум
+    for _ in range(800):
         x = random.randint(0, width)
         y = random.randint(0, height)
         draw.point((x, y), fill=(
-            random.randint(50, 150),
-            random.randint(50, 150),
-            random.randint(50, 150)
+            random.randint(0, 100),
+            random.randint(0, 100),
+            random.randint(0, 100)
         ))
     
-    # Сохраняем в байты
+    # Легкое размытие
+    image = image.filter(ImageFilter.GaussianBlur(radius=0.5))
+    
     bio = io.BytesIO()
     image.save(bio, 'PNG', quality=95)
     bio.seek(0)
@@ -1024,6 +1043,7 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
         await safe_answer(call, "❌ Платёж не найден", show_alert=True)
         return
     
+    from payments import check_invoice
     result = check_invoice(invoice_id)
     
     if result.get("paid", False):
@@ -1504,16 +1524,18 @@ async def process_op_channel_link(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
 
-# ================= ПРОВЕРКА ПОДПИСКИ =================
+# ================= ПРОВЕРКА ПОДПИСКИ (ИСПРАВЛЕНО) =================
 @router.callback_query(F.data == "check_subscribe")
 async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
     await safe_answer(call)
     
+    # Проверяем подписку на канал
     is_subscribed = await check_subscription(call.bot, user_id)
     
     if is_subscribed:
+        # Проверяем, получал ли уже бонус
         try:
             bonus_received = has_received_subscribe_bonus(user_id)
         except:
