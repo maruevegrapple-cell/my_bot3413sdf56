@@ -10,43 +10,111 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-def create_invoice(amount: float):
-    """Создание счета для оплаты"""
+# ДОСТУПНЫЕ ВАЛЮТЫ В CRYPTO BOT
+AVAILABLE_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BUSD"]
+
+def get_asset_icon(asset: str) -> str:
+    """Иконки для валют"""
+    icons = {
+        "BTC": "₿",
+        "TON": "💎", 
+        "ETH": "Ξ",
+        "USDT": "💵",
+        "USDC": "💲", 
+        "BUSD": "🪙"
+    }
+    return icons.get(asset, "🪙")
+
+def create_invoice(amount_usd: float, asset: str = "USDT"):
+    """Создание счета для оплаты в указанной криптовалюте"""
     try:
         if not CRYPTOBOT_TOKEN:
             return {
-                "invoice_id": f"test_{amount}",
+                "invoice_id": f"test_{amount_usd}_{asset}",
                 "pay_url": BOT_LINK,
-                "status": "active"
+                "status": "active",
+                "asset": asset,
+                "amount": amount_usd
             }
-            
+        
+        # Получаем курсы валют
+        rates = get_exchange_rates()
+        
+        # Конвертируем USD в выбранную криптовалюту
+        crypto_amount = amount_usd
+        if asset != "USDT" and rates and asset in rates:
+            rate = rates[asset]
+            crypto_amount = round(amount_usd / rate, 8)
+        
         r = requests.post(
             f"{CRYPTOBOT_API}/createInvoice",
             headers=HEADERS,
             json={
-                "asset": "USDT",
-                "amount": str(amount),
-                "description": "Покупка конфет",
+                "asset": asset,
+                "amount": str(crypto_amount),
+                "description": f"Покупка конфет",
                 "allow_comments": False,
-                "allow_anonymous": False
+                "allow_anonymous": False,
+                "expires_in": 3600
             },
             timeout=15
         )
         r.raise_for_status()
-        return r.json()["result"]
+        result = r.json()["result"]
+        result["asset"] = asset
+        result["crypto_amount"] = crypto_amount
+        result["usd_amount"] = amount_usd
+        return result
     except Exception as e:
         logging.error(f"Error creating invoice: {e}")
         return {
-            "invoice_id": f"error_{amount}",
+            "invoice_id": f"error_{amount_usd}_{asset}",
             "pay_url": BOT_LINK,
-            "status": "error"
+            "status": "error",
+            "asset": asset,
+            "amount": amount_usd
         }
 
-def check_invoice(invoice_id: str) -> bool:
-    """Проверка статуса оплаты"""
+def get_exchange_rates():
+    """Получение курсов валют к USD"""
     try:
-        if not CRYPTOBOT_TOKEN or invoice_id.startswith(("test_", "error_")):
-            return True
+        if not CRYPTOBOT_TOKEN:
+            return {
+                "BTC": 65000,
+                "TON": 5.5,
+                "ETH": 3500,
+                "USDT": 1,
+                "USDC": 1,
+                "BUSD": 1
+            }
+        
+        r = requests.post(
+            f"{CRYPTOBOT_API}/getExchangeRates",
+            headers=HEADERS,
+            json={},
+            timeout=15
+        )
+        r.raise_for_status()
+        rates = {}
+        for item in r.json()["result"]:
+            if item["is_valid"] and item["source"] == "USD":
+                rates[item["target"]] = float(item["rate"])
+        return rates
+    except Exception as e:
+        logging.error(f"Error getting exchange rates: {e}")
+        return None
+
+def check_invoice(invoice_id: str) -> dict:
+    """Проверка статуса оплаты - ВОЗВРАЩАЕТ ДЕТАЛИ"""
+    try:
+        if not CRYPTOBOT_TOKEN:
+            if invoice_id.startswith("test_"):
+                return {"status": "paid", "paid": True}
+            return {"status": "error", "paid": False}
+        
+        # Для реальных инвойсов проверяем статус
+        if invoice_id.startswith("error_"):
+            return {"status": "error", "paid": False}
             
         r = requests.post(
             f"{CRYPTOBOT_API}/getInvoices",
@@ -58,7 +126,14 @@ def check_invoice(invoice_id: str) -> bool:
         )
         r.raise_for_status()
         items = r.json()["result"]["items"]
-        return bool(items) and items[0]["status"] == "paid"
+        if items and items[0]["status"] == "paid":
+            return {
+                "status": "paid",
+                "paid": True,
+                "asset": items[0].get("asset"),
+                "amount": float(items[0].get("amount", 0))
+            }
+        return {"status": "active", "paid": False}
     except Exception as e:
         logging.error(f"Error checking invoice: {e}")
-        return True
+        return {"status": "error", "paid": False}
