@@ -228,7 +228,7 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
     
     return True
 
-# ================= ГЕНЕРАЦИЯ КАПЧИ (БОЛЬШИЕ БУКВЫ) =================
+# ================= ГЕНЕРАЦИЯ КАПЧИ (НОРМАЛЬНАЯ ВИДИМАЯ) =================
 def generate_captcha_image() -> tuple:
     """Генерация изображения капчи - БОЛЬШИЕ ВИДИМЫЕ БУКВЫ"""
     length = 4
@@ -242,61 +242,86 @@ def generate_captcha_image() -> tuple:
     # РАЗМЕР
     width, height = 800, 300
     
-    # Создаем изображение
+    # Создаем изображение с белым фоном
     image = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(image)
     
-    # Светло-серый фон
-    draw.rectangle([(0, 0), (width, height)], fill=(245, 245, 245))
+    # Заливка фона
+    draw.rectangle([(0, 0), (width, height)], fill=(255, 255, 255))
     
-    # Добавляем легкие линии
+    # Добавляем легкие серые линии для защиты
     for i in range(0, width, 50):
         draw.line([(i, 0), (i, height)], fill=(230, 230, 230), width=1)
+    for i in range(0, height, 50):
+        draw.line([(0, i), (width, i)], fill=(230, 230, 230), width=1)
     
-    # Пытаемся загрузить шрифт
+    # Пытаемся загрузить жирный шрифт
     font = None
     try:
         # Пробуем разные шрифты
         font_paths = [
             "C:\\Windows\\Fonts\\Arial.ttf",
-            "C:\\Windows\\Fonts\\arialbd.ttf",
+            "C:\\Windows\\Fonts\\Impact.ttf",
+            "C:\\Windows\\Fonts\\arialbd.ttf",  # Arial Bold
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "arial.ttf"
         ]
         
         for path in font_paths:
             if os.path.exists(path):
-                font = ImageFont.truetype(path, 80)
+                font = ImageFont.truetype(path, 80)  # Размер 80px
                 print(f"✅ Загружен шрифт: {path}")
                 break
     except:
         font = None
     
     if font is None:
+        # Если нет шрифтов, используем встроенный но рисуем жирно
         font = ImageFont.load_default()
         print("⚠️ Используется встроенный шрифт")
     
-    # Рисуем буквы
-    x_start = 150
-    y_start = 100
+    # Рисуем буквы жирно и крупно
+    colors = [
+        (0, 0, 0),        # черный
+        (0, 0, 150),      # синий
+        (150, 0, 0),      # красный
+        (0, 150, 0),      # зеленый
+    ]
+    
+    # Позиции для букв
+    positions = [(120, 100), (270, 100), (420, 100), (570, 100)]
     
     for i, char in enumerate(code):
-        color = (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100))
+        x, y = positions[i]
+        color = colors[i % len(colors)]
         
         if font != ImageFont.load_default():
-            # Жирная обводка
-            for dx in [-2, 0, 2]:
-                for dy in [-2, 0, 2]:
-                    draw.text((x_start + i*150 + dx, y_start + dy), char, fill=color, font=font)
+            # Для нормального шрифта рисуем жирно с обводкой
+            # Обводка
+            for dx in [-2, -1, 0, 1, 2]:
+                for dy in [-2, -1, 0, 1, 2]:
+                    if dx != 0 or dy != 0:
+                        draw.text((x + dx, y + dy), char, fill=(200, 200, 200), font=font)
+            # Основная буква
+            draw.text((x, y), char, fill=color, font=font)
         else:
-            draw.text((x_start + i*150, y_start), char, fill=color, font=font)
+            # Для встроенного шрифта рисуем несколько раз
+            for dx in range(-3, 4):
+                for dy in range(-3, 4):
+                    draw.text((x + dx, y + dy), char, fill=color, font=font)
+    
+    # Добавляем немного шума точками
+    for _ in range(100):
+        x = random.randint(0, width)
+        y = random.randint(0, height)
+        draw.point((x, y), fill=(100, 100, 100))
     
     # Сохраняем
     bio = io.BytesIO()
-    image.save(bio, 'PNG')
+    image.save(bio, 'PNG', quality=95)
     bio.seek(0)
     
-    print(f"✅ Капча: {code}")
+    print(f"✅ Капча сгенерирована: {code}")
     return bio.getvalue(), code
 
 # ================= БЛОКИРОВКА ПЕРЕСЫЛКИ =================
