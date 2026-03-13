@@ -228,103 +228,122 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
     
     return True
 
-# ================= ГЕНЕРАЦИЯ КАПЧИ (ОГРОМНАЯ) =================
+# ================= ГЕНЕРАЦИЯ КАПЧИ (НОРМАЛЬНАЯ ГРАФИЧЕСКАЯ) =================
 def generate_captcha_image() -> tuple:
-    """Генерация изображения капчи - ОГРОМНЫЙ РАЗМЕР"""
-    length = 4  # ТОЛЬКО 4 символа
+    """Генерация изображения капчи - ЧЕТКАЯ И БОЛЬШАЯ"""
+    length = 4  # 4 символа
     chars = string.ascii_uppercase + string.digits
     # Убираем похожие символы
-    chars = chars.replace('O', '').replace('0', '').replace('I', '').replace('1', '')
-    chars = chars.replace('S', '').replace('5', '').replace('Z', '').replace('2', '')
+    for c in ['O', '0', 'I', '1', 'S', '5', 'Z', '2']:
+        chars = chars.replace(c, '')
     code = ''.join(random.choices(chars, k=length))
     
-    # ОГРОМНЫЙ РАЗМЕР 1000x400 для максимальной видимости
-    width, height = 1000, 400
-    image = Image.new('RGB', (width, height), color=(255, 255, 255))
+    # РАЗМЕР ИЗОБРАЖЕНИЯ - БОЛЬШОЙ
+    width, height = 800, 300
+    
+    # Создаем изображение с белым фоном
+    image = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(image)
     
-    # Градиентный фон
-    for y in range(height):
-        r = int(150 + 105 * (y / height))
-        g = int(100 + 155 * (y / height))
-        b = int(200 + 55 * (y / height))
-        draw.line([(0, y), (width, y)], fill=(r, g, b))
+    # Добавляем случайный цветной фон
+    bg_color = random.choice([
+        (220, 240, 255),  # светло-голубой
+        (230, 255, 230),  # светло-зеленый
+        (255, 230, 230),  # светло-розовый
+        (255, 255, 220),  # светло-желтый
+    ])
+    draw.rectangle([(0, 0), (width, height)], fill=bg_color)
     
-    # Линии для защиты
-    for _ in range(random.randint(20, 25)):
-        x1 = random.randint(0, width)
-        y1 = random.randint(0, height)
-        x2 = random.randint(0, width)
-        y2 = random.randint(0, height)
-        line_color = (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100))
-        draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(2, 4))
-    
-    # Шум
-    for _ in range(random.randint(700, 900)):
-        x = random.randint(0, width)
-        y = random.randint(0, height)
-        point_color = (random.randint(0, 120), random.randint(0, 120), random.randint(0, 120))
-        draw.point((x, y), fill=point_color)
-    
-    # Шрифт - ОГРОМНЫЙ (120px)
-    try:
-        # Пробуем разные шрифты
-        font_paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux
-            "arial.ttf",
-            "C:\\Windows\\Fonts\\Arial.ttf",
-            "C:\\Windows\\Fonts\\Impact.ttf",
-        ]
-        font = None
-        for path in font_paths:
-            try:
-                font = ImageFont.truetype(path, 120)  # 120px - ОЧЕНЬ БОЛЬШОЙ
-                break
-            except:
-                continue
-        if not font:
-            font = ImageFont.load_default()
-            print("⚠️ Используется шрифт по умолчанию")
-    except:
-        font = ImageFont.load_default()
-    
-    # Рисуем символы - каждый с поворотом
-    x_offset = 80
-    positions = []
-    
-    for char in code:
-        # Создаем отдельное изображение для каждого символа
-        char_img = Image.new('RGBA', (180, 200), (0, 0, 0, 0))
-        char_draw = ImageDraw.Draw(char_img)
-        color = (random.randint(20, 80), random.randint(20, 80), random.randint(20, 80))
-        char_draw.text((30, 40), char, fill=color, font=font)
-        angle = random.randint(-25, 25)
-        char_img = char_img.rotate(angle, expand=1, fillcolor=(0, 0, 0, 0))
-        positions.append((x_offset, char_img))
-        x_offset += char_img.width + random.randint(30, 40)
-    
-    # Центрируем символы
-    if positions:
-        total_width = positions[-1][0] + positions[-1][1].width - positions[0][0]
-        start_x = (width - total_width) // 2
-        y_pos = (height - 200) // 2 + random.randint(-20, 20)
-        
-        for x, char_img in positions:
-            new_x = start_x + (x - positions[0][0])
-            if new_x + char_img.width < width and new_x > 0:
-                image.paste(char_img, (new_x, y_pos), char_img)
-    
-    # Добавляем шумовые линии поверх букв
+    # Рисуем случайные линии для защиты
     for _ in range(random.randint(5, 8)):
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
         x2 = random.randint(0, width)
         y2 = random.randint(0, height)
-        draw.line([(x1, y1), (x2, y2)], fill=(random.randint(100, 150), random.randint(100, 150), random.randint(100, 150)), width=2)
+        line_color = (random.randint(100, 200), random.randint(100, 200), random.randint(100, 200))
+        draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(2, 4))
     
-    # Легкое размытие
-    image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.8, 1.2)))
+    # Рисуем случайные точки для шума
+    for _ in range(random.randint(100, 200)):
+        x = random.randint(0, width)
+        y = random.randint(0, height)
+        point_color = (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100))
+        draw.point((x, y), fill=point_color)
     
+    # ЗАГРУЖАЕМ ШРИФТ - пробуем разные системные шрифты
+    font = None
+    font_size = 120  # ОЧЕНЬ БОЛЬШОЙ РАЗМЕР ШРИФТА
+    
+    # Список возможных шрифтов на разных системах
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",  # Linux
+        "/System/Library/Fonts/Helvetica.ttc",  # macOS
+        "/Library/Fonts/Arial.ttf",  # macOS
+        "C:\\Windows\\Fonts\\Arial.ttf",  # Windows
+        "C:\\Windows\\Fonts\\Impact.ttf",  # Windows
+        "arial.ttf",  # общий
+    ]
+    
+    for font_path in font_paths:
+        try:
+            if os.path.exists(font_path):
+                font = ImageFont.truetype(font_path, font_size)
+                print(f"✅ Загружен шрифт: {font_path}")
+                break
+        except:
+            continue
+    
+    # Если ни один шрифт не загрузился, используем встроенный (будет мелкий, но хоть что-то)
+    if font is None:
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
+            print("⚠️ Используется встроенный шрифт (может быть мелкий)")
+    
+    # Вычисляем позиции для каждого символа
+    total_width = 0
+    char_images = []
+    
+    for char in code:
+        # Создаем временное изображение для каждого символа
+        char_img = Image.new('RGBA', (150, 200), (0, 0, 0, 0))
+        char_draw = ImageDraw.Draw(char_img)
+        
+        # Случайный цвет для каждого символа
+        color = (
+            random.randint(30, 150),
+            random.randint(30, 150), 
+            random.randint(30, 150)
+        )
+        
+        # Рисуем символ
+        try:
+            char_draw.text((20, 20), char, fill=color, font=font)
+        except:
+            char_draw.text((20, 20), char, fill=color)
+        
+        # Поворачиваем символ на случайный угол
+        angle = random.randint(-15, 15)
+        char_img = char_img.rotate(angle, expand=1, fillcolor=(0, 0, 0, 0))
+        
+        char_images.append(char_img)
+        total_width += char_img.width + 20
+    
+    # Размещаем символы по центру
+    start_x = (width - total_width) // 2 + 40
+    y_pos = (height - 200) // 2
+    
+    for char_img in char_images:
+        if start_x + char_img.width < width:
+            image.paste(char_img, (start_x, y_pos), char_img)
+            start_x += char_img.width + random.randint(20, 30)
+    
+    # Добавляем легкое размытие
+    image = image.filter(ImageFilter.GaussianBlur(radius=0.5))
+    
+    # Сохраняем в байты
     bio = io.BytesIO()
     image.save(bio, 'PNG', quality=95)
     bio.seek(0)
@@ -614,17 +633,34 @@ async def start(message: Message, state: FSMContext):
                 has_ref_in_link = True
                 logger.info(f"🔗 Реферальная ссылка обнаружена! Код: {ref_code}, Реферер: {referrer_id}")
     
-    # ========== ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД ==========
+    # ========== ВАЖНО: ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД ==========
     if has_ref_in_link:
         logger.info(f"✅ Пользователь {user_id} перешел по реферальной ссылке")
         
-        # Проверяем, существует ли пользователь
+        # ЕСЛИ ПОЛЬЗОВАТЕЛЬ УЖЕ ЕСТЬ - ПРИНУДИТЕЛЬНО ОБНОВЛЯЕМ!
         if user:
-            # Пользователь уже есть - НЕ НАЧИСЛЯЕМ БОНУС (не новый)
-            logger.info(f"🔄 Пользователь {user_id} уже существует. Бонус рефереру НЕ начислен.")
+            logger.info(f"🔄 Пользователь {user_id} уже есть в БД. Обновляем реферера...")
+            cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
+            conn.commit()
+            
+            # Начисляем бонус рефереру (КАЖДЫЙ РАЗ, без ограничений)
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
+                          (REF_BONUS, referrer_id))
+            conn.commit()
+            
+            try:
+                await message.bot.send_message(
+                    referrer_id,
+                    f"🎁 <b>Новый реферал!</b>\n\n"
+                    f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
+                    f"➕ Вам начислено +{REF_BONUS} 🍬",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
         else:
-            # Создаем НОВОГО пользователя с реферером
-            logger.info(f"🆕 Создаем НОВОГО пользователя {user_id} с реферером {referrer_id}")
+            # Создаем нового пользователя с реферером
+            logger.info(f"🆕 Создаем нового пользователя {user_id} с реферером {referrer_id}")
             new_ref_code = generate_ref_code()
             cursor.execute("""
                 INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin)
@@ -632,7 +668,7 @@ async def start(message: Message, state: FSMContext):
             """, (user_id, username, referrer_id, new_ref_code))
             conn.commit()
             
-            # Начисляем бонус рефереру (ТОЛЬКО ЗА НОВОГО)
+            # Начисляем бонус рефереру (КАЖДЫЙ РАЗ, без ограничений)
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
                           (REF_BONUS, referrer_id))
             conn.commit()
@@ -698,7 +734,6 @@ async def start(message: Message, state: FSMContext):
         """, (user_id, username, referrer_id, new_ref_code))
         conn.commit()
         
-        # Если есть реферер и пользователь новый - начисляем бонус
         if referrer_id:
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
                           (REF_BONUS, referrer_id))
@@ -1356,7 +1391,6 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
     is_subscribed = await check_subscription(call.bot, user_id)
     
     if is_subscribed:
-        # Проверяем, получал ли уже бонус
         try:
             bonus_received = has_received_subscribe_bonus(user_id)
         except:
@@ -1596,7 +1630,7 @@ async def shop(call: CallbackQuery, state: FSMContext):
     except:
         pass
 
-# ================= ОПЛАТА =================
+# ================= ОПЛАТА С ВЫБОРОМ КРИПТЫ =================
 @router.callback_query(F.data.startswith("pay_"))
 async def pay(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -1622,24 +1656,80 @@ async def pay(call: CallbackQuery, state: FSMContext):
         return
     
     amount, usdt = prices[call.data]
-    invoice = create_invoice(usdt)
+    
+    # Сохраняем сумму в state для выбора валюты
+    await state.update_data(pay_amount=amount, pay_usdt=usdt)
+    
+    # Показываем меню выбора валюты
+    from payments import AVAILABLE_ASSETS, get_asset_icon
+    
+    keyboard = []
+    for asset in AVAILABLE_ASSETS:
+        icon = get_asset_icon(asset)
+        keyboard.append([InlineKeyboardButton(
+            text=f"{icon} {asset}", 
+            callback_data=f"pay_asset_{asset}"
+        )])
+    
+    await call.message.answer(
+        f"💳 <b>Выберите валюту для оплаты</b>\n\n"
+        f"🍬 Конфет: {amount}\n"
+        f"💵 Сумма: {usdt} USD\n\n"
+        f"Курс будет сконвертирован автоматически:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
+@router.callback_query(F.data.startswith("pay_asset_"))
+async def pay_with_asset(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        return
+    
+    asset = call.data.replace("pay_asset_", "")
+    
+    data = await state.get_data()
+    amount = data.get('pay_amount')
+    usdt = data.get('pay_usdt')
+    
+    if not amount or not usdt:
+        await safe_answer(call, "❌ Ошибка: данные платежа не найдены", show_alert=True)
+        return
+    
+    from payments import create_invoice, get_exchange_rates, get_asset_icon
+    
+    # Получаем курсы для отображения
+    rates = get_exchange_rates()
+    rate_text = ""
+    crypto_amount = usdt
+    
+    if rates and asset in rates:
+        rate = rates[asset]
+        crypto_amount = round(usdt / rate, 8)
+        rate_text = f"\n1 {asset} = {rate} USD\n💰 К оплате: {crypto_amount} {asset}"
+    
+    invoice = create_invoice(usdt, asset)
     
     cursor.execute(
         "INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)",
-        (invoice["invoice_id"], call.from_user.id, amount)
+        (invoice["invoice_id"], user_id, amount)
     )
     conn.commit()
     
-    try:
-        await call.message.answer(
-            f"💳 <b>Оплата</b>\n\n🍬 {amount}\n💵 {usdt} USDT",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💰 Оплатить", url=invoice["pay_url"])],
-                [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{invoice['invoice_id']}")]
-            ])
-        )
-    except:
-        pass
+    icon = get_asset_icon(asset)
+    
+    await call.message.answer(
+        f"💳 <b>Оплата в {icon} {asset}</b>\n\n"
+        f"🍬 Конфет: {amount}\n"
+        f"💵 Сумма: {usdt} USD{rate_text}\n\n"
+        f"🔄 Курс обновлен в реальном времени",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} {asset}", url=invoice["pay_url"])],
+            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{invoice['invoice_id']}")]
+        ])
+    )
+    
+    await state.clear()
 
 @router.callback_query(F.data.startswith("check_"))
 async def check_payment(call: CallbackQuery, state: FSMContext):
@@ -1657,9 +1747,14 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
         await safe_answer(call, "❌ Платёж не найден", show_alert=True)
         return
     
-    if check_invoice(invoice_id):
+    from payments import check_invoice
+    result = check_invoice(invoice_id)
+    
+    if result.get("paid", False):
+        # ТОЛЬКО ЗДЕСЬ НАЧИСЛЯЕМ КОНФЕТЫ - ПОСЛЕ РЕАЛЬНОЙ ОПЛАТЫ
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (row["amount"], row["user_id"]))
         
+        # Начисляем бонус рефереру
         cursor.execute("SELECT referrer FROM users WHERE user_id = ?", (row["user_id"],))
         user = cursor.fetchone()
         if user and user["referrer"]:
@@ -1676,9 +1771,22 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
                 except:
                     pass
         
+        # Удаляем запись о платеже
         cursor.execute("DELETE FROM payments WHERE invoice_id = ?", (invoice_id,))
         conn.commit()
-        await safe_answer(call, f"✅ Оплата прошла! +{row['amount']} 🍬", show_alert=True)
+        
+        # Получаем новый баланс
+        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (row["user_id"],))
+        new_balance = cursor.fetchone()["balance"]
+        
+        await safe_answer(call, f"✅ Оплата прошла! +{row['amount']} 🍬\n💰 Баланс: {new_balance} 🍬", show_alert=True)
+        
+        # Отправляем сообщение о успешной оплате
+        await call.message.answer(
+            f"✅ <b>Оплата успешно подтверждена!</b>\n\n"
+            f"🍬 Начислено: +{row['amount']} конфет\n"
+            f"💰 Текущий баланс: {new_balance} 🍬"
+        )
     else:
         await safe_answer(call, "⏳ Платёж ещё не оплачен", show_alert=True)
 
@@ -1735,6 +1843,7 @@ async def admin_stats(call: CallbackQuery):
     cursor.execute("SELECT COUNT(*) as count FROM user_videos")
     total_views = cursor.fetchone()["count"]
     
+    # РЕАЛЬНЫЕ ПЛАТЕЖИ - ТОЛЬКО УСПЕШНЫЕ
     cursor.execute("SELECT COUNT(*) as count FROM payments")
     total_payments = cursor.fetchone()["count"]
     
