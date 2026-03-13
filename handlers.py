@@ -874,14 +874,17 @@ async def process_custom_pay(message: Message, state: FSMContext):
         # Сохраняем данные для выбора валюты
         await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=True)
         
-        # Показываем меню выбора валюты
+        # Показываем меню выбора валюты ГОРИЗОНТАЛЬНОЕ
         keyboard = []
-        for asset in AVAILABLE_ASSETS:
+        row = []
+        for i, asset in enumerate(AVAILABLE_ASSETS):
             icon = get_asset_icon(asset)
-            keyboard.append([InlineKeyboardButton(
-                text=f"{icon} {asset}", 
-                callback_data=f"pay_asset_{asset}"
-            )])
+            row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
+            if (i + 1) % 3 == 0:  # По 3 в ряд
+                keyboard.append(row)
+                row = []
+        if row:  # Остаток
+            keyboard.append(row)
         
         await message.answer(
             f"💳 <b>Выберите валюту для оплаты</b>\n\n"
@@ -899,6 +902,8 @@ async def process_custom_pay(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("pay_"))
 async def pay(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
+    
+    print(f"💰 pay called with data: {call.data}")  # ОТЛАДКА
     
     if not await check_access(call.bot, user_id, state, call=call):
         return
@@ -918,21 +923,26 @@ async def pay(call: CallbackQuery, state: FSMContext):
         return
     
     if call.data not in prices:
+        print(f"❌ Unknown pay data: {call.data}")
         return
     
     amount, usdt = prices[call.data]
+    print(f"✅ Selected: {amount} candies for ${usdt}")
     
     # Сохраняем сумму в state для выбора валюты
     await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
     
-    # Показываем меню выбора валюты
+    # Показываем меню выбора валюты ГОРИЗОНТАЛЬНОЕ
     keyboard = []
-    for asset in AVAILABLE_ASSETS:
+    row = []
+    for i, asset in enumerate(AVAILABLE_ASSETS):
         icon = get_asset_icon(asset)
-        keyboard.append([InlineKeyboardButton(
-            text=f"{icon} {asset}", 
-            callback_data=f"pay_asset_{asset}"
-        )])
+        row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
+        if (i + 1) % 3 == 0:  # По 3 в ряд
+            keyboard.append(row)
+            row = []
+    if row:  # Остаток
+        keyboard.append(row)
     
     await call.message.answer(
         f"💳 <b>Выберите валюту для оплаты</b>\n\n"
@@ -946,10 +956,13 @@ async def pay(call: CallbackQuery, state: FSMContext):
 async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
+    print(f"💰 pay_with_asset called with data: {call.data}")  # ОТЛАДКА
+    
     if not await check_access(call.bot, user_id, state, call=call):
         return
     
     asset = call.data.replace("pay_asset_", "")
+    print(f"✅ Selected asset: {asset}")
     
     data = await state.get_data()
     amount = data.get('pay_amount')
