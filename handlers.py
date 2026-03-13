@@ -874,7 +874,7 @@ async def process_custom_pay(message: Message, state: FSMContext):
         # Сохраняем данные для выбора валюты
         await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=True)
         
-        # Показываем меню выбора валюты (USDT и TON первые)
+        # Показываем меню выбора валюты
         keyboard = []
         
         # Сортируем валюты: USDT и TON первые
@@ -885,10 +885,10 @@ async def process_custom_pay(message: Message, state: FSMContext):
         for i, asset in enumerate(sorted_assets):
             icon = get_asset_icon(asset)
             row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
-            if (i + 1) % 2 == 0:  # По 2 в ряд
+            if (i + 1) % 2 == 0:
                 keyboard.append(row)
                 row = []
-        if row:  # Остаток
+        if row:
             keyboard.append(row)
         
         await message.answer(
@@ -908,9 +908,10 @@ async def process_custom_pay(message: Message, state: FSMContext):
 async def pay(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
-    print(f"💰 pay called with data: {call.data}")  # ОТЛАДКА
+    print(f"💰 pay called with data: {call.data}")
     
     if not await check_access(call.bot, user_id, state, call=call):
+        print("❌ Доступ запрещен")
         return
     
     prices = {
@@ -937,7 +938,7 @@ async def pay(call: CallbackQuery, state: FSMContext):
     # Сохраняем сумму в state для выбора валюты
     await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
     
-    # Показываем меню выбора валюты (USDT и TON первые)
+    # Показываем меню выбора валюты
     keyboard = []
     
     # Сортируем валюты: USDT и TON первые
@@ -948,10 +949,10 @@ async def pay(call: CallbackQuery, state: FSMContext):
     for i, asset in enumerate(sorted_assets):
         icon = get_asset_icon(asset)
         row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
-        if (i + 1) % 2 == 0:  # По 2 в ряд
+        if (i + 1) % 2 == 0:
             keyboard.append(row)
             row = []
-    if row:  # Остаток
+    if row:
         keyboard.append(row)
     
     await call.message.answer(
@@ -962,25 +963,36 @@ async def pay(call: CallbackQuery, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
 
+# ================= ОБРАБОТКА ВЫБОРА ВАЛЮТЫ (ИСПРАВЛЕНО) =================
 @router.callback_query(F.data.startswith("pay_asset_"))
 async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
-    print(f"💰 pay_with_asset called with data: {call.data}")  # ОТЛАДКА
+    print(f"💰💰💰 pay_with_asset ВЫЗВАНА с data: {call.data}")
+    print(f"👤 Пользователь: {user_id}")
+    
+    # ОБЯЗАТЕЛЬНО вызываем safe_answer, чтобы убрать "часики"
+    await safe_answer(call)
     
     if not await check_access(call.bot, user_id, state, call=call):
+        print("❌ Доступ запрещен")
         return
     
     asset = call.data.replace("pay_asset_", "")
-    print(f"✅ Selected asset: {asset}")
+    print(f"✅ Выбрана валюта: {asset}")
     
     data = await state.get_data()
+    print(f"📦 Данные из state: {data}")
+    
     amount = data.get('pay_amount')
     usdt = data.get('pay_usdt')
     
     if not amount or not usdt:
-        await safe_answer(call, "❌ Ошибка: данные платежа не найдены", show_alert=True)
+        print(f"❌ Ошибка: amount={amount}, usdt={usdt}")
+        await call.message.answer("❌ Ошибка: данные платежа не найдены. Пожалуйста, выберите пакет заново.")
         return
+    
+    print(f"💰 Сумма: {amount} конфет = ${usdt}")
     
     # Получаем курсы для отображения
     from payments import get_exchange_rates
@@ -992,17 +1004,25 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
         rate = rates[asset]
         crypto_amount = round(usdt / rate, 8)
         rate_text = f"\n1 {asset} = {rate} USD\n💰 К оплате: {crypto_amount} {asset}"
+        print(f"💱 Курс: 1 {asset} = {rate} USD")
+        print(f"💸 К оплате: {crypto_amount} {asset}")
+    else:
+        print(f"⚠️ Курс для {asset} не найден, используется USDT")
     
     invoice = create_invoice(usdt, asset)
+    print(f"🧾 Счет создан: {invoice}")
+    print(f"🔗 Ссылка на оплату: {invoice.get('pay_url')}")
     
     cursor.execute(
         "INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)",
         (invoice["invoice_id"], user_id, amount)
     )
     conn.commit()
+    print(f"✅ Запись о платеже добавлена в БД")
     
     icon = get_asset_icon(asset)
     
+    # Отправляем сообщение с кнопкой оплаты
     await call.message.answer(
         f"💳 <b>Оплата в {icon} {asset}</b>\n\n"
         f"🍬 Конфет: {amount}\n"
@@ -1014,7 +1034,9 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
         ])
     )
     
+    # Очищаем state
     await state.clear()
+    print(f"✅ State очищен")
 
 # ================= ПРОВЕРКА ПОДПИСКИ (ИСПРАВЛЕНО) =================
 @router.callback_query(F.data == "check_subscribe")
@@ -1063,7 +1085,7 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
         except:
             pass
 
-# ================= ПРОВЕРКА ПЛАТЕЖА (ИСПРАВЛЕНО) =================
+# ================= ПРОВЕРКА ПЛАТЕЖА =================
 @router.callback_query(F.data.startswith("check_"))
 async def check_payment(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -1072,20 +1094,24 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
     if call.data == "check_subscribe":
         return
     
+    await safe_answer(call)
+    
     if not await check_access(call.bot, user_id, state, call=call):
         return
     
     invoice_id = call.data.split("_", 1)[1]
+    print(f"🔍 Проверка платежа: {invoice_id}")
     
     cursor.execute("SELECT user_id, amount FROM payments WHERE invoice_id = ?", (invoice_id,))
     row = cursor.fetchone()
     
     if not row:
-        await safe_answer(call, "❌ Платёж не найден", show_alert=True)
+        await call.message.answer("❌ Платёж не найден")
         return
     
     from payments import check_invoice
     result = check_invoice(invoice_id)
+    print(f"📊 Результат проверки: {result}")
     
     if result.get("paid", False):
         # ТОЛЬКО ЗДЕСЬ НАЧИСЛЯЕМ КОНФЕТЫ - ПОСЛЕ РЕАЛЬНОЙ ОПЛАТЫ
@@ -1116,16 +1142,13 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
         cursor.execute("SELECT balance FROM users WHERE user_id = ?", (row["user_id"],))
         new_balance = cursor.fetchone()["balance"]
         
-        await safe_answer(call, f"✅ Оплата прошла! +{row['amount']} 🍬\n💰 Баланс: {new_balance} 🍬", show_alert=True)
-        
-        # Отправляем сообщение о успешной оплате
         await call.message.answer(
             f"✅ <b>Оплата успешно подтверждена!</b>\n\n"
             f"🍬 Начислено: +{row['amount']} конфет\n"
             f"💰 Текущий баланс: {new_balance} 🍬"
         )
     else:
-        await safe_answer(call, "⏳ Платёж ещё не оплачен", show_alert=True)
+        await call.message.answer("⏳ Платёж ещё не оплачен")
 
 # ================= ПРОМОКОДЫ =================
 @router.message(PromoStates.waiting_for_promo)
