@@ -228,9 +228,9 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
     
     return True
 
-# ================= ГЕНЕРАЦИЯ КАПЧИ (ГАРАНТИРОВАННО БОЛЬШИЕ БУКВЫ) =================
+# ================= ГЕНЕРАЦИЯ КАПЧИ (РАБОЧАЯ ВЕРСИЯ) =================
 def generate_captcha_image() -> tuple:
-    """Генерация изображения капчи - БУКВЫ ВСЕГДА БОЛЬШИЕ 200px"""
+    """Генерация изображения капчи - РАБОЧАЯ ВЕРСИЯ"""
     length = 4
     chars = string.ascii_uppercase + string.digits
     # Убираем похожие символы
@@ -239,118 +239,66 @@ def generate_captcha_image() -> tuple:
         chars = chars.replace(c, '')
     code = ''.join(random.choices(chars, k=length))
     
-    # ОГРОМНЫЙ РАЗМЕР
-    width, height = 1400, 600
+    # РАЗМЕР
+    width, height = 800, 300
     
-    # Создаем изображение
+    # Создаем изображение с белым фоном
     image = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(image)
     
-    # Градиентный фон
-    for y in range(height):
-        color = (
-            random.randint(220, 255),
-            random.randint(220, 255),
-            random.randint(220, 255)
-        )
-        draw.line([(0, y), (width, y)], fill=color)
+    # Светло-серый фон
+    draw.rectangle([(0, 0), (width, height)], fill=(245, 245, 245))
     
-    # ЛИНИИ для защиты
-    for _ in range(15):
+    # Добавляем несколько линий для защиты (но немного)
+    for _ in range(3):
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
         x2 = random.randint(0, width)
         y2 = random.randint(0, height)
-        line_color = (
-            random.randint(100, 180),
-            random.randint(100, 180),
-            random.randint(100, 180)
-        )
-        draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(2, 5))
+        draw.line([(x1, y1), (x2, y2)], fill=(200, 200, 200), width=1)
     
     # ПЫТАЕМСЯ ЗАГРУЗИТЬ ШРИФТ
     font = None
+    font_size = 100
+    
     try:
-        # Пробуем разные пути для шрифтов
+        # Пробуем разные шрифты
         font_paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
+            "arial.ttf",
             "C:\\Windows\\Fonts\\Arial.ttf",
-            "arial.ttf"
+            "C:\\Windows\\Fonts\\Impact.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         ]
+        
         for path in font_paths:
             if os.path.exists(path):
-                font = ImageFont.truetype(path, 200)  # 200px - ОЧЕНЬ БОЛЬШОЙ
+                font = ImageFont.truetype(path, font_size)
                 print(f"✅ Загружен шрифт: {path}")
                 break
     except:
         font = None
     
-    # РАЗМЕРЫ ДЛЯ БУКВ
-    # Если шрифт загрузился - используем его, если нет - рисуем вручную большими линиями
-    if font:
-        # Используем загруженный шрифт
-        colors = [
-            (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100)),
-            (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100)),
-            (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100)),
-            (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100))
-        ]
-        
-        positions = [(150, 200), (450, 200), (750, 200), (1050, 200)]
-        
-        for i, char in enumerate(code):
-            x, y = positions[i]
-            # Тень
-            draw.text((x+5, y+5), char, fill=(120, 120, 120), font=font)
-            # Основная буква
-            draw.text((x, y), char, fill=colors[i], font=font)
-            # Обводка
-            draw.text((x-2, y-2), char, fill=(0, 0, 0), font=font)
-            draw.text((x+2, y+2), char, fill=(0, 0, 0), font=font)
-    else:
-        # РИСУЕМ БУКВЫ ВРУЧНУЮ ОГРОМНЫМИ ЛИНИЯМИ
-        print("⚠️ Шрифт не загружен, рисуем вручную")
-        
-        # Определяем точки для больших букв (упрощенно)
-        # Для каждой буквы рисуем ее контур толстыми линиями
-        big_font_size = 180
-        try:
-            # Последняя попытка с дефолтным шрифтом но огромным размером
-            font = ImageFont.load_default()
-            positions = [(150, 200), (450, 200), (750, 200), (1050, 200)]
-            for i, char in enumerate(code):
-                color = (
-                    random.randint(0, 150),
-                    random.randint(0, 150),
-                    random.randint(0, 150)
-                )
-                # Рисуем букву несколько раз для жирности
-                for dx in range(-5, 6, 2):
-                    for dy in range(-5, 6, 2):
-                        draw.text((positions[i][0] + dx, positions[i][1] + dy), char, fill=color, font=font)
-        except:
-            # Если совсем ничего не работает - рисуем просто черные прямоугольники (для теста)
-            for i in range(4):
-                x = 150 + i * 300
-                y = 200
-                draw.rectangle([(x, y), (x+100, y+150)], fill=(0, 0, 0))
-                draw.text((x+30, y+50), code[i], fill=(255, 255, 255), font=None)
+    # Если шрифт не загрузился, используем встроенный
+    if font is None:
+        font = ImageFont.load_default()
+        print("⚠️ Используется встроенный шрифт")
     
-    # Добавляем шум
-    for _ in range(800):
-        x = random.randint(0, width)
-        y = random.randint(0, height)
-        draw.point((x, y), fill=(
+    # РИСУЕМ БУКВЫ
+    x_start = 150
+    y_start = 100
+    
+    for i, char in enumerate(code):
+        # Случайный цвет для каждой буквы
+        color = (
             random.randint(0, 100),
             random.randint(0, 100),
             random.randint(0, 100)
-        ))
+        )
+        
+        # Рисуем букву
+        draw.text((x_start + i * 150, y_start), char, fill=color, font=font)
     
-    # Легкое размытие
-    image = image.filter(ImageFilter.GaussianBlur(radius=0.5))
-    
+    # Сохраняем
     bio = io.BytesIO()
     image.save(bio, 'PNG', quality=95)
     bio.seek(0)
@@ -2350,27 +2298,19 @@ async def test_captcha_command(message: Message, state: FSMContext):
     user_id = message.from_user.id
     
     if not check_admin_access(user_id)[0]:
+        await message.answer("❌ Только для админов")
         return
     
-    cursor.execute("UPDATE users SET is_verified = 0 WHERE user_id = ?", (user_id,))
-    conn.commit()
-    
-    if user_id in banned_users:
-        del banned_users[user_id]
-    if user_id in captcha_attempts:
-        del captcha_attempts[user_id]
-    
+    # Генерируем капчу
     image_bytes, captcha_code = generate_captcha_image()
-    captcha_data[user_id] = captcha_code
-    await state.update_data(captcha_code=captcha_code)
-    await state.set_state(CaptchaStates.waiting_for_captcha)
     
+    # Отправляем только изображение, без ввода
     await message.answer_photo(
         photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
-        caption=f"🔐 <b>ТЕСТОВАЯ КАПЧА</b>\n\n"
-                f"Введите код с картинки:\n"
-                f"🎯 Правильный код: {captcha_code} (для теста)\n"
-                f"📊 Осталось попыток: 3/3"
+        caption=f"🔐 <b>ТЕСТ КАПЧИ</b>\n\n"
+                f"Код: <code>{captcha_code}</code>\n"
+                f"Размер: 800x300\n"
+                f"Буквы: 100px"
     )
 
 @router.message(Command("list_promos"))
