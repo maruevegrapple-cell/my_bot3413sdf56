@@ -874,13 +874,18 @@ async def process_custom_pay(message: Message, state: FSMContext):
         # Сохраняем данные для выбора валюты
         await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=True)
         
-        # Показываем меню выбора валюты ГОРИЗОНТАЛЬНОЕ
+        # Показываем меню выбора валюты (USDT и TON первые)
         keyboard = []
+        
+        # Сортируем валюты: USDT и TON первые
+        sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
+        
+        # Создаем ряды по 2 кнопки
         row = []
-        for i, asset in enumerate(AVAILABLE_ASSETS):
+        for i, asset in enumerate(sorted_assets):
             icon = get_asset_icon(asset)
             row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
-            if (i + 1) % 3 == 0:  # По 3 в ряд
+            if (i + 1) % 2 == 0:  # По 2 в ряд
                 keyboard.append(row)
                 row = []
         if row:  # Остаток
@@ -932,13 +937,18 @@ async def pay(call: CallbackQuery, state: FSMContext):
     # Сохраняем сумму в state для выбора валюты
     await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
     
-    # Показываем меню выбора валюты ГОРИЗОНТАЛЬНОЕ
+    # Показываем меню выбора валюты (USDT и TON первые)
     keyboard = []
+    
+    # Сортируем валюты: USDT и TON первые
+    sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
+    
+    # Создаем ряды по 2 кнопки
     row = []
-    for i, asset in enumerate(AVAILABLE_ASSETS):
+    for i, asset in enumerate(sorted_assets):
         icon = get_asset_icon(asset)
         row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
-        if (i + 1) % 3 == 0:  # По 3 в ряд
+        if (i + 1) % 2 == 0:  # По 2 в ряд
             keyboard.append(row)
             row = []
     if row:  # Остаток
