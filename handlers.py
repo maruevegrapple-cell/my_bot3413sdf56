@@ -228,9 +228,9 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
     
     return True
 
-# ================= ГЕНЕРАЦИЯ КАПЧИ (РАБОЧАЯ ВЕРСИЯ) =================
+# ================= ГЕНЕРАЦИЯ КАПЧИ (НОРМАЛЬНАЯ ВИДИМАЯ) =================
 def generate_captcha_image() -> tuple:
-    """Генерация изображения капчи - РАБОЧАЯ ВЕРСИЯ"""
+    """Генерация изображения капчи - БОЛЬШИЕ ВИДИМЫЕ БУКВЫ"""
     length = 4
     chars = string.ascii_uppercase + string.digits
     # Убираем похожие символы
@@ -246,57 +246,75 @@ def generate_captcha_image() -> tuple:
     image = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(image)
     
-    # Светло-серый фон
-    draw.rectangle([(0, 0), (width, height)], fill=(245, 245, 245))
+    # Заливка фона
+    draw.rectangle([(0, 0), (width, height)], fill=(255, 255, 255))
     
-    # Добавляем несколько линий для защиты (но немного)
-    for _ in range(3):
-        x1 = random.randint(0, width)
-        y1 = random.randint(0, height)
-        x2 = random.randint(0, width)
-        y2 = random.randint(0, height)
-        draw.line([(x1, y1), (x2, y2)], fill=(200, 200, 200), width=1)
+    # Добавляем легкие серые линии для защиты
+    for i in range(0, width, 50):
+        draw.line([(i, 0), (i, height)], fill=(230, 230, 230), width=1)
+    for i in range(0, height, 50):
+        draw.line([(0, i), (width, i)], fill=(230, 230, 230), width=1)
     
-    # ПЫТАЕМСЯ ЗАГРУЗИТЬ ШРИФТ
+    # Пытаемся загрузить жирный шрифт
     font = None
-    font_size = 100
-    
     try:
         # Пробуем разные шрифты
         font_paths = [
-            "arial.ttf",
             "C:\\Windows\\Fonts\\Arial.ttf",
             "C:\\Windows\\Fonts\\Impact.ttf",
+            "C:\\Windows\\Fonts\\arialbd.ttf",  # Arial Bold
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "arial.ttf"
         ]
         
         for path in font_paths:
             if os.path.exists(path):
-                font = ImageFont.truetype(path, font_size)
+                font = ImageFont.truetype(path, 80)  # Размер 80px
                 print(f"✅ Загружен шрифт: {path}")
                 break
     except:
         font = None
     
-    # Если шрифт не загрузился, используем встроенный
     if font is None:
+        # Если нет шрифтов, используем встроенный но рисуем жирно
         font = ImageFont.load_default()
         print("⚠️ Используется встроенный шрифт")
     
-    # РИСУЕМ БУКВЫ
-    x_start = 150
-    y_start = 100
+    # Рисуем буквы жирно и крупно
+    colors = [
+        (0, 0, 0),        # черный
+        (0, 0, 150),      # синий
+        (150, 0, 0),      # красный
+        (0, 150, 0),      # зеленый
+    ]
+    
+    # Позиции для букв
+    positions = [(120, 100), (270, 100), (420, 100), (570, 100)]
     
     for i, char in enumerate(code):
-        # Случайный цвет для каждой буквы
-        color = (
-            random.randint(0, 100),
-            random.randint(0, 100),
-            random.randint(0, 100)
-        )
+        x, y = positions[i]
+        color = colors[i % len(colors)]
         
-        # Рисуем букву
-        draw.text((x_start + i * 150, y_start), char, fill=color, font=font)
+        if font != ImageFont.load_default():
+            # Для нормального шрифта рисуем жирно с обводкой
+            # Обводка
+            for dx in [-2, -1, 0, 1, 2]:
+                for dy in [-2, -1, 0, 1, 2]:
+                    if dx != 0 or dy != 0:
+                        draw.text((x + dx, y + dy), char, fill=(200, 200, 200), font=font)
+            # Основная буква
+            draw.text((x, y), char, fill=color, font=font)
+        else:
+            # Для встроенного шрифта рисуем несколько раз
+            for dx in range(-3, 4):
+                for dy in range(-3, 4):
+                    draw.text((x + dx, y + dy), char, fill=color, font=font)
+    
+    # Добавляем немного шума точками
+    for _ in range(100):
+        x = random.randint(0, width)
+        y = random.randint(0, height)
+        draw.point((x, y), fill=(100, 100, 100))
     
     # Сохраняем
     bio = io.BytesIO()
@@ -1508,10 +1526,11 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
         except:
             pass
         
-        await call.message.answer(
-            f"✅ <b>Спасибо за подписку!</b>{bonus_text}\n\nДобро пожаловать!",
-            reply_markup=main_menu
-        )
+        # Сначала отправляем сообщение о доступе
+        await call.message.answer(f"✅ <b>Доступ получен!</b>{bonus_text}")
+        
+        # Потом отправляем основное меню
+        await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
         try:
             await call.message.answer("❌ Вы еще не подписались на канал!")
@@ -2310,7 +2329,7 @@ async def test_captcha_command(message: Message, state: FSMContext):
         caption=f"🔐 <b>ТЕСТ КАПЧИ</b>\n\n"
                 f"Код: <code>{captcha_code}</code>\n"
                 f"Размер: 800x300\n"
-                f"Буквы: 100px"
+                f"Буквы: 80px"
     )
 
 @router.message(Command("list_promos"))
