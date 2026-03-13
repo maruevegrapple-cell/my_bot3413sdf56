@@ -6,6 +6,7 @@ import io
 import string
 import os
 import requests
+import traceback
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
@@ -37,7 +38,13 @@ from keyboards import (
     fake_menu, main_menu, video_menu, shop_menu, get_admin_menu, 
     confirm_menu, subscribe_menu, op_menu, admin_manage_menu
 )
-from payments import create_invoice, check_invoice, AVAILABLE_ASSETS, get_asset_icon
+from payments import (
+    create_invoice, 
+    check_invoice, 
+    AVAILABLE_ASSETS, 
+    get_asset_icon,
+    get_exchange_rates
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -908,10 +915,10 @@ async def process_custom_pay(message: Message, state: FSMContext):
 async def pay(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
-    print(f"💰 pay called with data: {call.data}")
+    logger.info(f"💰 pay called with data: {call.data}")
     
     if not await check_access(call.bot, user_id, state, call=call):
-        print("❌ Доступ запрещен")
+        logger.warning(f"❌ Доступ запрещен для пользователя {user_id}")
         return
     
     prices = {
@@ -929,11 +936,11 @@ async def pay(call: CallbackQuery, state: FSMContext):
         return
     
     if call.data not in prices:
-        print(f"❌ Unknown pay data: {call.data}")
+        logger.warning(f"❌ Unknown pay data: {call.data}")
         return
     
     amount, usdt = prices[call.data]
-    print(f"✅ Selected: {amount} candies for ${usdt}")
+    logger.info(f"✅ Selected: {amount} candies for ${usdt}")
     
     # Сохраняем сумму в state для выбора валюты
     await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
@@ -963,40 +970,46 @@ async def pay(call: CallbackQuery, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
 
-# ================= ОБРАБОТКА ВЫБОРА ВАЛЮТЫ (ИСПРАВЛЕНО) =================
+# ================= ОБРАБОТКА ВЫБОРА ВАЛЮТЫ (ИСПРАВЛЕННАЯ ВЕРСИЯ) =================
 @router.callback_query(F.data.startswith("pay_asset_"))
 async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
-    print(f"💰💰💰 pay_with_asset ВЫЗВАНА с data: {call.data}")
-    print(f"👤 Пользователь: {user_id}")
+    # Подробное логирование
+    logger.info(f"💰💰💰 pay_with_asset ВЫЗВАНА с data: {call.data}")
+    logger.info(f"👤 Пользователь: {user_id}")
     
     # ОБЯЗАТЕЛЬНО вызываем safe_answer, чтобы убрать "часики"
     await safe_answer(call)
     
     if not await check_access(call.bot, user_id, state, call=call):
-        print("❌ Доступ запрещен")
+        logger.warning(f"❌ Доступ запрещен для пользователя {user_id}")
         return
     
     asset = call.data.replace("pay_asset_", "")
-    print(f"✅ Выбрана валюта: {asset}")
+    logger.info(f"✅ Выбрана валюта: {asset}")
     
     data = await state.get_data()
-    print(f"📦 Данные из state: {data}")
+    logger.info(f"📦 Данные из state: {data}")
     
     amount = data.get('pay_amount')
     usdt = data.get('pay_usdt')
     
     if not amount or not usdt:
-        print(f"❌ Ошибка: amount={amount}, usdt={usdt}")
+        logger.error(f"❌ Ошибка: amount={amount}, usdt={usdt}")
         await call.message.answer("❌ Ошибка: данные платежа не найдены. Пожалуйста, выберите пакет заново.")
         return
     
-    print(f"💰 Сумма: {amount} конфет = ${usdt}")
+    logger.info(f"💰 Сумма: {amount} конфет = ${usdt}")
     
     # Получаем курсы для отображения
-    from payments import get_exchange_rates
-    rates = get_exchange_rates()
+    try:
+        rates = get_exchange_rates()
+        logger.info(f"📊 Курсы валют: {rates}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения курсов: {e}")
+        rates = None
+    
     rate_text = ""
     crypto_amount = usdt
     
@@ -1004,39 +1017,58 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
         rate = rates[asset]
         crypto_amount = round(usdt / rate, 8)
         rate_text = f"\n1 {asset} = {rate} USD\n💰 К оплате: {crypto_amount} {asset}"
-        print(f"💱 Курс: 1 {asset} = {rate} USD")
-        print(f"💸 К оплате: {crypto_amount} {asset}")
+        logger.info(f"💱 Курс: 1 {asset} = {rate} USD")
+        logger.info(f"💸 К оплате: {crypto_amount} {asset}")
     else:
-        print(f"⚠️ Курс для {asset} не найден, используется USDT")
+        logger.warning(f"⚠️ Курс для {asset} не найден, используется USDT")
     
-    invoice = create_invoice(usdt, asset)
-    print(f"🧾 Счет создан: {invoice}")
-    print(f"🔗 Ссылка на оплату: {invoice.get('pay_url')}")
+    # Создаем счет
+    try:
+        invoice = create_invoice(usdt, asset)
+        logger.info(f"🧾 Счет создан: {invoice}")
+        logger.info(f"🔗 Ссылка на оплату: {invoice.get('pay_url')}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания счета: {e}")
+        logger.error(traceback.format_exc())
+        await call.message.answer("❌ Ошибка при создании платежа. Попробуйте позже.")
+        return
     
-    cursor.execute(
-        "INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)",
-        (invoice["invoice_id"], user_id, amount)
-    )
-    conn.commit()
-    print(f"✅ Запись о платеже добавлена в БД")
+    # Сохраняем в БД
+    try:
+        cursor.execute(
+            "INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)",
+            (invoice["invoice_id"], user_id, amount)
+        )
+        conn.commit()
+        logger.info(f"✅ Запись о платеже добавлена в БД")
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения в БД: {e}")
+        await call.message.answer("❌ Ошибка при сохранении платежа. Попробуйте позже.")
+        return
     
     icon = get_asset_icon(asset)
     
     # Отправляем сообщение с кнопкой оплаты
-    await call.message.answer(
-        f"💳 <b>Оплата в {icon} {asset}</b>\n\n"
-        f"🍬 Конфет: {amount}\n"
-        f"💵 Сумма: {usdt} USD{rate_text}\n\n"
-        f"🔄 Курс обновлен в реальном времени",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} {asset}", url=invoice["pay_url"])],
-            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{invoice['invoice_id']}")]
-        ])
-    )
+    try:
+        await call.message.answer(
+            f"💳 <b>Оплата в {icon} {asset}</b>\n\n"
+            f"🍬 Конфет: {amount}\n"
+            f"💵 Сумма: {usdt} USD{rate_text}\n\n"
+            f"🔄 Курс обновлен в реальном времени",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} {asset}", url=invoice["pay_url"])],
+                [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{invoice['invoice_id']}")]
+            ])
+        )
+        logger.info(f"✅ Сообщение с оплатой отправлено пользователю {user_id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки сообщения: {e}")
+        await call.message.answer("❌ Ошибка при отправке сообщения. Попробуйте позже.")
+        return
     
     # Очищаем state
     await state.clear()
-    print(f"✅ State очищен")
+    logger.info(f"✅ State очищен для пользователя {user_id}")
 
 # ================= ПРОВЕРКА ПОДПИСКИ (ИСПРАВЛЕНО) =================
 @router.callback_query(F.data == "check_subscribe")
@@ -1100,7 +1132,7 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
         return
     
     invoice_id = call.data.split("_", 1)[1]
-    print(f"🔍 Проверка платежа: {invoice_id}")
+    logger.info(f"🔍 Проверка платежа: {invoice_id}")
     
     cursor.execute("SELECT user_id, amount FROM payments WHERE invoice_id = ?", (invoice_id,))
     row = cursor.fetchone()
@@ -1109,9 +1141,8 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
         await call.message.answer("❌ Платёж не найден")
         return
     
-    from payments import check_invoice
     result = check_invoice(invoice_id)
-    print(f"📊 Результат проверки: {result}")
+    logger.info(f"📊 Результат проверки: {result}")
     
     if result.get("paid", False):
         # ТОЛЬКО ЗДЕСЬ НАЧИСЛЯЕМ КОНФЕТЫ - ПОСЛЕ РЕАЛЬНОЙ ОПЛАТЫ
