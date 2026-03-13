@@ -228,74 +228,101 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
     
     return True
 
-# ================= ГЕНЕРАЦИЯ КАПЧИ =================
+# ================= ГЕНЕРАЦИЯ КАПЧИ (ИСПРАВЛЕННАЯ) =================
 def generate_captcha_image() -> tuple:
     """Генерация изображения капчи с правильным размером"""
-    length = random.randint(5, 6)
+    length = 4  # ТОЛЬКО 4 символа для легкости ввода
     chars = string.ascii_uppercase + string.digits
     chars = chars.replace('O', '').replace('0', '').replace('I', '').replace('1', '')
     chars = chars.replace('S', '').replace('5', '').replace('Z', '').replace('2', '')
     code = ''.join(random.choices(chars, k=length))
     
-    width, height = 600, 200
+    # БОЛЬШОЙ РАЗМЕР для хорошей видимости (800x300)
+    width, height = 800, 300
     image = Image.new('RGB', (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(image)
     
+    # Градиентный фон
     for y in range(height):
         r = int(150 + 105 * (y / height))
         g = int(100 + 155 * (y / height))
         b = int(200 + 55 * (y / height))
         draw.line([(0, y), (width, y)], fill=(r, g, b))
     
-    for _ in range(random.randint(12, 18)):
+    # Линии
+    for _ in range(random.randint(15, 20)):
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
         x2 = random.randint(0, width)
         y2 = random.randint(0, height)
         line_color = (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100))
-        draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(1, 2))
+        draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(1, 3))
     
-    for _ in range(random.randint(400, 600)):
+    # Шум
+    for _ in range(random.randint(500, 700)):
         x = random.randint(0, width)
         y = random.randint(0, height)
         point_color = (random.randint(0, 120), random.randint(0, 120), random.randint(0, 120))
         draw.point((x, y), fill=point_color)
     
-    try:
-        font = ImageFont.truetype("arial.ttf", 60)
-    except:
-        try:
-            font = ImageFont.truetype("C:\\Windows\\Fonts\\Arial.ttf", 60)
-        except:
-            font = ImageFont.load_default()
+    # Фигуры
+    for _ in range(random.randint(3, 5)):
+        x1 = random.randint(0, width)
+        y1 = random.randint(0, height)
+        x2 = random.randint(x1, min(x1 + 150, width))
+        y2 = random.randint(y1, min(y1 + 80, height))
+        shape_color = (random.randint(100, 180), random.randint(100, 180), random.randint(100, 180))
+        draw.rectangle([(x1, y1), (x2, y2)], fill=shape_color, outline=None)
     
-    x_offset = 40
+    # Шрифт - БОЛЬШОЙ (90px)
+    try:
+        font_paths = [
+            "arial.ttf",
+            "C:\\Windows\\Fonts\\Arial.ttf",
+            "C:\\Windows\\Fonts\\Impact.ttf",
+        ]
+        font = None
+        for path in font_paths:
+            try:
+                font = ImageFont.truetype(path, 90)  # Увеличен с 60 до 90
+                break
+            except:
+                continue
+        if not font:
+            font = ImageFont.load_default()
+    except:
+        font = ImageFont.load_default()
+    
+    # Рисуем символы
+    x_offset = 50
     positions = []
     
     for char in code:
-        char_img = Image.new('RGBA', (100, 120), (0, 0, 0, 0))
+        char_img = Image.new('RGBA', (120, 150), (0, 0, 0, 0))
         char_draw = ImageDraw.Draw(char_img)
         color = (random.randint(20, 80), random.randint(20, 80), random.randint(20, 80))
-        char_draw.text((15, 25), char, fill=color, font=font)
+        char_draw.text((20, 30), char, fill=color, font=font)
         angle = random.randint(-20, 20)
         char_img = char_img.rotate(angle, expand=1, fillcolor=(0, 0, 0, 0))
         positions.append((x_offset, char_img))
-        x_offset += char_img.width + random.randint(15, 25)
+        x_offset += char_img.width + random.randint(20, 30)
     
+    # Центрируем
     if positions:
         total_width = positions[-1][0] + positions[-1][1].width - positions[0][0]
         start_x = (width - total_width) // 2
-        y_pos = (height - 120) // 2 + random.randint(-15, 15)
+        y_pos = (height - 150) // 2 + random.randint(-15, 15)
         
         for x, char_img in positions:
             new_x = start_x + (x - positions[0][0])
             if new_x + char_img.width < width and new_x > 0:
                 image.paste(char_img, (new_x, y_pos), char_img)
     
-    image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.4, 0.7)))
+    # Легкое размытие
+    image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.5, 0.9)))
     
     bio = io.BytesIO()
-    image.save(bio, 'PNG', quality=88)
+    image.save(bio, 'PNG', quality=92)
     bio.seek(0)
     
     return bio.getvalue(), code
