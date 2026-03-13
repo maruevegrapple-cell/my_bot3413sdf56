@@ -1,1 +1,4 @@
-'{"healthcheckPath":"/","healthcheckTimeout":100}' 
+{
+  "healthcheckPath": "/",
+  "healthcheckTimeout": 100
+}
