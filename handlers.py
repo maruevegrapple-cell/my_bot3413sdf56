@@ -231,25 +231,22 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
 # ================= ГЕНЕРАЦИЯ КАПЧИ =================
 def generate_captcha_image() -> tuple:
     """Генерация изображения капчи с правильным размером"""
-    length = random.randint(5, 6)  # Длина кода
+    length = random.randint(5, 6)
     chars = string.ascii_uppercase + string.digits
     chars = chars.replace('O', '').replace('0', '').replace('I', '').replace('1', '')
     chars = chars.replace('S', '').replace('5', '').replace('Z', '').replace('2', '')
     code = ''.join(random.choices(chars, k=length))
     
-    # ОПТИМАЛЬНЫЙ РАЗМЕР
     width, height = 600, 200
     image = Image.new('RGB', (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(image)
     
-    # Градиентный фон
     for y in range(height):
         r = int(150 + 105 * (y / height))
         g = int(100 + 155 * (y / height))
         b = int(200 + 55 * (y / height))
         draw.line([(0, y), (width, y)], fill=(r, g, b))
     
-    # Линии
     for _ in range(random.randint(12, 18)):
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
@@ -258,14 +255,12 @@ def generate_captcha_image() -> tuple:
         line_color = (random.randint(0, 100), random.randint(0, 100), random.randint(0, 100))
         draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(1, 2))
     
-    # Шум
     for _ in range(random.randint(400, 600)):
         x = random.randint(0, width)
         y = random.randint(0, height)
         point_color = (random.randint(0, 120), random.randint(0, 120), random.randint(0, 120))
         draw.point((x, y), fill=point_color)
     
-    # Шрифт - СРЕДНИЙ РАЗМЕР
     try:
         font = ImageFont.truetype("arial.ttf", 60)
     except:
@@ -274,7 +269,6 @@ def generate_captcha_image() -> tuple:
         except:
             font = ImageFont.load_default()
     
-    # Рисуем символы
     x_offset = 40
     positions = []
     
@@ -288,7 +282,6 @@ def generate_captcha_image() -> tuple:
         positions.append((x_offset, char_img))
         x_offset += char_img.width + random.randint(15, 25)
     
-    # Центрируем
     if positions:
         total_width = positions[-1][0] + positions[-1][1].width - positions[0][0]
         start_x = (width - total_width) // 2
@@ -299,7 +292,6 @@ def generate_captcha_image() -> tuple:
             if new_x + char_img.width < width and new_x > 0:
                 image.paste(char_img, (new_x, y_pos), char_img)
     
-    # Легкое размытие
     image = image.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.4, 0.7)))
     
     bio = io.BytesIO()
@@ -320,15 +312,12 @@ async def upload_video(message: Message):
     
     logger.info(f"📹 ВИДЕО ПОЛУЧЕНО от пользователя {user_id}")
     
-    # Проверяем, является ли пользователь админом (любым)
     has_access, is_admin_user, is_main, _ = check_admin_access(user_id)
     
-    # Если это не админ - просто игнорируем (ничего не отвечаем)
     if not has_access:
         logger.info(f"📹 Видео от обычного пользователя {user_id} проигнорировано")
         return
     
-    # Это админ - обрабатываем видео
     logger.info(f"📹 Админ {user_id} загружает видео")
     
     file_id = message.video.file_id
@@ -339,7 +328,6 @@ async def upload_video(message: Message):
     logger.info(f"📹 Детали видео - ID: {file_id}, Name: {file_name}, Size: {file_size}, Duration: {duration}")
     
     try:
-        # Проверяем, есть ли уже такое видео
         cursor.execute("SELECT id FROM videos WHERE file_id = ?", (file_id,))
         existing = cursor.fetchone()
         
@@ -351,16 +339,13 @@ async def upload_video(message: Message):
             )
             return
         
-        # Добавляем видео в базу
         cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
         conn.commit()
         
-        # Получаем ID добавленного видео
         cursor.execute("SELECT id FROM videos WHERE file_id = ?", (file_id,))
         video = cursor.fetchone()
         video_id = video['id'] if video else "неизвестно"
         
-        # Получаем общее количество видео
         cursor.execute("SELECT COUNT(*) as count FROM videos")
         total_videos = cursor.fetchone()["count"]
         
@@ -601,17 +586,42 @@ async def start(message: Message, state: FSMContext):
     if has_ref_in_link:
         logger.info(f"✅ Пользователь {user_id} перешел по реферальной ссылке")
         
-        # Если пользователь уже существует и у него нет реферера - обновляем
-        if user and not user["referrer"]:
-            logger.info(f"🔄 Обновляем реферера для пользователя {user_id} -> {referrer_id}")
+        # ЕСЛИ ПОЛЬЗОВАТЕЛЬ УЖЕ ЕСТЬ - ПРИНУДИТЕЛЬНО ОБНОВЛЯЕМ!
+        if user:
+            logger.info(f"🔄 Пользователь {user_id} уже есть в БД. Обновляем реферера...")
             cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
+            conn.commit()
             
             # Начисляем бонус рефереру
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
                           (REF_BONUS, referrer_id))
             conn.commit()
             
-            # Уведомляем реферера
+            try:
+                await message.bot.send_message(
+                    referrer_id,
+                    f"🎁 <b>Новый реферал!</b>\n\n"
+                    f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
+                    f"➕ Вам начислено +{REF_BONUS} 🍬",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
+        else:
+            # Создаем нового пользователя с реферером
+            logger.info(f"🆕 Создаем нового пользователя {user_id} с реферером {referrer_id}")
+            new_ref_code = generate_ref_code()
+            cursor.execute("""
+                INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin)
+                VALUES (?, ?, ?, 0, ?, 0, 0)
+            """, (user_id, username, referrer_id, new_ref_code))
+            conn.commit()
+            
+            # Начисляем бонус рефереру
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
+                          (REF_BONUS, referrer_id))
+            conn.commit()
+            
             try:
                 await message.bot.send_message(
                     referrer_id,
@@ -623,7 +633,7 @@ async def start(message: Message, state: FSMContext):
             except:
                 pass
         
-        # Если не верифицирован - отправляем на капчу
+        # ВЕРИФИКАЦИЯ - если пользователь не верифицирован
         if not is_verified(user_id):
             logger.info(f"🔐 Пользователь {user_id} не верифицирован, отправляем капчу")
             if user_id in captcha_attempts:
