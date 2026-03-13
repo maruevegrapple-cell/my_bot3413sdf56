@@ -3,13 +3,15 @@ import random
 import string
 import os
 
-# Определяем путь к БД (для Railway используем /data)
+# Определяем путь к БД для персистентного хранения
 if os.environ.get('RAILWAY_ENVIRONMENT'):
+    # На Railway используем /data (Volume)
     DB_PATH = "/data/database.db"
     # Создаем директорию если её нет
     os.makedirs('/data', exist_ok=True)
-    print(f"✅ Railway mode: БД будет в {DB_PATH}")
+    print(f"✅ Railway mode: БД будет в {DB_PATH} (персистентное хранилище)")
 else:
+    # Локальная разработка
     DB_PATH = "database.db"
     print(f"✅ Local mode: БД будет в {DB_PATH}")
 

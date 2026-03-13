@@ -1,6 +1,0 @@
-echo FROM python:3.11-slim > Dockerfile
-echo WORKDIR /app >> Dockerfile
-echo COPY requirements.txt . >> Dockerfile
-echo RUN pip install --no-cache-dir -r requirements.txt >> Dockerfile
-echo COPY . . >> Dockerfile
-echo CMD ["python", "bot.py"] >> Dockerfile
