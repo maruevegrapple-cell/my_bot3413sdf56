@@ -85,6 +85,7 @@ op_menu = InlineKeyboardMarkup(inline_keyboard=[
 
 # ================= МАГАЗИН =================
 shop_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="⭐️ 100 звезд = 299 🍬", url=ANON_CHAT_LINK)],
     [
         InlineKeyboardButton(text="🍬 50 • 💵 0.2", callback_data="pay_50"),
         InlineKeyboardButton(text="🍬 100 • 💵 0.3", callback_data="pay_100")
@@ -97,7 +98,7 @@ shop_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="🍬 200 • 💵 0.6", callback_data="pay_200"),
         InlineKeyboardButton(text="🍬 333 • 💵 1", callback_data="pay_333")
     ],
-    [InlineKeyboardButton(text="✏️ Свое количество", callback_data="pay_custom")],
+    [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25%", callback_data="pay_custom")],
     [InlineKeyboardButton(text="⭐️ Для оплаты звездами нажми на меня!", url=ANON_CHAT_LINK)],
     [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
 ])

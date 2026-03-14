@@ -8,6 +8,7 @@ from aiogram.types import Message
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.client.session.aiohttp import AiohttpSession
 
 # ========== МАКСИМАЛЬНОЕ ЛОГИРОВАНИЕ ==========
 print("="*60, file=sys.stderr)
@@ -40,7 +41,7 @@ from config import BOT_TOKEN
 from handlers import router
 from db import init_db
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ========== ВЕБ-СЕРВЕР ДЛЯ HEALTHCHECK ==========
@@ -85,8 +86,12 @@ async def main():
         # Запускаем веб-сервер для healthcheck
         asyncio.create_task(run_web())
 
+        # Создаем сессию с увеличенным таймаутом
+        session = AiohttpSession(timeout=60)
+        
         bot = Bot(
             token=BOT_TOKEN,
+            session=session,
             default=DefaultBotProperties(
                 parse_mode=ParseMode.HTML,
                 protect_content=True
@@ -128,4 +133,4 @@ if __name__ == "__main__":
         print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
-        raise  # Чтобы Railway точно увидел ошибку
+        raise

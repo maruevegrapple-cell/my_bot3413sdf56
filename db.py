@@ -10,14 +10,34 @@ if os.environ.get('RAILWAY_ENVIRONMENT'):
     # Создаем директорию если её нет
     os.makedirs('/data', exist_ok=True)
     print(f"✅ Railway mode: БД будет в {DB_PATH} (персистентное хранилище)")
+    
+    # ПРОВЕРЯЕМ, ЧТО ДИРЕКТОРИЯ ДОСТУПНА ДЛЯ ЗАПИСИ
+    test_file = "/data/test_write.txt"
+    try:
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+        print("✅ Директория /data доступна для записи")
+    except Exception as e:
+        print(f"❌ ОШИБКА: Директория /data НЕ доступна для записи: {e}")
+        # Fallback на текущую директорию
+        DB_PATH = "database.db"
+        print(f"⚠️ Использую fallback: {DB_PATH}")
 else:
     # Локальная разработка
     DB_PATH = "database.db"
     print(f"✅ Local mode: БД будет в {DB_PATH}")
 
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+# ПОДКЛЮЧЕНИЕ С ПРИНУДИТЕЛЬНЫМ СБРОСОМ НА ДИСК
+conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
 conn.row_factory = sqlite3.Row
 cursor = conn.cursor()
+
+# ВКЛЮЧАЕМ РЕЖИМ WAL ДЛЯ НАДЕЖНОСТИ
+cursor.execute("PRAGMA journal_mode=WAL")
+cursor.execute("PRAGMA synchronous=FULL")
+
+print(f"✅ БД подключена: {DB_PATH}")
 
 def generate_ref_code(length=6):
     """Генерация уникального реферального кода"""
@@ -135,13 +155,26 @@ def init_db():
     )
     """)
 
+    # ОБНОВЛЕННАЯ ТАБЛИЦА PAYMENTS С КОЛОНКОЙ paid
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS payments (
         invoice_id TEXT PRIMARY KEY,
         user_id INTEGER,
-        amount INTEGER
+        amount INTEGER,
+        paid INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
+    
+    # Проверяем, есть ли колонка paid (для старых БД)
+    try:
+        cursor.execute("SELECT paid FROM payments LIMIT 1")
+    except:
+        try:
+            cursor.execute("ALTER TABLE payments ADD COLUMN paid INTEGER DEFAULT 0")
+            print("✅ Добавлена колонка paid в таблицу payments")
+        except:
+            pass
     
     conn.commit()
     print("✅ База данных инициализирована")
