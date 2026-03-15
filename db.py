@@ -272,19 +272,44 @@ def update_admin_permissions(admin_id: int, can_add: bool):
     except:
         return False
 
-def get_admin_by_id(admin_id: int):
-    """Получение информации об админе по ID"""
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С БОНУСАМИ ==========
+def has_received_subscribe_bonus(user_id: int) -> bool:
+    """Проверка, получал ли пользователь бонус за подписку"""
     try:
-        cursor.execute("""
-            SELECT a.*, u.username as current_username 
-            FROM admins a
-            LEFT JOIN users u ON a.user_id = u.user_id
-            WHERE a.user_id = ?
-        """, (admin_id,))
+        cursor.execute("SELECT subscribe_bonus_received FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        return row and row["subscribe_bonus_received"] == 1
+    except Exception as e:
+        print(f"❌ Ошибка проверки бонуса: {e}")
+        return False
+
+def mark_subscribe_bonus_received(user_id: int):
+    """Отметить, что пользователь получил бонус за подписку"""
+    try:
+        cursor.execute("UPDATE users SET subscribe_bonus_received = 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка отметки бонуса: {e}")
+        return False
+
+def update_last_bonus(user_id: int, timestamp: int):
+    """Обновление времени последнего бонуса"""
+    try:
+        cursor.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (timestamp, user_id))
+        conn.commit()
+        return True
     except:
-        return None
+        return False
+
+def get_bonus_stats():
+    """Получение статистики по бонусам"""
+    try:
+        cursor.execute("SELECT COUNT(*) as users_took_bonus FROM users WHERE last_bonus > 0")
+        row = cursor.fetchone()
+        return {"users_took_bonus": row["users_took_bonus"] if row else 0}
+    except:
+        return {"users_took_bonus": 0}
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ ==========
 def get_user(user_id: int):
@@ -382,15 +407,6 @@ def get_user_payments(user_id: int, limit: int = 10):
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
-
-def get_total_paid_amount() -> int:
-    """Получение общей суммы оплаченных конфет"""
-    try:
-        cursor.execute("SELECT SUM(amount) as total FROM payments WHERE paid = 1")
-        row = cursor.fetchone()
-        return row["total"] if row and row["total"] else 0
-    except:
-        return 0
 
 def get_payments_stats():
     """Получение статистики по платежам"""
@@ -528,25 +544,6 @@ def get_promo_stats():
         return dict(cursor.fetchone())
     except:
         return {"total_codes": 0, "total_left": 0, "total_used": 0}
-
-# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С БОНУСАМИ ==========
-def update_last_bonus(user_id: int, timestamp: int):
-    """Обновление времени последнего бонуса"""
-    try:
-        cursor.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (timestamp, user_id))
-        conn.commit()
-        return True
-    except:
-        return False
-
-def get_bonus_stats():
-    """Получение статистики по бонусам"""
-    try:
-        cursor.execute("SELECT COUNT(*) as users_took_bonus FROM users WHERE last_bonus > 0")
-        row = cursor.fetchone()
-        return {"users_took_bonus": row["users_took_bonus"] if row else 0}
-    except:
-        return {"users_took_bonus": 0}
 
 # ========== ФУНКЦИИ ДЛЯ ПОЛУЧЕНИЯ ОБЩЕЙ СТАТИСТИКИ ==========
 def get_total_users() -> int:
