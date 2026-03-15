@@ -82,13 +82,17 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
                 "pay_url": BOT_LINK,
                 "status": "active",
                 "asset": asset,
-                "amount": amount_usd
+                "amount": amount_usd,
+                "crypto_amount": amount_usd,
+                "rate": None
             }
         
         rates = get_exchange_rates()
         
         # Конвертируем USD в выбранную криптовалюту
         crypto_amount = amount_usd
+        rate = None
+        
         if asset != "USDT" and rates and asset in rates:
             rate = rates[asset]  # Например: 65000 для BTC
             # ПРАВИЛЬНАЯ КОНВЕРТАЦИЯ: amount_usd / rate = количество крипты
@@ -118,9 +122,13 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
         )
         r.raise_for_status()
         result = r.json()["result"]
+        
+        # Добавляем наши поля в результат
         result["asset"] = asset
         result["crypto_amount"] = crypto_amount
         result["usd_amount"] = amount_usd
+        result["rate"] = rate  # Добавляем курс для отображения
+        
         return result
     except Exception as e:
         logging.error(f"Error creating invoice: {e}")
@@ -129,7 +137,9 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
             "pay_url": BOT_LINK,
             "status": "error",
             "asset": asset,
-            "amount": amount_usd
+            "amount": amount_usd,
+            "crypto_amount": amount_usd,
+            "rate": None
         }
 
 def check_invoice(invoice_id: str) -> dict:
