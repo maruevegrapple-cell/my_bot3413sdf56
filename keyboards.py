@@ -26,7 +26,10 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="🎟 Промокод", callback_data="promo")
     ],
     [
-        InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"),
+        InlineKeyboardButton(text="🎬 Предложка", callback_data="suggestion"),  # 👈 НОВАЯ КНОПКА
+        InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")
+    ],
+    [
         InlineKeyboardButton(text="📢 Наш канал", url=CHANNEL_LINK)
     ]
 ])
