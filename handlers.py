@@ -468,13 +468,17 @@ async def handle_suggestion_video(message: Message, bot: Bot):
         await message.answer("❌ Видео слишком большое. Максимальный размер: 50MB")
         return
     
-    # Сохраняем видео во временное хранилище
-    suggested_videos[file_id] = {
+    # Генерируем короткий уникальный ID для видео (последние 8 символов от file_id)
+    short_id = file_id[-8:]
+    
+    # Сохраняем видео во временное хранилище с коротким ключом
+    suggested_videos[short_id] = {
         "user_id": user_id,
         "username": username,
         "file_name": file_name,
         "duration": duration,
-        "message_id": message.message_id
+        "message_id": message.message_id,
+        "file_id": file_id  # сохраняем оригинальный file_id
     }
     
     # Получаем информацию о пользователе из БД
@@ -482,58 +486,67 @@ async def handle_suggestion_video(message: Message, bot: Bot):
     user = cursor.fetchone()
     balance = user["balance"] if user else 0
     
-    # Создаем клавиатуру для админа
+    # Получаем список всех админов
+    admins = get_all_admins()
+    
+    # Создаем клавиатуру для админов с КОРОТКИМИ callback_data
     admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"suggest_approve_{file_id}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"suggest_reject_{file_id}")
-        ],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data=f"admin_user_{user_id}")]
+            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"app_{short_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"rej_{short_id}")
+        ]
     ])
     
-    # Отправляем видео главному админу на модерацию
-    try:
-        await bot.send_video(
-            MAIN_ADMIN_ID,
-            video=file_id,
-            caption=(
-                f"🎬 <b>НОВОЕ ПРЕДЛОЖЕННОЕ ВИДЕО</b>\n\n"
-                f"👤 От: @{username}\n"
-                f"🆔 ID: <code>{user_id}</code>\n"
-                f"📝 Название: {file_name}\n"
-                f"⏱ Длительность: {duration} сек\n"
-                f"💰 Баланс пользователя: {balance} 🍬\n\n"
-                f"Выберите действие:"
-            ),
-            reply_markup=admin_keyboard
-        )
-        
+    # Отправляем видео ВСЕМ админам
+    sent_count = 0
+    for admin in admins:
+        admin_id = admin["user_id"]
+        try:
+            await bot.send_video(
+                admin_id,
+                video=file_id,
+                caption=(
+                    f"🎬 <b>НОВОЕ ПРЕДЛОЖЕННОЕ ВИДЕО</b>\n\n"
+                    f"👤 От: @{username}\n"
+                    f"🆔 ID: <code>{user_id}</code>\n"
+                    f"📝 Название: {file_name}\n"
+                    f"⏱ Длительность: {duration} сек\n"
+                    f"💰 Баланс пользователя: {balance} 🍬\n\n"
+                    f"Выберите действие:"
+                ),
+                reply_markup=admin_keyboard
+            )
+            sent_count += 1
+        except Exception as e:
+            logger.error(f"Не удалось отправить видео админу {admin_id}: {e}")
+    
+    if sent_count > 0:
         await message.answer(
             "✅ <b>Видео отправлено на модерацию!</b>\n\n"
-            "Администратор проверит его и сообщит о решении."
+            "Администраторы проверят его и сообщат о решении."
         )
-        
-    except Exception as e:
-        logger.error(f"Ошибка отправки видео админу: {e}")
+    else:
         await message.answer("❌ Ошибка при отправке видео. Попробуйте позже.")
         # Удаляем из хранилища в случае ошибки
-        if file_id in suggested_videos:
-            del suggested_videos[file_id]
+        if short_id in suggested_videos:
+            del suggested_videos[short_id]
 
-@router.callback_query(F.data.startswith("suggest_approve_"))
+@router.callback_query(F.data.startswith("app_"))
 async def suggest_approve(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Админ одобрил видео"""
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
-    file_id = call.data.replace("suggest_approve_", "")
-    video_data = suggested_videos.get(file_id)
+    short_id = call.data.replace("app_", "")
+    video_data = suggested_videos.get(short_id)
     
     if not video_data:
         await safe_answer(call, "❌ Видео не найдено в хранилище", show_alert=True)
+        await call.message.delete()
         return
     
+    file_id = video_data["file_id"]  # берем оригинальный file_id из хранилища
     user_id = video_data["user_id"]
     
     # Добавляем видео в базу
@@ -566,31 +579,30 @@ async def suggest_approve(call: CallbackQuery, state: FSMContext, bot: Bot):
         
         await safe_answer(call, f"✅ Видео одобрено! Пользователю начислено +{SUGGESTION_REWARD} 🍬")
         
-        # Обновляем сообщение админа
-        await call.message.edit_caption(
-            call.message.caption + f"\n\n✅ <b>ВИДЕО ОДОБРЕНО!</b>\nНачислено +{SUGGESTION_REWARD} 🍬"
-        )
+        # Удаляем сообщение у админа
+        await call.message.delete()
         
     except Exception as e:
         logger.error(f"Ошибка при одобрении видео: {e}")
         await safe_answer(call, "❌ Ошибка при одобрении видео", show_alert=True)
     
     # Удаляем из временного хранилища
-    if file_id in suggested_videos:
-        del suggested_videos[file_id]
+    if short_id in suggested_videos:
+        del suggested_videos[short_id]
 
-@router.callback_query(F.data.startswith("suggest_reject_"))
+@router.callback_query(F.data.startswith("rej_"))
 async def suggest_reject(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Админ отклонил видео"""
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
-    file_id = call.data.replace("suggest_reject_", "")
-    video_data = suggested_videos.get(file_id)
+    short_id = call.data.replace("rej_", "")
+    video_data = suggested_videos.get(short_id)
     
     if not video_data:
         await safe_answer(call, "❌ Видео не найдено в хранилище", show_alert=True)
+        await call.message.delete()
         return
     
     user_id = video_data["user_id"]
@@ -606,18 +618,16 @@ async def suggest_reject(call: CallbackQuery, state: FSMContext, bot: Bot):
         
         await safe_answer(call, "❌ Видео отклонено, пользователь уведомлен")
         
-        # Обновляем сообщение админа
-        await call.message.edit_caption(
-            call.message.caption + f"\n\n❌ <b>ВИДЕО ОТКЛОНЕНО</b>"
-        )
+        # Удаляем сообщение у админа
+        await call.message.delete()
         
     except Exception as e:
         logger.error(f"Ошибка при отклонении видео: {e}")
         await safe_answer(call, "❌ Ошибка при отклонении видео", show_alert=True)
     
     # Удаляем из временного хранилища
-    if file_id in suggested_videos:
-        del suggested_videos[file_id]
+    if short_id in suggested_videos:
+        del suggested_videos[short_id]
 
 # ================= ЗАГРУЗКА ВИДЕО ПО ССЫЛКЕ =================
 @router.callback_query(F.data == "admin_upload_url")
@@ -643,7 +653,7 @@ async def admin_upload_url(call: CallbackQuery, state: FSMContext):
     )
 
 @router.message(AdminStates.waiting_for_cloud_url)
-async def process_video_url(message: Message, state: FSMContext):
+async def process_video_url(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     
     has_access, _, _, _ = check_admin_access(user_id)
@@ -656,6 +666,7 @@ async def process_video_url(message: Message, state: FSMContext):
     
     status_msg = await message.answer("🔄 Обрабатываю ссылку...")
     
+    filename = None
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, stream=True, headers=headers, allow_redirects=True, timeout=30)
@@ -704,8 +715,6 @@ async def process_video_url(message: Message, state: FSMContext):
         cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
         conn.commit()
         
-        os.remove(filename)
-        
         cursor.execute("SELECT COUNT(*) as count FROM videos")
         total = cursor.fetchone()["count"]
         
@@ -719,12 +728,13 @@ async def process_video_url(message: Message, state: FSMContext):
         
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {e}")
-        if os.path.exists(filename):
+    finally:
+        if filename and os.path.exists(filename):
             os.remove(filename)
 
 # ================= БЫСТРАЯ ЗАГРУЗКА =================
 @router.message(Command("dl"))
-async def quick_download(message: Message):
+async def quick_download(message: Message, bot: Bot):
     user_id = message.from_user.id
     
     has_access, _, _, _ = check_admin_access(user_id)
@@ -964,7 +974,7 @@ async def start(message: Message, state: FSMContext, bot: Bot):
 
 # ================= ОБРАБОТКА КАПЧИ =================
 @router.message(CaptchaStates.waiting_for_captcha)
-async def process_captcha(message: Message, state: FSMContext):
+async def process_captcha(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     user_input = message.text.strip().upper()
     
@@ -1004,7 +1014,7 @@ async def process_captcha(message: Message, state: FSMContext):
         await state.clear()
         
         first_name = message.from_user.first_name or "Пользователь"
-        is_subscribed = await check_subscription(message.bot, user_id)
+        is_subscribed = await check_subscription(bot, user_id)
         
         if not is_subscribed:
             await state.set_state(SubscribeStates.waiting_for_subscribe)
@@ -1056,10 +1066,10 @@ async def process_captcha(message: Message, state: FSMContext):
 
 # ================= МАГАЗИН =================
 @router.callback_query(F.data == "shop")
-async def shop(call: CallbackQuery, state: FSMContext):
+async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    if not await check_access(call.bot, user_id, state, call=call):
+    if not await check_access(bot, user_id, state, call=call):
         return
     
     text = (
@@ -1134,7 +1144,7 @@ async def process_custom_pay(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Введите корректное число")
         return
 
-# ================= ВЫБОР ВАЛЮТЫ (ИСПРАВЛЕНО) =================
+# ================= ВЫБОР ВАЛЮТЫ =================
 @router.callback_query(F.data.startswith("pay_asset_"))
 async def pay_with_asset(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
