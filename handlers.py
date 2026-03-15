@@ -934,30 +934,7 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     
     logger.info(f"💰 Сумма: {amount} конфет = ${usdt}")
     
-    # Получаем курсы валют
-    rates = get_exchange_rates()
-    
-    # ПРАВИЛЬНАЯ КОНВЕРТАЦИЯ ДЛЯ ВСЕХ ВАЛЮТ: usd / rate
-    rate_text = ""
-    crypto_amount = usdt
-    
-    if rates and asset in rates:
-        rate = rates[asset]  # Например: 65000 для BTC
-        crypto_amount = usdt / rate  # ДЕЛИМ, а не умножаем!
-        
-        # Округляем до разумного количества знаков
-        if asset in ["BTC", "ETH", "BNB", "SOL"]:
-            crypto_amount = round(crypto_amount, 8)
-        elif asset in ["TON"]:
-            crypto_amount = round(crypto_amount, 4)
-        else:
-            crypto_amount = round(crypto_amount, 2)
-            
-        rate_text = f"\n1 {asset} = ${rate}\n💰 К оплате: {crypto_amount} {asset}"
-        logger.info(f"💱 Курс: 1 {asset} = ${rate}")
-        logger.info(f"💸 К оплате: {crypto_amount} {asset}")
-    
-    # Создаем счет
+    # СОЗДАЕМ СЧЕТ - ВСЯ КОНВЕРТАЦИЯ ВНУТРИ create_invoice
     try:
         invoice = create_invoice(usdt, asset)
         logger.info(f"🧾 Счет создан: {invoice}")
@@ -965,6 +942,10 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
         logger.error(f"❌ Ошибка создания счета: {e}")
         await call.message.answer("❌ Ошибка при создании платежа")
         return
+    
+    # Получаем конвертированную сумму из ответа
+    crypto_amount = invoice.get("crypto_amount", usdt)
+    rate = invoice.get("rate", "")
     
     # Сохраняем в БД
     cursor.execute(
@@ -974,6 +955,11 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     conn.commit()
     
     icon = get_asset_icon(asset)
+    
+    # Формируем текст с курсом если есть
+    rate_text = f"\n💰 К оплате: {crypto_amount} {asset}"
+    if rate:
+        rate_text = f"\n1 {asset} = ${rate}\n💰 К оплате: {crypto_amount} {asset}"
     
     # Отправляем сообщение
     await call.message.answer(
