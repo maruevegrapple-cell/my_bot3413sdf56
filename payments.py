@@ -58,13 +58,19 @@ def get_exchange_rates():
         
         r.raise_for_status()
         data = r.json()
-        logging.info(f"🔍 Ответ API: {data}")
         
         rates = {}
+        
+        # ПРОХОДИМ ПО ВСЕМ ЭЛЕМЕНТАМ И СОБИРАЕМ КУРСЫ КРИПТОВАЛЮТ К USD
         for item in data["result"]:
-            if item["is_valid"] and item["source"] == "USD":
-                rates[item["target"]] = float(item["rate"])
-                logging.info(f"🔍 Курс: 1 {item['target']} = ${item['rate']}")
+            if item["is_valid"] and item["is_crypto"] and not item["is_fiat"]:
+                # Для каждой криптовалюты ищем пару с USD
+                if item["target"] == "USD":
+                    # Это курс: 1 source = X USD
+                    crypto = item["source"]
+                    rate = float(item["rate"])
+                    rates[crypto] = rate
+                    logging.info(f"🔍 Курс: 1 {crypto} = ${rate}")
         
         logging.info(f"🔍 Итоговые курсы: {rates}")
         return rates
@@ -123,8 +129,35 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
                 crypto_amount = round(crypto_amount, 2)
             
             logging.info(f"💰 После округления: {crypto_amount} {asset}")
+        elif asset == "USDT":
+            # USDT всегда 1:1 с USD
+            rate = 1.0
+            crypto_amount = amount_usd
+            logging.info(f"💰 USDT без конвертации: {crypto_amount}")
         else:
-            logging.warning(f"⚠️ Курс для {asset} не найден! rates={rates}")
+            logging.warning(f"⚠️ Курс для {asset} не найден! Использую заглушку")
+            # Используем заглушку если API не дал курс
+            fallback_rates = {
+                "BTC": 65000.0,
+                "TON": 5.5,
+                "ETH": 3500.0,
+                "USDT": 1.0,
+                "USDC": 1.0,
+                "BNB": 500.0,
+                "TRX": 0.12,
+                "SOL": 150.0
+            }
+            if asset in fallback_rates:
+                rate = fallback_rates[asset]
+                crypto_amount = amount_usd / rate
+                logging.info(f"💰 Использую заглушку: {amount_usd} USD / {rate} = {crypto_amount} {asset}")
+                
+                if asset in ["BTC", "ETH", "BNB", "SOL"]:
+                    crypto_amount = round(crypto_amount, 8)
+                elif asset in ["TON"]:
+                    crypto_amount = round(crypto_amount, 4)
+                else:
+                    crypto_amount = round(crypto_amount, 2)
         
         # Создаем инвойс в CryptoBot
         payload = {
