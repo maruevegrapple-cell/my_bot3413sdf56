@@ -10,7 +10,7 @@ import traceback
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, FSInputFile
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
@@ -345,7 +345,7 @@ async def block_forward(message: Message):
 
 # ================= ЗАГРУЗКА ВИДЕО АДМИНАМИ =================
 @router.message(F.video)
-async def handle_video(message: Message):
+async def handle_video(message: Message, bot: Bot):
     """Обработка видео - разделяем админов и обычных пользователей"""
     user_id = message.from_user.id
     
@@ -357,7 +357,7 @@ async def handle_video(message: Message):
         await upload_video(message)
     else:
         # Это обычный пользователь - проверяем, в режиме ли предложки
-        await handle_suggestion_video(message)
+        await handle_suggestion_video(message, bot)
 
 async def upload_video(message: Message):
     """Загрузка видео админом"""
@@ -443,7 +443,7 @@ async def suggestion_start(call: CallbackQuery, state: FSMContext):
     
     asyncio.create_task(exit_suggestion_mode())
 
-async def handle_suggestion_video(message: Message):
+async def handle_suggestion_video(message: Message, bot: Bot):
     """Обработка видео от обычного пользователя в режиме предложки"""
     user_id = message.from_user.id
     
@@ -493,7 +493,7 @@ async def handle_suggestion_video(message: Message):
     
     # Отправляем видео главному админу на модерацию
     try:
-        await message.bot.send_video(
+        await bot.send_video(
             MAIN_ADMIN_ID,
             video=file_id,
             caption=(
@@ -521,7 +521,7 @@ async def handle_suggestion_video(message: Message):
             del suggested_videos[file_id]
 
 @router.callback_query(F.data.startswith("suggest_approve_"))
-async def suggest_approve(call: CallbackQuery, state: FSMContext):
+async def suggest_approve(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Админ одобрил видео"""
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
@@ -554,7 +554,7 @@ async def suggest_approve(call: CallbackQuery, state: FSMContext):
         
         # Отправляем уведомление пользователю
         try:
-            await call.bot.send_message(
+            await bot.send_message(
                 user_id,
                 f"✅ <b>Видео одобрено!</b>\n\n"
                 f"Ваше предложенное видео было одобрено администратором.\n"
@@ -580,7 +580,7 @@ async def suggest_approve(call: CallbackQuery, state: FSMContext):
         del suggested_videos[file_id]
 
 @router.callback_query(F.data.startswith("suggest_reject_"))
-async def suggest_reject(call: CallbackQuery, state: FSMContext):
+async def suggest_reject(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Админ отклонил видео"""
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
@@ -597,7 +597,7 @@ async def suggest_reject(call: CallbackQuery, state: FSMContext):
     
     # Отправляем уведомление пользователю
     try:
-        await call.bot.send_message(
+        await bot.send_message(
             user_id,
             f"❌ <b>Видео отклонено</b>\n\n"
             f"Ваше предложенное видео не прошло модерацию.\n"
@@ -769,7 +769,7 @@ async def quick_download(message: Message):
 
 # ================= СТАРТ =================
 @router.message(CommandStart())
-async def start(message: Message, state: FSMContext):
+async def start(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     username = message.from_user.username or "пользователь"
     first_name = message.from_user.first_name or "Пользователь"
@@ -848,7 +848,7 @@ async def start(message: Message, state: FSMContext):
             conn.commit()
             
             try:
-                await message.bot.send_message(
+                await bot.send_message(
                     referrer_id,
                     f"🎁 <b>Новый реферал!</b>\n\n"
                     f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
@@ -878,7 +878,7 @@ async def start(message: Message, state: FSMContext):
         
         if is_verified(user_id):
             logger.info(f"✅ Пользователь {user_id} верифицирован, проверяем подписку")
-            is_subscribed = await check_subscription(message.bot, user_id)
+            is_subscribed = await check_subscription(bot, user_id)
             if not is_subscribed:
                 await state.set_state(SubscribeStates.waiting_for_subscribe)
                 await message.answer(
@@ -909,7 +909,7 @@ async def start(message: Message, state: FSMContext):
             conn.commit()
             
             try:
-                await message.bot.send_message(
+                await bot.send_message(
                     referrer_id,
                     f"🎁 <b>Новый реферал!</b>\n\n"
                     f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
@@ -949,7 +949,7 @@ async def start(message: Message, state: FSMContext):
         return
     
     if is_verified(user_id):
-        is_subscribed = await check_subscription(message.bot, user_id)
+        is_subscribed = await check_subscription(bot, user_id)
         if not is_subscribed:
             await state.set_state(SubscribeStates.waiting_for_subscribe)
             await message.answer(
@@ -1077,10 +1077,10 @@ async def shop(call: CallbackQuery, state: FSMContext):
 
 # ================= КАСТОМНАЯ ОПЛАТА =================
 @router.message(CustomPayStates.waiting_for_amount)
-async def process_custom_pay(message: Message, state: FSMContext):
+async def process_custom_pay(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     
-    if not await check_access(message.bot, user_id, state, message=message):
+    if not await check_access(bot, user_id, state, message=message):
         return
     
     logger.info(f"💰 Custom pay input from user {user_id}: {message.text}")
@@ -1136,14 +1136,14 @@ async def process_custom_pay(message: Message, state: FSMContext):
 
 # ================= ВЫБОР ВАЛЮТЫ (ИСПРАВЛЕНО) =================
 @router.callback_query(F.data.startswith("pay_asset_"))
-async def pay_with_asset(call: CallbackQuery, state: FSMContext):
+async def pay_with_asset(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
     logger.info(f"💰 pay_with_asset ВЫЗВАНА с data: {call.data}")
     
     await safe_answer(call)
     
-    if not await check_access(call.bot, user_id, state, call=call):
+    if not await check_access(bot, user_id, state, call=call):
         return
     
     asset = call.data.replace("pay_asset_", "")
@@ -1202,7 +1202,7 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
 
 # ================= ОПЛАТА (ПАКЕТЫ) =================
 @router.callback_query(F.data.startswith("pay_"))
-async def pay(call: CallbackQuery, state: FSMContext):
+async def pay(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
     # ВАЖНО: пропускаем pay_asset_
@@ -1211,7 +1211,7 @@ async def pay(call: CallbackQuery, state: FSMContext):
     
     logger.info(f"💰 pay called with data: {call.data}")
     
-    if not await check_access(call.bot, user_id, state, call=call):
+    if not await check_access(bot, user_id, state, call=call):
         return
     
     prices = {
@@ -1261,12 +1261,12 @@ async def pay(call: CallbackQuery, state: FSMContext):
 
 # ================= ПРОВЕРКА ПОДПИСКИ =================
 @router.callback_query(F.data == "check_subscribe")
-async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
+async def check_subscribe_callback(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
     await safe_answer(call)
     
-    is_subscribed = await check_subscription(call.bot, user_id)
+    is_subscribed = await check_subscription(bot, user_id)
     
     if is_subscribed:
         try:
@@ -1303,7 +1303,7 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
 
 # ================= ПРОВЕРКА ПЛАТЕЖА =================
 @router.callback_query(F.data.startswith("check_"))
-async def check_payment(call: CallbackQuery, state: FSMContext):
+async def check_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
     if call.data == "check_subscribe":
@@ -1311,7 +1311,7 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
     
     await safe_answer(call)
     
-    if not await check_access(call.bot, user_id, state, call=call):
+    if not await check_access(bot, user_id, state, call=call):
         return
     
     invoice_id = call.data.split("_", 1)[1]
@@ -1343,7 +1343,7 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
                 cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
                              (ref_bonus, user["referrer"]))
                 try:
-                    await call.bot.send_message(
+                    await bot.send_message(
                         user["referrer"],
                         f"💰 Ваш реферал купил {row['amount']} 🍬\n"
                         f"➕ Вы получили {ref_bonus} 🍬 ({REF_PERCENT}%)"
@@ -1366,10 +1366,10 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
 
 # ================= ПРОМОКОДЫ =================
 @router.message(PromoStates.waiting_for_promo)
-async def process_promo_input(message: Message, state: FSMContext):
+async def process_promo_input(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     
-    if not await check_access(message.bot, user_id, state, message=message):
+    if not await check_access(bot, user_id, state, message=message):
         return
     
     code = message.text.strip().upper()
@@ -1416,10 +1416,10 @@ async def process_promo_input(message: Message, state: FSMContext):
 
 # ================= ПОДДЕРЖКА - НОВОЕ СООБЩЕНИЕ =================
 @router.callback_query(F.data == "support")
-async def support_start(call: CallbackQuery, state: FSMContext):
+async def support_start(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    if not await check_access(call.bot, user_id, state, call=call):
+    if not await check_access(bot, user_id, state, call=call):
         return
     
     await safe_answer(call)
@@ -1435,7 +1435,7 @@ async def support_start(call: CallbackQuery, state: FSMContext):
 
 # ================= ПОДДЕРЖКА - ОБРАБОТКА ТЕКСТА =================
 @router.message(SubscribeStates.waiting_for_support_message, F.text)
-async def support_message_handler(message: Message, state: FSMContext):
+async def support_message_handler(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     user_text = message.text
     
@@ -1452,7 +1452,7 @@ async def support_message_handler(message: Message, state: FSMContext):
     ])
     
     try:
-        await message.bot.send_message(
+        await bot.send_message(
             MAIN_ADMIN_ID,
             f"📬 <b>НОВОЕ СООБЩЕНИЕ В ПОДДЕРЖКУ</b>\n\n"
             f"👤 Пользователь: @{username}\n"
@@ -1474,7 +1474,7 @@ async def support_message_handler(message: Message, state: FSMContext):
 
 # ================= ПОДДЕРЖКА - ОБРАБОТКА ФОТО =================
 @router.message(SubscribeStates.waiting_for_support_message, F.photo)
-async def support_photo_handler(message: Message, state: FSMContext):
+async def support_photo_handler(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     user_text = message.caption or "Без описания"
     
@@ -1493,7 +1493,7 @@ async def support_photo_handler(message: Message, state: FSMContext):
     
     try:
         # Отправляем фото админу
-        await message.bot.send_photo(
+        await bot.send_photo(
             MAIN_ADMIN_ID,
             photo=file_id,
             caption=(
@@ -1518,7 +1518,7 @@ async def support_photo_handler(message: Message, state: FSMContext):
 
 # ================= ПОДДЕРЖКА - ОТВЕТ АДМИНА =================
 @router.message(AdminStates.waiting_for_support_reply)
-async def support_reply_send(message: Message, state: FSMContext):
+async def support_reply_send(message: Message, state: FSMContext, bot: Bot):
     if not check_admin_access(message.from_user.id)[0]:
         return
     
@@ -1534,7 +1534,7 @@ async def support_reply_send(message: Message, state: FSMContext):
         return
     
     try:
-        await message.bot.send_message(
+        await bot.send_message(
             chat_id=user_id,
             text=f"📬 <b>ОТВЕТ ОТ ПОДДЕРЖКИ</b>\n\n{reply_text}"
         )
@@ -1551,7 +1551,7 @@ async def support_reply_send(message: Message, state: FSMContext):
     await state.clear()
 
 @router.callback_query(F.data.startswith("reply_"))
-async def support_reply_start(call: CallbackQuery, state: FSMContext):
+async def support_reply_start(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
@@ -1609,7 +1609,7 @@ async def process_broadcast_text(message: Message, state: FSMContext):
     )
 
 @router.callback_query(F.data == "confirm_broadcast")
-async def confirm_broadcast(call: CallbackQuery, state: FSMContext):
+async def confirm_broadcast(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
     has_access, _, _, _ = check_admin_access(user_id)
@@ -1640,7 +1640,7 @@ async def confirm_broadcast(call: CallbackQuery, state: FSMContext):
     
     for i, uid in enumerate(users):
         try:
-            await call.bot.send_message(uid, text)
+            await bot.send_message(uid, text)
             sent += 1
             if i % 10 == 0:
                 await status_msg.edit_text(f"📢 Рассылка...\nОтправлено: {sent}/{len(users)}")
@@ -1792,7 +1792,7 @@ async def process_add_balance_user(message: Message, state: FSMContext):
         await message.answer("❌ Введите корректный ID пользователя (число)")
 
 @router.message(AdminStates.waiting_for_add_balance_amount)
-async def process_add_balance_amount(message: Message, state: FSMContext):
+async def process_add_balance_amount(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     
     has_access, _, _, _ = check_admin_access(user_id)
@@ -1820,7 +1820,7 @@ async def process_add_balance_amount(message: Message, state: FSMContext):
         await message.answer(f"✅ Баланс пользователя {target_user_id} увеличен на {amount} 🍬\nНовый баланс: {new_balance} 🍬")
         
         try:
-            await message.bot.send_message(
+            await bot.send_message(
                 target_user_id,
                 f"💰 Администратор начислил вам {amount} 🍬\nТекущий баланс: {new_balance} 🍬"
             )
@@ -1865,7 +1865,7 @@ async def process_remove_balance_user(message: Message, state: FSMContext):
         await message.answer("❌ Введите корректный ID пользователя (число)")
 
 @router.message(AdminStates.waiting_for_remove_balance_amount)
-async def process_remove_balance_amount(message: Message, state: FSMContext):
+async def process_remove_balance_amount(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     
     has_access, _, _, _ = check_admin_access(user_id)
@@ -1905,7 +1905,7 @@ async def process_remove_balance_amount(message: Message, state: FSMContext):
     await message.answer(f"✅ Баланс пользователя {target_user_id} уменьшен на {amount} 🍬\nНовый баланс: {new_balance} 🍬")
     
     try:
-        await message.bot.send_message(
+        await bot.send_message(
             target_user_id,
             f"⚠️ Администратор снял {amount} 🍬 с вашего баланса\nТекущий баланс: {new_balance} 🍬"
         )
@@ -2613,10 +2613,10 @@ async def fake_menu_actions(call: CallbackQuery):
 
 # ================= БОНУС =================
 @router.callback_query(F.data == "bonus")
-async def bonus(call: CallbackQuery, state: FSMContext):
+async def bonus(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    if not await check_access(call.bot, user_id, state, call=call):
+    if not await check_access(bot, user_id, state, call=call):
         return
     
     now = int(time.time())
@@ -2646,12 +2646,12 @@ async def bonus(call: CallbackQuery, state: FSMContext):
 
 # ================= ВИДЕО (ПРОСМОТР) =================
 @router.callback_query(F.data == "videos")
-async def videos(call: CallbackQuery, state: FSMContext):
+async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
     logger.info(f"🎥 Videos request from user {user_id}")
     
-    if not await check_access(call.bot, user_id, state, call=call):
+    if not await check_access(bot, user_id, state, call=call):
         return
     
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
@@ -2709,10 +2709,10 @@ async def videos(call: CallbackQuery, state: FSMContext):
 
 # ================= ПРОМОКОДЫ =================
 @router.callback_query(F.data == "promo")
-async def promo(call: CallbackQuery, state: FSMContext):
+async def promo(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    if not await check_access(call.bot, user_id, state, call=call):
+    if not await check_access(bot, user_id, state, call=call):
         return
     
     await state.set_state(PromoStates.waiting_for_promo)
@@ -2736,10 +2736,10 @@ async def back_to_menu(call: CallbackQuery, state: FSMContext):
 
 # ================= ПРОФИЛЬ =================
 @router.callback_query(F.data == "profile")
-async def profile(call: CallbackQuery, state: FSMContext):
+async def profile(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    if not await check_access(call.bot, user_id, state, call=call):
+    if not await check_access(bot, user_id, state, call=call):
         return
     
     cursor.execute("SELECT balance, referrer, ref_code FROM users WHERE user_id = ?", (user_id,))
