@@ -1,4 +1,4 @@
-=import requests
+import requests
 from config import CRYPTOBOT_API, CRYPTOBOT_TOKEN
 import logging
 
