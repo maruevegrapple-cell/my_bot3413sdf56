@@ -937,7 +937,7 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     # Получаем курсы валют
     rates = get_exchange_rates()
     
-    # ПРАВИЛЬНАЯ КОНВЕРТАЦИЯ: usd / rate
+    # ПРАВИЛЬНАЯ КОНВЕРТАЦИЯ ДЛЯ ВСЕХ ВАЛЮТ: usd / rate
     rate_text = ""
     crypto_amount = usdt
     
@@ -945,7 +945,7 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
         rate = rates[asset]  # Например: 65000 для BTC
         crypto_amount = usdt / rate  # ДЕЛИМ, а не умножаем!
         
-        # Округляем
+        # Округляем до разумного количества знаков
         if asset in ["BTC", "ETH", "BNB", "SOL"]:
             crypto_amount = round(crypto_amount, 8)
         elif asset in ["TON"]:
