@@ -2616,3 +2616,47 @@ async def check_balance_command(message: Message):
         return
     
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
+
+# ================= ОТЛАДКА ПЛАТЕЖЕЙ =================
+@router.message(Command("debug_pay"))
+async def debug_pay_command(message: Message):
+    """Тестовая команда для отладки платежей"""
+    user_id = message.from_user.id
+    
+    if not check_admin_access(user_id)[0]:
+        await message.answer("❌ Только для админов")
+        return
+    
+    try:
+        # Тестовые данные
+        usdt = 0.2
+        asset = "ETH"
+        
+        # Создаем инвойс
+        invoice = create_invoice(usdt, asset)
+        
+        # Формируем отладочную информацию
+        debug_text = (
+            f"🔍 <b>ОТЛАДКА ПЛАТЕЖА</b>\n\n"
+            f"📊 <b>Входные данные:</b>\n"
+            f"   USD: ${usdt}\n"
+            f"   Валюта: {asset}\n\n"
+            f"📦 <b>Ответ от create_invoice:</b>\n"
+            f"   invoice_id: {invoice.get('invoice_id')}\n"
+            f"   asset: {invoice.get('asset')}\n"
+            f"   crypto_amount: {invoice.get('crypto_amount')}\n"
+            f"   amount (из API): {invoice.get('amount')}\n"
+            f"   rate: {invoice.get('rate')}\n"
+            f"   status: {invoice.get('status')}\n"
+        )
+        
+        await message.answer(debug_text)
+        
+        if invoice.get('pay_url'):
+            await message.answer(
+                f"🔗 <a href='{invoice['pay_url']}'>Ссылка на оплату</a>",
+                disable_web_page_preview=True
+            )
+            
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
