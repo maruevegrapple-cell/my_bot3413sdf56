@@ -32,7 +32,14 @@ from db import (
     cursor, conn, get_mandatory_channels, add_mandatory_channel, remove_mandatory_channel,
     has_received_subscribe_bonus, mark_subscribe_bonus_received,
     is_admin, is_main_admin, can_manage_admins, get_all_admins, add_admin, remove_admin,
-    set_main_admin, get_main_admin_id
+    set_main_admin, get_main_admin_id,
+    get_total_users, get_verified_users, get_users_with_balance, get_total_balance,
+    get_max_balance, get_avg_balance, get_video_count, get_watched_stats,
+    get_payments_stats, get_promo_stats, get_bonus_stats, get_referral_stats,
+    update_user_balance, get_user, get_user_payments, get_referrals_count,
+    get_top_referrers, add_payment, mark_payment_paid, get_payment,
+    add_promo_code, get_promo_code, use_promo_code, check_promo_used,
+    update_last_bonus, add_video, mark_video_watched, get_user_watched_videos
 )
 from keyboards import (
     fake_menu, main_menu, video_menu, shop_menu, get_admin_menu, 
@@ -75,6 +82,10 @@ class AdminStates(StatesGroup):
     waiting_for_add_admin_permissions = State()
     waiting_for_remove_admin_id = State()
     waiting_for_cloud_url = State()
+    waiting_for_payment_search = State()
+    waiting_for_top_refs = State()
+    waiting_for_user_search = State()
+    waiting_for_user_info = State()
 
 class CaptchaStates(StatesGroup):
     waiting_for_captcha = State()
@@ -235,7 +246,7 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
     
     return True
 
-# ================= ГЕНЕРАЦИЯ КАПЧИ (НОРМАЛЬНАЯ ВИДИМАЯ) =================
+# ================= ГЕНЕРАЦИЯ КАПЧИ =================
 def generate_captcha_image() -> tuple:
     """Генерация изображения капчи - БОЛЬШИЕ ВИДИМЫЕ БУКВЫ"""
     length = 4
@@ -269,33 +280,25 @@ def generate_captcha_image() -> tuple:
         font_paths = [
             "C:\\Windows\\Fonts\\Arial.ttf",
             "C:\\Windows\\Fonts\\Impact.ttf",
-            "C:\\Windows\\Fonts\\arialbd.ttf",  # Arial Bold
+            "C:\\Windows\\Fonts\\arialbd.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "arial.ttf"
         ]
         
         for path in font_paths:
             if os.path.exists(path):
-                font = ImageFont.truetype(path, 80)  # Размер 80px
+                font = ImageFont.truetype(path, 80)
                 print(f"✅ Загружен шрифт: {path}")
                 break
     except:
         font = None
     
     if font is None:
-        # Если нет шрифтов, используем встроенный но рисуем жирно
         font = ImageFont.load_default()
         print("⚠️ Используется встроенный шрифт")
     
-    # Рисуем буквы жирно и крупно
-    colors = [
-        (0, 0, 0),        # черный
-        (0, 0, 150),      # синий
-        (150, 0, 0),      # красный
-        (0, 150, 0),      # зеленый
-    ]
-    
-    # Позиции для букв
+    # Рисуем буквы
+    colors = [(0, 0, 0), (0, 0, 150), (150, 0, 0), (0, 150, 0)]
     positions = [(120, 100), (270, 100), (420, 100), (570, 100)]
     
     for i, char in enumerate(code):
@@ -303,27 +306,22 @@ def generate_captcha_image() -> tuple:
         color = colors[i % len(colors)]
         
         if font != ImageFont.load_default():
-            # Для нормального шрифта рисуем жирно с обводкой
-            # Обводка
             for dx in [-2, -1, 0, 1, 2]:
                 for dy in [-2, -1, 0, 1, 2]:
                     if dx != 0 or dy != 0:
                         draw.text((x + dx, y + dy), char, fill=(200, 200, 200), font=font)
-            # Основная буква
             draw.text((x, y), char, fill=color, font=font)
         else:
-            # Для встроенного шрифта рисуем несколько раз
             for dx in range(-3, 4):
                 for dy in range(-3, 4):
                     draw.text((x + dx, y + dy), char, fill=color, font=font)
     
-    # Добавляем немного шума точками
+    # Добавляем немного шума
     for _ in range(100):
         x = random.randint(0, width)
         y = random.randint(0, height)
         draw.point((x, y), fill=(100, 100, 100))
     
-    # Сохраняем
     bio = io.BytesIO()
     image.save(bio, 'PNG', quality=95)
     bio.seek(0)
@@ -336,7 +334,7 @@ def generate_captcha_image() -> tuple:
 async def block_forward(message: Message):
     await message.delete()
 
-# ================= ЗАГРУЗКА ВИДЕО (ДЛЯ ВСЕХ АДМИНОВ) =================
+# ================= ЗАГРУЗКА ВИДЕО =================
 @router.message(F.video)
 async def upload_video(message: Message):
     user_id = message.from_user.id
@@ -433,10 +431,7 @@ async def process_video_url(message: Message, state: FSMContext):
     status_msg = await message.answer("🔄 Обрабатываю ссылку...")
     
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, stream=True, headers=headers, allow_redirects=True, timeout=30)
         
         if response.status_code != 200:
@@ -468,7 +463,6 @@ async def process_video_url(message: Message, state: FSMContext):
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
-                    
                     if downloaded % (10 * 1024 * 1024) < 8192:
                         mb = downloaded // (1024 * 1024)
                         await status_msg.edit_text(f"⏬ Скачано: {mb} MB")
@@ -497,16 +491,12 @@ async def process_video_url(message: Message, state: FSMContext):
             f"💡 Теперь можно смотреть!"
         )
         
-    except requests.exceptions.Timeout:
-        await status_msg.edit_text("❌ Таймаут при скачивании. Ссылка недоступна.")
-    except requests.exceptions.ConnectionError:
-        await status_msg.edit_text("❌ Ошибка соединения. Проверьте ссылку.")
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {e}")
         if os.path.exists(filename):
             os.remove(filename)
 
-# ================= БЫСТРАЯ ЗАГРУЗКА ПО КОМАНДЕ =================
+# ================= БЫСТРАЯ ЗАГРУЗКА =================
 @router.message(Command("dl"))
 async def quick_download(message: Message):
     user_id = message.from_user.id
@@ -613,16 +603,13 @@ async def start(message: Message, state: FSMContext):
                 has_ref_in_link = True
                 logger.info(f"🔗 Реферальная ссылка обнаружена! Код: {ref_code}, Реферер: {referrer_id}")
     
-    # ========== ВАЖНО: ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД ==========
+    # ========== ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД ==========
     if has_ref_in_link:
         logger.info(f"✅ Пользователь {user_id} перешел по реферальной ссылке")
         
-        # Проверяем, существует ли пользователь
         if user:
-            # Пользователь уже есть - НЕ НАЧИСЛЯЕМ БОНУС (не новый)
             logger.info(f"🔄 Пользователь {user_id} уже существует. Бонус рефереру НЕ начислен.")
         else:
-            # Создаем НОВОГО пользователя с реферером
             logger.info(f"🆕 Создаем НОВОГО пользователя {user_id} с реферером {referrer_id}")
             new_ref_code = generate_ref_code()
             cursor.execute("""
@@ -631,9 +618,7 @@ async def start(message: Message, state: FSMContext):
             """, (user_id, username, referrer_id, new_ref_code))
             conn.commit()
             
-            # Начисляем бонус рефереру (ТОЛЬКО ЗА НОВОГО)
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
-                          (REF_BONUS, referrer_id))
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
             conn.commit()
             
             try:
@@ -641,13 +626,11 @@ async def start(message: Message, state: FSMContext):
                     referrer_id,
                     f"🎁 <b>Новый реферал!</b>\n\n"
                     f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
-                    f"➕ Вам начислено +{REF_BONUS} 🍬",
-                    parse_mode="HTML"
+                    f"➕ Вам начислено +{REF_BONUS} 🍬"
                 )
             except:
                 pass
         
-        # ВЕРИФИКАЦИЯ - если пользователь не верифицирован
         if not is_verified(user_id):
             logger.info(f"🔐 Пользователь {user_id} не верифицирован, отправляем капчу")
             if user_id in captcha_attempts:
@@ -667,7 +650,6 @@ async def start(message: Message, state: FSMContext):
             )
             return
         
-        # Если верифицирован - проверяем подписку
         if is_verified(user_id):
             logger.info(f"✅ Пользователь {user_id} верифицирован, проверяем подписку")
             is_subscribed = await check_subscription(message.bot, user_id)
@@ -687,7 +669,6 @@ async def start(message: Message, state: FSMContext):
     
     # ========== ЕСЛИ В ССЫЛКЕ НЕТ РЕФ КОДА ==========
     
-    # Создание нового пользователя, если его нет
     if not user:
         new_ref_code = generate_ref_code()
         
@@ -697,10 +678,8 @@ async def start(message: Message, state: FSMContext):
         """, (user_id, username, referrer_id, new_ref_code))
         conn.commit()
         
-        # Если есть реферер и пользователь новый - начисляем бонус
         if referrer_id:
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
-                          (REF_BONUS, referrer_id))
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
             conn.commit()
             
             try:
@@ -708,19 +687,16 @@ async def start(message: Message, state: FSMContext):
                     referrer_id,
                     f"🎁 <b>Новый реферал!</b>\n\n"
                     f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
-                    f"➕ Вам начислено +{REF_BONUS} 🍬",
-                    parse_mode="HTML"
+                    f"➕ Вам начислено +{REF_BONUS} 🍬"
                 )
             except:
                 pass
     else:
         if not user["ref_code"]:
             new_ref_code = generate_ref_code()
-            cursor.execute("UPDATE users SET ref_code = ? WHERE user_id = ?", 
-                          (new_ref_code, user_id))
+            cursor.execute("UPDATE users SET ref_code = ? WHERE user_id = ?", (new_ref_code, user_id))
             conn.commit()
     
-    # Если у пользователя нет реферера (и не получил сейчас) - показываем фейк меню
     if not has_referrer(user_id) and not referrer_id:
         await message.answer(
             f"Привет, @{username}. Добро пожаловать в главное меню!",
@@ -728,7 +704,6 @@ async def start(message: Message, state: FSMContext):
         )
         return
     
-    # Если есть реферальная ссылка (была раньше или сейчас), но не верифицирован - капча
     if not is_verified(user_id):
         if user_id in captcha_attempts:
             del captcha_attempts[user_id]
@@ -747,7 +722,6 @@ async def start(message: Message, state: FSMContext):
         )
         return
     
-    # Если верифицирован - проверяем подписку
     if is_verified(user_id):
         is_subscribed = await check_subscription(message.bot, user_id)
         if not is_subscribed:
@@ -854,7 +828,28 @@ async def process_captcha(message: Message, state: FSMContext):
                     f"📊 Осталось попыток: {remaining_attempts}/3"
         )
 
-# ================= КАСТОМНАЯ ОПЛАТА =================
+# ================= МАГАЗИН =================
+@router.callback_query(F.data == "shop")
+async def shop(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        return
+    
+    text = (
+        "🍬 <b>Магазин конфет</b>\n\n"
+        "💰 Выберите количество конфет для покупки:\n\n"
+        "⭐️ Для оплаты звездами нажми на кнопку ниже\n"
+        "⭐️ 1 телеграмм звезда = 3 конфеты 🍬\n"
+        "⭐️ 15 телеграмм звезд (минималка) = 45 конфет 🍬"
+    )
+    
+    await call.message.answer(
+        text,
+        reply_markup=shop_menu
+    )
+
+# ================= КАСТОМНАЯ ОПЛАТА (СКИДКА 25%) =================
 @router.message(CustomPayStates.waiting_for_amount)
 async def process_custom_pay(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -873,10 +868,15 @@ async def process_custom_pay(message: Message, state: FSMContext):
             await message.answer("❌ Максимальное количество: 10000 🍬")
             return
         
+        # РЕАЛЬНАЯ СКИДКА 25% - цена 0.003 USD за конфету вместо 0.004
         usdt = round(amount * 0.003, 2)
         
         if usdt < 0.1:
             usdt = 0.1
+        
+        # Показываем выгоду
+        standard_price = round(amount * 0.004, 2)
+        savings = round(standard_price - usdt, 2)
         
         # Сохраняем данные для выбора валюты
         await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=True)
@@ -899,10 +899,12 @@ async def process_custom_pay(message: Message, state: FSMContext):
             keyboard.append(row)
         
         await message.answer(
-            f"💳 <b>Выберите валюту для оплаты</b>\n\n"
+            f"💳 <b>Кастомная оплата (скидка 25%)</b>\n\n"
             f"🍬 Конфет: {amount}\n"
-            f"💵 Сумма: {usdt} USD\n\n"
-            f"Курс будет сконвертирован автоматически:",
+            f"💵 Цена: {usdt} USD\n"
+            f"💰 Экономия: {savings} USD\n\n"
+            f"⭐️ Это выгоднее стандартных пакетов!\n\n"
+            f"Выберите валюту для оплаты:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
         )
         
@@ -910,16 +912,14 @@ async def process_custom_pay(message: Message, state: FSMContext):
         await message.answer("❌ Введите корректное число")
         return
 
-# ================= ВАЖНО: СНАЧАЛА ОБРАБАТЫВАЕМ pay_asset_ (ВЫБОР ВАЛЮТЫ) =================
+# ================= ВЫБОР ВАЛЮТЫ =================
 @router.callback_query(F.data.startswith("pay_asset_"))
 async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
-    # Подробное логирование
-    logger.info(f"💰💰💰 pay_with_asset ВЫЗВАНА с data: {call.data}")
+    logger.info(f"💰 pay_with_asset ВЫЗВАНА с data: {call.data}")
     logger.info(f"👤 Пользователь: {user_id}")
     
-    # ОБЯЗАТЕЛЬНО вызываем safe_answer, чтобы убрать "часики"
     await safe_answer(call)
     
     if not await check_access(call.bot, user_id, state, call=call):
@@ -955,9 +955,16 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     
     if rates and asset in rates:
         rate = rates[asset]
-        crypto_amount = round(usdt / rate, 8)
-        rate_text = f"\n1 {asset} = {rate} USD\n💰 К оплате: {crypto_amount} {asset}"
-        logger.info(f"💱 Курс: 1 {asset} = {rate} USD")
+        crypto_amount = usdt / rate
+        # Округляем до разумного количества знаков
+        if asset in ["BTC", "ETH", "BNB", "SOL"]:
+            crypto_amount = round(crypto_amount, 8)
+        elif asset in ["TON"]:
+            crypto_amount = round(crypto_amount, 4)
+        else:
+            crypto_amount = round(crypto_amount, 2)
+        rate_text = f"\n1 {asset} = ${rate}\n💰 К оплате: {crypto_amount} {asset}"
+        logger.info(f"💱 Курс: 1 {asset} = ${rate}")
         logger.info(f"💸 К оплате: {crypto_amount} {asset}")
     else:
         logger.warning(f"⚠️ Курс для {asset} не найден, используется USDT")
@@ -976,7 +983,7 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     # Сохраняем в БД
     try:
         cursor.execute(
-            "INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)",
+            "INSERT INTO payments (invoice_id, user_id, amount, paid) VALUES (?, ?, ?, 0)",
             (invoice["invoice_id"], user_id, amount)
         )
         conn.commit()
@@ -993,7 +1000,7 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
         await call.message.answer(
             f"💳 <b>Оплата в {icon} {asset}</b>\n\n"
             f"🍬 Конфет: {amount}\n"
-            f"💵 Сумма: {usdt} USD{rate_text}\n\n"
+            f"💵 Сумма: ${usdt}{rate_text}\n\n"
             f"🔄 Курс обновлен в реальном времени",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} {asset}", url=invoice["pay_url"])],
@@ -1006,11 +1013,10 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
         await call.message.answer("❌ Ошибка при отправке сообщения. Попробуйте позже.")
         return
     
-    # Очищаем state
     await state.clear()
     logger.info(f"✅ State очищен для пользователя {user_id}")
 
-# ================= ОПЛАТА С ВЫБОРОМ КРИПТЫ (ВТОРОЙ) =================
+# ================= ОПЛАТА =================
 @router.callback_query(F.data.startswith("pay_"))
 async def pay(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -1046,16 +1052,12 @@ async def pay(call: CallbackQuery, state: FSMContext):
     amount, usdt = prices[call.data]
     logger.info(f"✅ Selected: {amount} candies for ${usdt}")
     
-    # Сохраняем сумму в state для выбора валюты
     await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
     
     # Показываем меню выбора валюты
     keyboard = []
-    
-    # Сортируем валюты: USDT и TON первые
     sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
     
-    # Создаем ряды по 2 кнопки
     row = []
     for i, asset in enumerate(sorted_assets):
         icon = get_asset_icon(asset)
@@ -1069,23 +1071,21 @@ async def pay(call: CallbackQuery, state: FSMContext):
     await call.message.answer(
         f"💳 <b>Выберите валюту для оплаты</b>\n\n"
         f"🍬 Конфет: {amount}\n"
-        f"💵 Сумма: {usdt} USD\n\n"
+        f"💵 Сумма: ${usdt}\n\n"
         f"Курс будет сконвертирован автоматически:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
 
-# ================= ПРОВЕРКА ПОДПИСКИ (ИСПРАВЛЕНО) =================
+# ================= ПРОВЕРКА ПОДПИСКИ =================
 @router.callback_query(F.data == "check_subscribe")
 async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
     await safe_answer(call)
     
-    # Проверяем подписку на канал
     is_subscribed = await check_subscription(call.bot, user_id)
     
     if is_subscribed:
-        # Проверяем, получал ли уже бонус
         try:
             bonus_received = has_received_subscribe_bonus(user_id)
         except:
@@ -1110,10 +1110,7 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
         except:
             pass
         
-        # Сначала отправляем сообщение о доступе
         await call.message.answer(f"✅ <b>Доступ получен!</b>{bonus_text}")
-        
-        # Потом отправляем основное меню
         await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
         try:
@@ -1121,12 +1118,11 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
         except:
             pass
 
-# ================= ПРОВЕРКА ПЛАТЕЖА =================
+# ================= ПРОВЕРКА ПЛАТЕЖА (ТОЛЬКО РЕАЛЬНЫЕ) =================
 @router.callback_query(F.data.startswith("check_"))
 async def check_payment(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
-    # ВАЖНО: пропускаем check_subscribe
     if call.data == "check_subscribe":
         return
     
@@ -1138,7 +1134,7 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
     invoice_id = call.data.split("_", 1)[1]
     logger.info(f"🔍 Проверка платежа: {invoice_id}")
     
-    cursor.execute("SELECT user_id, amount FROM payments WHERE invoice_id = ?", (invoice_id,))
+    cursor.execute("SELECT user_id, amount, paid FROM payments WHERE invoice_id = ?", (invoice_id,))
     row = cursor.fetchone()
     
     if not row:
@@ -1149,7 +1145,15 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
     logger.info(f"📊 Результат проверки: {result}")
     
     if result.get("paid", False):
-        # ТОЛЬКО ЗДЕСЬ НАЧИСЛЯЕМ КОНФЕТЫ - ПОСЛЕ РЕАЛЬНОЙ ОПЛАТЫ
+        # Проверяем, не был ли уже оплачен
+        if row["paid"] == 1:
+            await call.message.answer("✅ Этот платёж уже был обработан")
+            return
+        
+        # Отмечаем платеж как оплаченный
+        cursor.execute("UPDATE payments SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
+        
+        # Начисляем конфеты
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (row["amount"], row["user_id"]))
         
         # Начисляем бонус рефереру
@@ -1169,11 +1173,8 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
                 except:
                     pass
         
-        # Удаляем запись о платеже
-        cursor.execute("DELETE FROM payments WHERE invoice_id = ?", (invoice_id,))
         conn.commit()
         
-        # Получаем новый баланс
         cursor.execute("SELECT balance FROM users WHERE user_id = ?", (row["user_id"],))
         new_balance = cursor.fetchone()["balance"]
         
@@ -1369,7 +1370,84 @@ async def process_broadcast_text(message: Message, state: FSMContext):
         reply_markup=confirm_menu
     )
 
-# ================= АДМИН - ДОБАВЛЕНИЕ БАЛАНСА =================
+@router.callback_query(F.data == "confirm_broadcast")
+async def confirm_broadcast(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    data = await state.get_data()
+    text = data.get('broadcast_text')
+    
+    if not text:
+        await call.message.answer("❌ Ошибка: текст не найден")
+        await state.clear()
+        return
+    
+    cursor.execute("SELECT user_id FROM users")
+    users = [row["user_id"] for row in cursor.fetchall()]
+    
+    broadcast_mode.add(call.from_user.id)
+    
+    sent = 0
+    failed = 0
+    
+    status_msg = await call.message.answer(f"📢 Начинаю рассылку...\nВсего пользователей: {len(users)}")
+    
+    for i, uid in enumerate(users):
+        try:
+            await call.bot.send_message(uid, text)
+            sent += 1
+            if i % 10 == 0:
+                await status_msg.edit_text(f"📢 Рассылка...\nОтправлено: {sent}/{len(users)}")
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            failed += 1
+            logger.error(f"Failed to send to {uid}: {e}")
+    
+    broadcast_mode.discard(call.from_user.id)
+    
+    await status_msg.edit_text(f"📢 Рассылка завершена!\n✅ Отправлено: {sent}\n❌ Не отправлено: {failed}")
+    await state.clear()
+    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
+
+@router.callback_query(F.data == "cancel_broadcast")
+async def cancel_broadcast(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await state.clear()
+    broadcast_mode.discard(call.from_user.id)
+    await call.message.answer("❌ Рассылка отменена")
+    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
+
+# ================= АДМИН - УПРАВЛЕНИЕ БАЛАНСОМ =================
+@router.callback_query(F.data == "admin_add_balance")
+async def admin_add_balance(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await state.set_state(AdminStates.waiting_for_add_balance_user)
+    await call.message.answer("👤 Введите ID пользователя:")
+
 @router.message(AdminStates.waiting_for_add_balance_user)
 async def process_add_balance_user(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1428,7 +1506,20 @@ async def process_add_balance_amount(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
 
-# ================= АДМИН - СНЯТИЕ БАЛАНСА =================
+@router.callback_query(F.data == "admin_remove_balance")
+async def admin_remove_balance(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await state.set_state(AdminStates.waiting_for_remove_balance_user)
+    await call.message.answer("👤 Введите ID пользователя:")
+
 @router.message(AdminStates.waiting_for_remove_balance_user)
 async def process_remove_balance_user(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1571,519 +1662,7 @@ async def process_add_promo_uses(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
 
-# ================= ОП (обязательная подписка) =================
-@router.message(OpStates.waiting_for_channel_id)
-async def process_op_channel_id(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        return
-    
-    channel_id = message.text.strip()
-    await state.update_data(channel_id=channel_id)
-    await state.set_state(OpStates.waiting_for_channel_name)
-    await message.answer("✏️ Введите название канала (для отображения):")
-
-@router.message(OpStates.waiting_for_channel_name)
-async def process_op_channel_name(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        return
-    
-    channel_name = message.text.strip()
-    await state.update_data(channel_name=channel_name)
-    await state.set_state(OpStates.waiting_for_channel_link)
-    await message.answer("🔗 Введите ссылку на канал:")
-
-@router.message(OpStates.waiting_for_channel_link)
-async def process_op_channel_link(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        return
-    
-    channel_link = message.text.strip()
-    data = await state.get_data()
-    
-    channel_id = data['channel_id']
-    channel_name = data['channel_name']
-    
-    if add_mandatory_channel(channel_id, channel_name, channel_link):
-        await message.answer(f"✅ Канал {channel_name} добавлен в ОП!")
-    else:
-        await message.answer("❌ Ошибка при добавлении канала")
-    
-    await state.clear()
-    await message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
-
-# ================= ОБРАБОТКА ФЕЙК МЕНЮ =================
-@router.callback_query(F.data.startswith("fake_"))
-async def fake_menu_actions(call: CallbackQuery):
-    user_id = call.from_user.id
-    
-    await safe_answer(call)
-    
-    if has_referrer(user_id):
-        if await check_access(call.bot, user_id, None, call=call):
-            await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
-        return
-    
-    if call.data == "fake_download":
-        await safe_answer(call, "❌ Ошибка загрузки. Попробуйте позже.", show_alert=True)
-    elif call.data == "fake_rate":
-        rate = random.randint(45000, 52000)
-        await safe_answer(call, f"💱 Курс BTC: ${rate}", show_alert=True)
-    elif call.data == "fake_dice":
-        dice = random.randint(1, 6)
-        await safe_answer(call, f"🎲 Выпало: {dice}", show_alert=True)
-
-# ================= БОНУС =================
-@router.callback_query(F.data == "bonus")
-async def bonus(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    if not await check_access(call.bot, user_id, state, call=call):
-        return
-    
-    now = int(time.time())
-    cursor.execute("SELECT last_bonus FROM users WHERE user_id = ?", (user_id,))
-    result = cursor.fetchone()
-    
-    if not result:
-        await safe_answer(call, "❌ Пользователь не найден", show_alert=True)
-        return
-    
-    last = result["last_bonus"]
-    
-    if now - last < BONUS_COOLDOWN:
-        remaining = BONUS_COOLDOWN - (now - last)
-        minutes = remaining // 60
-        seconds = remaining % 60
-        await safe_answer(call, f"⏳ Подожди {minutes} мин {seconds} сек", show_alert=True)
-        return
-    
-    cursor.execute(
-        "UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?",
-        (BONUS_AMOUNT, now, user_id)
-    )
-    conn.commit()
-    
-    await safe_answer(call, f"🎁 +{BONUS_AMOUNT} 🍬", show_alert=True)
-
-# ================= ВИДЕО (ПРОСМОТР) =================
-@router.callback_query(F.data == "videos")
-async def videos(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    logger.info(f"🎥 Videos request from user {user_id}")
-    
-    if not await check_access(call.bot, user_id, state, call=call):
-        return
-    
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    result = cursor.fetchone()
-    if not result:
-        await safe_answer(call, "❌ Пользователь не найден", show_alert=True)
-        return
-    
-    balance = result["balance"]
-    
-    if balance < VIDEO_PRICE and not check_admin_access(user_id)[0]:
-        await safe_answer(call, f"❌ Недостаточно конфет. Нужно: {VIDEO_PRICE} 🍬", show_alert=True)
-        return
-    
-    cursor.execute("SELECT COUNT(*) as count FROM videos")
-    count = cursor.fetchone()["count"]
-    
-    if count == 0:
-        await safe_answer(call, "❌ Видео еще не загружены", show_alert=True)
-        return
-    
-    cursor.execute("""
-        SELECT id, file_id FROM videos
-        WHERE id NOT IN (
-            SELECT video_id FROM user_videos WHERE user_id = ?
-        )
-        ORDER BY id ASC
-        LIMIT 1
-    """, (user_id,))
-    video = cursor.fetchone()
-    
-    if not video:
-        await safe_answer(call, "❌ Ты посмотрел все видео!", show_alert=True)
-        return
-    
-    try:
-        logger.info(f"📤 Sending video {video['id']} to user {user_id}")
-        await call.message.answer_video(
-            video["file_id"],
-            caption=f"🎥 <b>Видео</b>",
-            reply_markup=video_menu
-        )
-        
-        if not check_admin_access(user_id)[0]:
-            cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (VIDEO_PRICE, user_id))
-            await safe_answer(call, f"🍬 Списана {VIDEO_PRICE} конфета", show_alert=True)
-        
-        cursor.execute("INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)", (user_id, video["id"]))
-        conn.commit()
-        logger.info(f"✅ Video {video['id']} sent successfully to user {user_id}")
-        
-    except Exception as e:
-        logger.error(f"❌ Error sending video: {e}")
-        await safe_answer(call, "❌ Ошибка отправки видео", show_alert=True)
-
-# ================= ПРОМОКОДЫ =================
-@router.callback_query(F.data == "promo")
-async def promo(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    if not await check_access(call.bot, user_id, state, call=call):
-        return
-    
-    await state.set_state(PromoStates.waiting_for_promo)
-    await call.message.answer("🎟 Введите промокод:")
-
-# ================= МЕНЮ =================
-@router.callback_query(F.data == "menu")
-async def back_to_menu(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    has_access, _, is_main, can_manage = check_admin_access(user_id)
-    
-    if has_access:
-        await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
-        return
-    
-    if not await check_access(call.bot, user_id, state, call=call):
-        return
-    
-    await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
-
-# ================= ПРОФИЛЬ =================
-@router.callback_query(F.data == "profile")
-async def profile(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    if not await check_access(call.bot, user_id, state, call=call):
-        return
-    
-    cursor.execute("SELECT balance, referrer, ref_code FROM users WHERE user_id = ?", (user_id,))
-    user = cursor.fetchone()
-    
-    if not user:
-        await safe_answer(call, "❌ Пользователь не найден", show_alert=True)
-        return
-    
-    balance = user["balance"]
-    ref_code = user["ref_code"]
-    
-    if not ref_code:
-        ref_code = generate_ref_code()
-        cursor.execute("UPDATE users SET ref_code = ? WHERE user_id = ?", (ref_code, user_id))
-        conn.commit()
-    
-    ref_link = f"https://t.me/{BOT_USERNAME}?start={ref_code}"
-    
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE referrer = ?", (user_id,))
-    ref_count = cursor.fetchone()["count"]
-    
-    text = (
-        f"👤 <b>ПРОФИЛЬ</b>\n\n"
-        f"🍬 Баланс: <code>{balance}</code> конфет\n"
-        f"👥 Рефералов: <code>{ref_count}</code>\n\n"
-        f"🔗 <b>Твоя ссылка:</b>\n"
-        f"<code>{ref_link}</code>\n\n"
-        f"🎁 За друга: +{REF_BONUS} 🍬\n"
-        f"💰 С покупок рефералов: {REF_PERCENT}%"
-    )
-    
-    try:
-        await call.message.answer(text)
-    except:
-        pass
-
-# ================= МАГАЗИН =================
-@router.callback_query(F.data == "shop")
-async def shop(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    if not await check_access(call.bot, user_id, state, call=call):
-        return
-    
-    await call.message.answer(
-        "🍬 <b>Магазин конфет</b>\n\n"
-        "💰 Выберите количество конфет для покупки:\n\n"
-        "⭐️ Для оплаты звездами нажми на кнопку ниже",
-        reply_markup=shop_menu
-    )
-
-# ================= АДМИН КОМАНДЫ =================
-@router.callback_query(F.data == "admin_stats")
-async def admin_stats(call: CallbackQuery):
-    user_id = call.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    
-    # РЕАЛЬНАЯ СТАТИСТИКА ИЗ БД
-    cursor.execute("SELECT COUNT(*) as count FROM users")
-    total_users = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE is_verified = 1")
-    verified_users = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE is_verified = 0")
-    unverified_users = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE referrer IS NOT NULL")
-    ref_users = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE referrer IS NULL")
-    non_ref_users = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT SUM(balance) as total FROM users")
-    total_balance = cursor.fetchone()["total"] or 0
-    
-    cursor.execute("SELECT AVG(balance) as avg FROM users")
-    avg_balance = cursor.fetchone()["avg"] or 0
-    
-    cursor.execute("SELECT MAX(balance) as max FROM users")
-    max_balance = cursor.fetchone()["max"] or 0
-    
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE balance > 0")
-    users_with_balance = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE balance = 0")
-    users_zero_balance = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM videos")
-    total_videos = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(DISTINCT user_id) as count FROM user_videos")
-    users_watched = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM user_videos")
-    total_views = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM payments")
-    total_payments = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT SUM(amount) as total FROM payments")
-    total_paid_candies = cursor.fetchone()["total"] or 0
-    
-    cursor.execute("SELECT COUNT(*) as count FROM promocodes")
-    total_promos = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT SUM(activations_left) as total FROM promocodes")
-    total_activations_left = cursor.fetchone()["total"] or 0
-    
-    cursor.execute("SELECT COUNT(*) as count FROM used_promocodes")
-    used_promos = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE last_bonus > 0")
-    users_took_bonus = cursor.fetchone()["count"]
-    
-    cursor.execute("SELECT COUNT(DISTINCT user_id) as count FROM user_videos")
-    active_users = cursor.fetchone()["count"]
-    
-    channels = get_mandatory_channels()
-    
-    cursor.execute("SELECT COUNT(*) as count FROM users WHERE subscribe_bonus_received = 1")
-    bonus_received = cursor.fetchone()["count"] or 0
-    
-    admins = get_all_admins()
-    admins_count = len(admins)
-    
-    text = (
-        f"📊 <b>ПОЛНАЯ СТАТИСТИКА</b>\n\n"
-        f"👥 <b>ПОЛЬЗОВАТЕЛИ:</b>\n"
-        f"├ 👤 Всего: {total_users}\n"
-        f"├ ✅ Верифицировано: {verified_users}\n"
-        f"├ ❌ Не верифицировано: {unverified_users}\n"
-        f"├ 🔗 По рефералкам: {ref_users}\n"
-        f"├ 🚫 Без рефералки: {non_ref_users}\n"
-        f"├ 💰 С балансом: {users_with_balance}\n"
-        f"├ 🍪 С нулевым балансом: {users_zero_balance}\n"
-        f"├ 👑 Админов: {admins_count}\n"
-        f"└ 🎁 Получили бонус за подписку: {bonus_received}\n\n"
-        
-        f"💰 <b>БАЛАНСЫ:</b>\n"
-        f"├ 💎 Всего конфет: {total_balance} 🍬\n"
-        f"├ 📊 Средний баланс: {avg_balance:.1f} 🍬\n"
-        f"└ 🏆 Макс. баланс: {max_balance} 🍬\n\n"
-        
-        f"🎥 <b>ВИДЕО:</b>\n"
-        f"├ 📹 Всего видео: {total_videos}\n"
-        f"├ 👀 Всего просмотров: {total_views}\n"
-        f"└ 🎬 Смотрели видео: {users_watched} чел\n\n"
-        
-        f"💳 <b>ПЛАТЕЖИ:</b>\n"
-        f"├ 💸 Всего платежей: {total_payments}\n"
-        f"└ 🍬 Куплено конфет: {total_paid_candies} 🍬\n\n"
-        
-        f"🎟 <b>ПРОМОКОДЫ:</b>\n"
-        f"├ 📋 Всего создано: {total_promos}\n"
-        f"├ ✅ Активировано: {used_promos}\n"
-        f"└ 📦 Осталось активаций: {total_activations_left}\n\n"
-        
-        f"📈 <b>АКТИВНОСТЬ:</b>\n"
-        f"├ 🎁 Брали бонус: {users_took_bonus} чел\n"
-        f"└ 👁 Активные юзеры: {active_users} чел\n\n"
-        
-        f"🔐 <b>ОБЯЗАТЕЛЬНАЯ ПОДПИСКА:</b>\n"
-        f"└ 📢 Каналов в ОП: {len(channels)}"
-    )
-    
-    await call.message.answer(text)
-    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
-
-# ================= АДМИН - УПРАВЛЕНИЕ =================
-@router.callback_query(F.data == "admin_panel")
-async def admin_panel(call: CallbackQuery):
-    user_id = call.from_user.id
-    
-    has_access, _, is_main, can_manage = check_admin_access(user_id)
-    
-    if not has_access:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
-
-@router.callback_query(F.data == "admin_broadcast")
-async def admin_broadcast(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    await state.set_state(AdminStates.waiting_for_broadcast)
-    await call.message.answer("📢 Введите текст для рассылки:")
-
-@router.callback_query(F.data == "confirm_broadcast")
-async def confirm_broadcast(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    
-    data = await state.get_data()
-    text = data.get('broadcast_text')
-    
-    if not text:
-        await call.message.answer("❌ Ошибка: текст не найден")
-        await state.clear()
-        return
-    
-    cursor.execute("SELECT user_id FROM users")
-    users = [row["user_id"] for row in cursor.fetchall()]
-    
-    broadcast_mode.add(call.from_user.id)
-    
-    sent = 0
-    failed = 0
-    
-    status_msg = await call.message.answer(f"📢 Начинаю рассылку...\nВсего пользователей: {len(users)}")
-    
-    for i, uid in enumerate(users):
-        try:
-            await call.bot.send_message(uid, text)
-            sent += 1
-            if i % 10 == 0:
-                await status_msg.edit_text(f"📢 Рассылка...\nОтправлено: {sent}/{len(users)}")
-            await asyncio.sleep(0.05)
-        except Exception as e:
-            failed += 1
-            logger.error(f"Failed to send to {uid}: {e}")
-    
-    broadcast_mode.discard(call.from_user.id)
-    
-    await status_msg.edit_text(f"📢 Рассылка завершена!\n✅ Отправлено: {sent}\n❌ Не отправлено: {failed}")
-    await state.clear()
-    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
-
-@router.callback_query(F.data == "cancel_broadcast")
-async def cancel_broadcast(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    await state.clear()
-    broadcast_mode.discard(call.from_user.id)
-    await call.message.answer("❌ Рассылка отменена")
-    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
-
-@router.callback_query(F.data == "admin_add_balance")
-async def admin_add_balance(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    await state.set_state(AdminStates.waiting_for_add_balance_user)
-    await call.message.answer("👤 Введите ID пользователя:")
-
-@router.callback_query(F.data == "admin_remove_balance")
-async def admin_remove_balance(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    await state.set_state(AdminStates.waiting_for_remove_balance_user)
-    await call.message.answer("👤 Введите ID пользователя:")
-
-@router.callback_query(F.data == "admin_add_promo")
-async def admin_add_promo(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    has_access, _, _, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    await state.set_state(AdminStates.waiting_for_add_promo_code)
-    await call.message.answer("🎟 Введите промокод (будет автоматически преобразован в верхний регистр):")
-
-# ================= УПРАВЛЕНИЕ АДМИНАМИ =================
+# ================= АДМИН - УПРАВЛЕНИЕ АДМИНАМИ =================
 @router.callback_query(F.data == "admin_manage")
 async def admin_manage_menu_callback(call: CallbackQuery):
     user_id = call.from_user.id
@@ -2274,7 +1853,302 @@ async def admin_delete(call: CallbackQuery, state: FSMContext):
     
     await admin_remove_menu(call, state)
 
-# ================= УПРАВЛЕНИЕ ОП =================
+# ================= АДМИН - ТОП РЕФЕРОВ =================
+@router.callback_query(F.data == "admin_top_refs")
+async def admin_top_refs(call: CallbackQuery):
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    cursor.execute("""
+        SELECT u.user_id, u.username, 
+               COUNT(r.user_id) as ref_count,
+               SUM(r.balance) as ref_balance
+        FROM users u
+        LEFT JOIN users r ON r.referrer = u.user_id
+        GROUP BY u.user_id
+        HAVING ref_count > 0
+        ORDER BY ref_count DESC
+        LIMIT 10
+    """)
+    top_refs = cursor.fetchall()
+    
+    text = "🏆 <b>ТОП 10 РЕФЕРАЛОВ</b>\n\n"
+    
+    if not top_refs:
+        text += "📭 Нет данных"
+    else:
+        for i, ref in enumerate(top_refs, 1):
+            username = ref["username"] or "нет username"
+            ref_count = ref["ref_count"]
+            ref_balance = ref["ref_balance"] or 0
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🔹"
+            text += f"{medal} <b>{i}.</b> @{username}\n"
+            text += f"   👥 Рефералов: {ref_count}\n"
+            text += f"   💰 Баланс рефералов: {ref_balance} 🍬\n\n"
+    
+    keyboard = [[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats")]]
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+# ================= АДМИН - ПОИСК ПЛАТЕЖЕЙ =================
+@router.callback_query(F.data == "admin_search_payments")
+async def admin_search_payments_start(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await state.set_state(AdminStates.waiting_for_payment_search)
+    await call.message.answer(
+        "🔍 <b>Поиск платежей</b>\n\n"
+        "Введите ID пользователя или username для поиска:\n"
+        "Например: <code>123456789</code> или <code>@username</code>"
+    )
+
+@router.message(AdminStates.waiting_for_payment_search)
+async def admin_search_payments_result(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        return
+    
+    search_query = message.text.strip()
+    
+    if search_query.startswith('@'):
+        username = search_query[1:]
+        cursor.execute("SELECT user_id, username FROM users WHERE username = ?", (username,))
+    else:
+        try:
+            target_id = int(search_query)
+            cursor.execute("SELECT user_id, username FROM users WHERE user_id = ?", (target_id,))
+        except ValueError:
+            cursor.execute("SELECT user_id, username FROM users WHERE username LIKE ?", (f"%{search_query}%",))
+    
+    users = cursor.fetchall()
+    
+    if not users:
+        await message.answer(f"❌ Пользователь не найден")
+        await state.clear()
+        return
+    
+    text = f"🔍 <b>Результаты поиска:</b>\n\n"
+    
+    for user in users[:5]:
+        uid = user["user_id"]
+        uname = user["username"] or "нет username"
+        
+        cursor.execute("""
+            SELECT invoice_id, amount, 
+                   CASE WHEN paid = 1 THEN '✅ Оплачен' ELSE '⏳ Ожидает' END as status
+            FROM payments 
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT 10
+        """, (uid,))
+        payments = cursor.fetchall()
+        
+        text += f"👤 <b>ID:</b> <code>{uid}</code> | @{uname}\n"
+        
+        if payments:
+            for p in payments:
+                text += f"   • {p['amount']} 🍬 | {p['status']}\n"
+        else:
+            text += f"   • Нет платежей\n"
+        text += "\n"
+    
+    if len(users) > 5:
+        text += f"... и еще {len(users) - 5} пользователей\n"
+    
+    keyboard = [[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats")]]
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await state.clear()
+
+# ================= АДМИН - ПОИСК ПОЛЬЗОВАТЕЛЕЙ =================
+@router.callback_query(F.data == "admin_search_users")
+async def admin_search_users_start(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await state.set_state(AdminStates.waiting_for_user_search)
+    await call.message.answer(
+        "👤 <b>Поиск пользователей</b>\n\n"
+        "Введите ID пользователя, username или часть username для поиска:"
+    )
+
+@router.message(AdminStates.waiting_for_user_search)
+async def admin_search_users_result(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        return
+    
+    search_query = message.text.strip()
+    
+    if search_query.startswith('@'):
+        username = search_query[1:]
+        cursor.execute("""
+            SELECT user_id, username, balance, is_verified, 
+                   referrer, last_bonus, subscribe_bonus_received, is_admin
+            FROM users WHERE username = ?
+        """, (username,))
+    else:
+        try:
+            target_id = int(search_query)
+            cursor.execute("""
+                SELECT user_id, username, balance, is_verified, 
+                       referrer, last_bonus, subscribe_bonus_received, is_admin
+                FROM users WHERE user_id = ?
+            """, (target_id,))
+        except ValueError:
+            cursor.execute("""
+                SELECT user_id, username, balance, is_verified, 
+                       referrer, last_bonus, subscribe_bonus_received, is_admin
+                FROM users WHERE username LIKE ?
+                ORDER BY user_id
+                LIMIT 10
+            """, (f"%{search_query}%",))
+    
+    users = cursor.fetchall()
+    
+    if not users:
+        await message.answer(f"❌ Пользователи не найдены")
+        await state.clear()
+        return
+    
+    text = f"👤 <b>Результаты поиска:</b>\n\n"
+    
+    for user in users:
+        uid = user["user_id"]
+        uname = user["username"] or "нет username"
+        balance = user["balance"]
+        verified = "✅" if user["is_verified"] else "❌"
+        admin = "👑" if user["is_admin"] else ""
+        bonus = "🎁" if user["subscribe_bonus_received"] else ""
+        
+        text += f"<b>ID:</b> <code>{uid}</code> {admin}\n"
+        text += f"<b>Username:</b> @{uname}\n"
+        text += f"<b>Баланс:</b> {balance} 🍬\n"
+        text += f"<b>Верифицирован:</b> {verified}\n"
+        
+        if user["referrer"]:
+            text += f"<b>Реферер:</b> <code>{user['referrer']}</code>\n"
+        
+        if user["last_bonus"] > 0:
+            last_bonus = datetime.fromtimestamp(user["last_bonus"]).strftime("%Y-%m-%d %H:%M")
+            text += f"<b>Последний бонус:</b> {last_bonus}\n"
+        
+        text += "\n"
+    
+    keyboard = [[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats")]]
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    await state.clear()
+
+# ================= АДМИН СТАТИСТИКА (РЕАЛЬНЫЕ ПЛАТЕЖИ) =================
+@router.callback_query(F.data == "admin_stats")
+async def admin_stats(call: CallbackQuery):
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    # Используем функции из db.py
+    total_users = get_total_users()
+    verified_users = get_verified_users()
+    users_with_balance = get_users_with_balance()
+    total_balance = get_total_balance()
+    max_balance = get_max_balance()
+    avg_balance = get_avg_balance()
+    total_videos = get_video_count()
+    watched_stats = get_watched_stats()
+    payments_stats = get_payments_stats()
+    promo_stats = get_promo_stats()
+    bonus_stats = get_bonus_stats()
+    referral_stats = get_referral_stats()
+    
+    channels = get_mandatory_channels()
+    
+    cursor.execute("SELECT COUNT(*) as count FROM users WHERE subscribe_bonus_received = 1")
+    bonus_received = cursor.fetchone()["count"] or 0
+    
+    admins = get_all_admins()
+    admins_count = len(admins)
+    
+    text = (
+        f"📊 <b>ПОЛНАЯ СТАТИСТИКА</b>\n\n"
+        f"👥 <b>ПОЛЬЗОВАТЕЛИ:</b>\n"
+        f"├ 👤 Всего: {total_users}\n"
+        f"├ ✅ Верифицировано: {verified_users}\n"
+        f"├ ❌ Не верифицировано: {total_users - verified_users}\n"
+        f"├ 🔗 По рефералкам: {referral_stats['total_refs']}\n"
+        f"├ 💰 С балансом: {users_with_balance}\n"
+        f"├ 🍪 С нулевым балансом: {total_users - users_with_balance}\n"
+        f"├ 👑 Админов: {admins_count}\n"
+        f"└ 🎁 Получили бонус за подписку: {bonus_received}\n\n"
+        
+        f"💰 <b>БАЛАНСЫ:</b>\n"
+        f"├ 💎 Всего конфет: {total_balance} 🍬\n"
+        f"├ 📊 Средний баланс: {avg_balance:.1f} 🍬\n"
+        f"└ 🏆 Макс. баланс: {max_balance} 🍬\n\n"
+        
+        f"🎥 <b>ВИДЕО:</b>\n"
+        f"├ 📹 Всего видео: {total_videos}\n"
+        f"├ 👀 Всего просмотров: {watched_stats['total_views']}\n"
+        f"└ 🎬 Смотрели видео: {watched_stats['unique_viewers']} чел\n\n"
+        
+        f"💳 <b>ПЛАТЕЖИ:</b>\n"
+        f"├ 💸 Успешных платежей: {payments_stats['successful']}\n"
+        f"├ 🍬 Куплено конфет: {payments_stats['total_candies']} 🍬\n"
+        f"├ 📝 Всего попыток: {payments_stats['total_attempts']}\n"
+        f"└ ❌ Неуспешных: {payments_stats['total_attempts'] - payments_stats['successful']}\n\n"
+        
+        f"🎟 <b>ПРОМОКОДЫ:</b>\n"
+        f"├ 📋 Всего создано: {promo_stats['total_codes']}\n"
+        f"├ ✅ Активировано: {promo_stats['total_used']}\n"
+        f"└ 📦 Осталось активаций: {promo_stats['total_left']}\n\n"
+        
+        f"📈 <b>АКТИВНОСТЬ:</b>\n"
+        f"├ 🎁 Брали бонус: {bonus_stats['users_took_bonus']} чел\n"
+        f"└ 👁 Активные юзеры: {watched_stats['unique_viewers']} чел\n\n"
+        
+        f"🔐 <b>ОБЯЗАТЕЛЬНАЯ ПОДПИСКА:</b>\n"
+        f"└ 📢 Каналов в ОП: {len(channels)}"
+    )
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏆 Топ рефералов", callback_data="admin_top_refs")],
+        [InlineKeyboardButton(text="🔍 Поиск платежей", callback_data="admin_search_payments")],
+        [InlineKeyboardButton(text="👤 Поиск пользователей", callback_data="admin_search_users")]
+    ])
+    
+    await call.message.answer(text)
+    await call.message.answer("📊 <b>Дополнительная статистика</b>", reply_markup=keyboard)
+
+# ================= АДМИН - УПРАВЛЕНИЕ ОП =================
 @router.callback_query(F.data == "admin_op")
 async def admin_op_menu(call: CallbackQuery):
     user_id = call.from_user.id
@@ -2304,6 +2178,57 @@ async def op_add_start(call: CallbackQuery, state: FSMContext):
         "📢 <b>Добавление канала в ОП</b>\n\n"
         "Введите ID канала (например: -1001234567890) или @username канала:"
     )
+
+@router.message(OpStates.waiting_for_channel_id)
+async def process_op_channel_id(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        return
+    
+    channel_id = message.text.strip()
+    await state.update_data(channel_id=channel_id)
+    await state.set_state(OpStates.waiting_for_channel_name)
+    await message.answer("✏️ Введите название канала (для отображения):")
+
+@router.message(OpStates.waiting_for_channel_name)
+async def process_op_channel_name(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        return
+    
+    channel_name = message.text.strip()
+    await state.update_data(channel_name=channel_name)
+    await state.set_state(OpStates.waiting_for_channel_link)
+    await message.answer("🔗 Введите ссылку на канал:")
+
+@router.message(OpStates.waiting_for_channel_link)
+async def process_op_channel_link(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        return
+    
+    channel_link = message.text.strip()
+    data = await state.get_data()
+    
+    channel_id = data['channel_id']
+    channel_name = data['channel_name']
+    
+    if add_mandatory_channel(channel_id, channel_name, channel_link):
+        await message.answer(f"✅ Канал {channel_name} добавлен в ОП!")
+    else:
+        await message.answer("❌ Ошибка при добавлении канала")
+    
+    await state.clear()
+    await message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
 
 @router.callback_query(F.data == "op_remove")
 async def op_remove_menu(call: CallbackQuery):
@@ -2397,6 +2322,207 @@ async def op_list(call: CallbackQuery):
     keyboard = [[InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_op")]]
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
+# ================= АДМИН - УПРАВЛЕНИЕ =================
+@router.callback_query(F.data == "admin_panel")
+async def admin_panel(call: CallbackQuery):
+    user_id = call.from_user.id
+    
+    has_access, _, is_main, can_manage = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
+
+# ================= ОБРАБОТКА ФЕЙК МЕНЮ =================
+@router.callback_query(F.data.startswith("fake_"))
+async def fake_menu_actions(call: CallbackQuery):
+    user_id = call.from_user.id
+    
+    await safe_answer(call)
+    
+    if has_referrer(user_id):
+        if await check_access(call.bot, user_id, None, call=call):
+            await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
+        return
+    
+    if call.data == "fake_download":
+        await safe_answer(call, "❌ Ошибка загрузки. Попробуйте позже.", show_alert=True)
+    elif call.data == "fake_rate":
+        rate = random.randint(45000, 52000)
+        await safe_answer(call, f"💱 Курс BTC: ${rate}", show_alert=True)
+    elif call.data == "fake_dice":
+        dice = random.randint(1, 6)
+        await safe_answer(call, f"🎲 Выпало: {dice}", show_alert=True)
+
+# ================= БОНУС =================
+@router.callback_query(F.data == "bonus")
+async def bonus(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        return
+    
+    now = int(time.time())
+    cursor.execute("SELECT last_bonus FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    
+    if not result:
+        await safe_answer(call, "❌ Пользователь не найден", show_alert=True)
+        return
+    
+    last = result["last_bonus"]
+    
+    if now - last < BONUS_COOLDOWN:
+        remaining = BONUS_COOLDOWN - (now - last)
+        minutes = remaining // 60
+        seconds = remaining % 60
+        await safe_answer(call, f"⏳ Подожди {minutes} мин {seconds} сек", show_alert=True)
+        return
+    
+    cursor.execute(
+        "UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?",
+        (BONUS_AMOUNT, now, user_id)
+    )
+    conn.commit()
+    
+    await safe_answer(call, f"🎁 +{BONUS_AMOUNT} 🍬", show_alert=True)
+
+# ================= ВИДЕО (ПРОСМОТР) =================
+@router.callback_query(F.data == "videos")
+async def videos(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    logger.info(f"🎥 Videos request from user {user_id}")
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        return
+    
+    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    if not result:
+        await safe_answer(call, "❌ Пользователь не найден", show_alert=True)
+        return
+    
+    balance = result["balance"]
+    
+    if balance < VIDEO_PRICE and not check_admin_access(user_id)[0]:
+        await safe_answer(call, f"❌ Недостаточно конфет. Нужно: {VIDEO_PRICE} 🍬", show_alert=True)
+        return
+    
+    cursor.execute("SELECT COUNT(*) as count FROM videos")
+    count = cursor.fetchone()["count"]
+    
+    if count == 0:
+        await safe_answer(call, "❌ Видео еще не загружены", show_alert=True)
+        return
+    
+    cursor.execute("""
+        SELECT id, file_id FROM videos
+        WHERE id NOT IN (
+            SELECT video_id FROM user_videos WHERE user_id = ?
+        )
+        ORDER BY id ASC
+        LIMIT 1
+    """, (user_id,))
+    video = cursor.fetchone()
+    
+    if not video:
+        await safe_answer(call, "❌ Ты посмотрел все видео!", show_alert=True)
+        return
+    
+    try:
+        logger.info(f"📤 Sending video {video['id']} to user {user_id}")
+        await call.message.answer_video(
+            video["file_id"],
+            caption=f"🎥 <b>Видео</b>",
+            reply_markup=video_menu
+        )
+        
+        if not check_admin_access(user_id)[0]:
+            cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (VIDEO_PRICE, user_id))
+            await safe_answer(call, f"🍬 Списана {VIDEO_PRICE} конфета", show_alert=True)
+        
+        cursor.execute("INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)", (user_id, video["id"]))
+        conn.commit()
+        logger.info(f"✅ Video {video['id']} sent successfully to user {user_id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error sending video: {e}")
+        await safe_answer(call, "❌ Ошибка отправки видео", show_alert=True)
+
+# ================= ПРОМОКОДЫ =================
+@router.callback_query(F.data == "promo")
+async def promo(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        return
+    
+    await state.set_state(PromoStates.waiting_for_promo)
+    await call.message.answer("🎟 Введите промокод:")
+
+# ================= МЕНЮ =================
+@router.callback_query(F.data == "menu")
+async def back_to_menu(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    has_access, _, is_main, can_manage = check_admin_access(user_id)
+    
+    if has_access:
+        await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
+        return
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        return
+    
+    await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
+
+# ================= ПРОФИЛЬ =================
+@router.callback_query(F.data == "profile")
+async def profile(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        return
+    
+    cursor.execute("SELECT balance, referrer, ref_code FROM users WHERE user_id = ?", (user_id,))
+    user = cursor.fetchone()
+    
+    if not user:
+        await safe_answer(call, "❌ Пользователь не найден", show_alert=True)
+        return
+    
+    balance = user["balance"]
+    ref_code = user["ref_code"]
+    
+    if not ref_code:
+        ref_code = generate_ref_code()
+        cursor.execute("UPDATE users SET ref_code = ? WHERE user_id = ?", (ref_code, user_id))
+        conn.commit()
+    
+    ref_link = f"https://t.me/{BOT_USERNAME}?start={ref_code}"
+    
+    cursor.execute("SELECT COUNT(*) as count FROM users WHERE referrer = ?", (user_id,))
+    ref_count = cursor.fetchone()["count"]
+    
+    text = (
+        f"👤 <b>ПРОФИЛЬ</b>\n\n"
+        f"🍬 Баланс: <code>{balance}</code> конфет\n"
+        f"👥 Рефералов: <code>{ref_count}</code>\n\n"
+        f"🔗 <b>Твоя ссылка:</b>\n"
+        f"<code>{ref_link}</code>\n\n"
+        f"🎁 За друга: +{REF_BONUS} 🍬\n"
+        f"💰 С покупок рефералов: {REF_PERCENT}%"
+    )
+    
+    try:
+        await call.message.answer(text)
+    except:
+        pass
+
 # ================= ТЕСТОВЫЕ КОМАНДЫ =================
 @router.message(Command("test_captcha"))
 async def test_captcha_command(message: Message, state: FSMContext):
@@ -2406,10 +2532,8 @@ async def test_captcha_command(message: Message, state: FSMContext):
         await message.answer("❌ Только для админов")
         return
     
-    # Генерируем капчу
     image_bytes, captcha_code = generate_captcha_image()
     
-    # Отправляем только изображение, без ввода
     await message.answer_photo(
         photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
         caption=f"🔐 <b>ТЕСТ КАПЧИ</b>\n\n"

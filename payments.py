@@ -10,11 +10,10 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# ДОСТУПНЫЕ ВАЛЮТЫ В CRYPTO BOT (БЕЗ ADA)
+# ДОСТУПНЫЕ ВАЛЮТЫ (БЕЗ ADA)
 AVAILABLE_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BUSD", "BNB", "TRX", "SOL"]
 
 def get_asset_icon(asset: str) -> str:
-    """Иконки для валют"""
     icons = {
         "BTC": "₿",
         "TON": "💎", 
@@ -29,20 +28,19 @@ def get_asset_icon(asset: str) -> str:
     return icons.get(asset, "🪙")
 
 def get_exchange_rates():
-    """Получение актуальных курсов валют к USD из CryptoBot"""
+    """Получение актуальных курсов валют к USD"""
     try:
         if not CRYPTOBOT_TOKEN:
-            # Тестовые курсы для локальной разработки
             return {
-                "BTC": 65000.0,    # 1 BTC = $65,000
-                "TON": 5.5,         # 1 TON = $5.5
-                "ETH": 3500.0,      # 1 ETH = $3,500
-                "USDT": 1.0,        # 1 USDT = $1
-                "USDC": 1.0,        # 1 USDC = $1
-                "BUSD": 1.0,        # 1 BUSD = $1
-                "BNB": 500.0,       # 1 BNB = $500
-                "TRX": 0.12,        # 1 TRX = $0.12
-                "SOL": 150.0        # 1 SOL = $150
+                "BTC": 65000.0,
+                "TON": 5.5,
+                "ETH": 3500.0,
+                "USDT": 1.0,
+                "USDC": 1.0,
+                "BUSD": 1.0,
+                "BNB": 500.0,
+                "TRX": 0.12,
+                "SOL": 150.0
             }
         
         r = requests.post(
@@ -59,7 +57,6 @@ def get_exchange_rates():
         return rates
     except Exception as e:
         logging.error(f"Error getting exchange rates: {e}")
-        # Возвращаем заглушку, чтобы бот не падал
         return {
             "BTC": 65000.0,
             "TON": 5.5,
@@ -73,7 +70,7 @@ def get_exchange_rates():
         }
 
 def create_invoice(amount_usd: float, asset: str = "USDT"):
-    """Создание счета для оплаты в указанной криптовалюте по фиксированной цене в USD"""
+    """Создание счета для оплаты в указанной криптовалюте"""
     try:
         if not CRYPTOBOT_TOKEN:
             return {
@@ -84,16 +81,12 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
                 "amount": amount_usd
             }
         
-        # Получаем актуальные курсы
         rates = get_exchange_rates()
         
-        # Конвертируем USD в выбранную криптовалюту
         crypto_amount = amount_usd
         if asset != "USDT" and rates and asset in rates:
             rate = rates[asset]
-            # amount_usd USD * (1 asset / rate USD) = amount_usd / rate asset
             crypto_amount = amount_usd / rate
-            # Округляем до разумного количества знаков
             if asset in ["BTC", "ETH", "BNB", "SOL"]:
                 crypto_amount = round(crypto_amount, 8)
             elif asset in ["TON"]:
@@ -131,14 +124,13 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
         }
 
 def check_invoice(invoice_id: str) -> dict:
-    """Проверка статуса оплаты - ВОЗВРАЩАЕТ ДЕТАЛИ"""
+    """Проверка статуса оплаты"""
     try:
         if not CRYPTOBOT_TOKEN:
             if invoice_id.startswith("test_"):
                 return {"status": "paid", "paid": True}
             return {"status": "error", "paid": False}
         
-        # Для реальных инвойсов проверяем статус
         if invoice_id.startswith("error_"):
             return {"status": "error", "paid": False}
             
