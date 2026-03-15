@@ -30,18 +30,22 @@ def get_asset_icon(asset: str) -> str:
 def get_exchange_rates():
     """Получение актуальных курсов валют к USD"""
     try:
+        logging.info("🔍 get_exchange_rates: Запрашиваем курсы...")
+        
         if not CRYPTOBOT_TOKEN:
-            # Тестовые курсы для локальной разработки
+            logging.warning("⚠️ CRYPTOBOT_TOKEN не задан, использую тестовые курсы")
             return {
-                "BTC": 65000.0,    # 1 BTC = $65,000
-                "TON": 5.5,         # 1 TON = $5.5
-                "ETH": 3500.0,      # 1 ETH = $3,500
-                "USDT": 1.0,        # 1 USDT = $1
-                "USDC": 1.0,        # 1 USDC = $1
-                "BNB": 500.0,       # 1 BNB = $500
-                "TRX": 0.12,        # 1 TRX = $0.12
-                "SOL": 150.0        # 1 SOL = $150
+                "BTC": 65000.0,
+                "TON": 5.5,
+                "ETH": 3500.0,
+                "USDT": 1.0,
+                "USDC": 1.0,
+                "BNB": 500.0,
+                "TRX": 0.12,
+                "SOL": 150.0
             }
+        
+        logging.info(f"🔍 Отправляем запрос к {CRYPTOBOT_API}/getExchangeRates")
         
         r = requests.post(
             f"{CRYPTOBOT_API}/getExchangeRates",
@@ -49,14 +53,25 @@ def get_exchange_rates():
             json={},
             timeout=15
         )
+        
+        logging.info(f"🔍 Статус ответа: {r.status_code}")
+        
         r.raise_for_status()
+        data = r.json()
+        logging.info(f"🔍 Ответ API: {data}")
+        
         rates = {}
-        for item in r.json()["result"]:
+        for item in data["result"]:
             if item["is_valid"] and item["source"] == "USD":
                 rates[item["target"]] = float(item["rate"])
+                logging.info(f"🔍 Курс: 1 {item['target']} = ${item['rate']}")
+        
+        logging.info(f"🔍 Итоговые курсы: {rates}")
         return rates
     except Exception as e:
-        logging.error(f"Error getting exchange rates: {e}")
+        logging.error(f"❌ Error getting exchange rates: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
         # Возвращаем заглушку, чтобы бот не падал
         return {
             "BTC": 65000.0,
@@ -72,7 +87,10 @@ def get_exchange_rates():
 def create_invoice(amount_usd: float, asset: str = "USDT"):
     """Создание счета для оплаты в указанной криптовалюте"""
     try:
+        logging.info(f"💰 create_invoice: amount_usd={amount_usd}, asset={asset}")
+        
         if not CRYPTOBOT_TOKEN:
+            logging.warning("⚠️ CRYPTOBOT_TOKEN не задан, возвращаю тестовый инвойс")
             return {
                 "invoice_id": f"test_{amount_usd}_{asset}",
                 "pay_url": BOT_LINK,
@@ -85,40 +103,51 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
             }
         
         rates = get_exchange_rates()
+        logging.info(f"💰 Получены курсы: {rates}")
         
         # Конвертируем USD в выбранную криптовалюту
         crypto_amount = amount_usd
         rate = None
         
         if asset != "USDT" and rates and asset in rates:
-            rate = rates[asset]  # Например: 3500 для ETH
-            # ПРАВИЛЬНАЯ КОНВЕРТАЦИЯ: amount_usd / rate = количество крипты
+            rate = rates[asset]
             crypto_amount = amount_usd / rate
+            logging.info(f"💰 Конвертация: {amount_usd} USD / {rate} = {crypto_amount} {asset}")
             
-            # Округляем до разумного количества знаков
+            # Округляем
             if asset in ["BTC", "ETH", "BNB", "SOL"]:
                 crypto_amount = round(crypto_amount, 8)
             elif asset in ["TON"]:
                 crypto_amount = round(crypto_amount, 4)
             else:
                 crypto_amount = round(crypto_amount, 2)
+            
+            logging.info(f"💰 После округления: {crypto_amount} {asset}")
+        else:
+            logging.warning(f"⚠️ Курс для {asset} не найден! rates={rates}")
         
         # Создаем инвойс в CryptoBot
+        payload = {
+            "asset": asset,
+            "amount": str(crypto_amount),
+            "description": f"Покупка конфет",
+            "allow_comments": False,
+            "allow_anonymous": False,
+            "expires_in": 3600
+        }
+        logging.info(f"💰 Отправляем в CryptoBot: {payload}")
+        
         r = requests.post(
             f"{CRYPTOBOT_API}/createInvoice",
             headers=HEADERS,
-            json={
-                "asset": asset,
-                "amount": str(crypto_amount),  # 👈 ТЕПЕРЬ ПРАВИЛЬНАЯ СУММА!
-                "description": f"Покупка конфет",
-                "allow_comments": False,
-                "allow_anonymous": False,
-                "expires_in": 3600
-            },
+            json=payload,
             timeout=15
         )
+        
+        logging.info(f"💰 Статус ответа от CryptoBot: {r.status_code}")
         r.raise_for_status()
         result = r.json()["result"]
+        logging.info(f"💰 Ответ от CryptoBot: {result}")
         
         # Добавляем наши поля в результат
         result["asset"] = asset
@@ -126,9 +155,12 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
         result["usd_amount"] = amount_usd
         result["rate"] = rate
         
+        logging.info(f"💰 Итоговый результат: {result}")
         return result
     except Exception as e:
-        logging.error(f"Error creating invoice: {e}")
+        logging.error(f"❌ Error creating invoice: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
         return {
             "invoice_id": f"error_{amount_usd}_{asset}",
             "pay_url": BOT_LINK,
