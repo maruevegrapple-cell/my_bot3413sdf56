@@ -1,4 +1,4 @@
-import requests
+=import requests
 from config import CRYPTOBOT_API, CRYPTOBOT_TOKEN
 import logging
 
@@ -10,8 +10,8 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# ДОСТУПНЫЕ ВАЛЮТЫ (БЕЗ ADA)
-AVAILABLE_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BUSD", "BNB", "TRX", "SOL"]
+# ДОСТУПНЫЕ ВАЛЮТЫ (BUSD удалён)
+AVAILABLE_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BNB", "TRX", "SOL"]
 
 def get_asset_icon(asset: str) -> str:
     """Иконки для валют"""
@@ -21,7 +21,6 @@ def get_asset_icon(asset: str) -> str:
         "ETH": "Ξ",
         "USDT": "💵",
         "USDC": "💲", 
-        "BUSD": "🪙",
         "BNB": "🔶",
         "TRX": "🌞",
         "SOL": "◎"
@@ -39,7 +38,6 @@ def get_exchange_rates():
                 "ETH": 3500.0,      # 1 ETH = $3,500
                 "USDT": 1.0,        # 1 USDT = $1
                 "USDC": 1.0,        # 1 USDC = $1
-                "BUSD": 1.0,        # 1 BUSD = $1
                 "BNB": 500.0,       # 1 BNB = $500
                 "TRX": 0.12,        # 1 TRX = $0.12
                 "SOL": 150.0        # 1 SOL = $150
@@ -55,7 +53,6 @@ def get_exchange_rates():
         rates = {}
         for item in r.json()["result"]:
             if item["is_valid"] and item["source"] == "USD":
-                # ВНИМАНИЕ: rate = сколько USD стоит 1 единица валюты
                 rates[item["target"]] = float(item["rate"])
         return rates
     except Exception as e:
@@ -67,7 +64,6 @@ def get_exchange_rates():
             "ETH": 3500.0,
             "USDT": 1.0,
             "USDC": 1.0,
-            "BUSD": 1.0,
             "BNB": 500.0,
             "TRX": 0.12,
             "SOL": 150.0
@@ -82,8 +78,9 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
                 "pay_url": BOT_LINK,
                 "status": "active",
                 "asset": asset,
-                "amount": amount_usd,
+                "amount": str(amount_usd),
                 "crypto_amount": amount_usd,
+                "usd_amount": amount_usd,
                 "rate": None
             }
         
@@ -94,7 +91,7 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
         rate = None
         
         if asset != "USDT" and rates and asset in rates:
-            rate = rates[asset]  # Например: 65000 для BTC
+            rate = rates[asset]  # Например: 3500 для ETH
             # ПРАВИЛЬНАЯ КОНВЕРТАЦИЯ: amount_usd / rate = количество крипты
             crypto_amount = amount_usd / rate
             
@@ -112,7 +109,7 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
             headers=HEADERS,
             json={
                 "asset": asset,
-                "amount": str(crypto_amount),
+                "amount": str(crypto_amount),  # 👈 ТЕПЕРЬ ПРАВИЛЬНАЯ СУММА!
                 "description": f"Покупка конфет",
                 "allow_comments": False,
                 "allow_anonymous": False,
@@ -127,7 +124,7 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
         result["asset"] = asset
         result["crypto_amount"] = crypto_amount
         result["usd_amount"] = amount_usd
-        result["rate"] = rate  # Добавляем курс для отображения
+        result["rate"] = rate
         
         return result
     except Exception as e:
@@ -137,8 +134,9 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
             "pay_url": BOT_LINK,
             "status": "error",
             "asset": asset,
-            "amount": amount_usd,
+            "amount": str(amount_usd),
             "crypto_amount": amount_usd,
+            "usd_amount": amount_usd,
             "rate": None
         }
 
