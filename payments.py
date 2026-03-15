@@ -34,15 +34,15 @@ def get_exchange_rates():
         if not CRYPTOBOT_TOKEN:
             # Тестовые курсы для локальной разработки
             return {
-                "BTC": 65000.0,
-                "TON": 5.5,
-                "ETH": 3500.0,
-                "USDT": 1.0,
-                "USDC": 1.0,
-                "BUSD": 1.0,
-                "BNB": 500.0,
-                "TRX": 0.12,
-                "SOL": 150.0
+                "BTC": 65000.0,    # 1 BTC = $65,000
+                "TON": 5.5,         # 1 TON = $5.5
+                "ETH": 3500.0,      # 1 ETH = $3,500
+                "USDT": 1.0,        # 1 USDT = $1
+                "USDC": 1.0,        # 1 USDC = $1
+                "BUSD": 1.0,        # 1 BUSD = $1
+                "BNB": 500.0,       # 1 BNB = $500
+                "TRX": 0.12,        # 1 TRX = $0.12
+                "SOL": 150.0        # 1 SOL = $150
             }
         
         r = requests.post(
@@ -55,10 +55,12 @@ def get_exchange_rates():
         rates = {}
         for item in r.json()["result"]:
             if item["is_valid"] and item["source"] == "USD":
+                # ВНИМАНИЕ: rate = сколько USD стоит 1 единица валюты
                 rates[item["target"]] = float(item["rate"])
         return rates
     except Exception as e:
         logging.error(f"Error getting exchange rates: {e}")
+        # Возвращаем заглушку, чтобы бот не падал
         return {
             "BTC": 65000.0,
             "TON": 5.5,
@@ -85,10 +87,14 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
         
         rates = get_exchange_rates()
         
+        # Конвертируем USD в выбранную криптовалюту
         crypto_amount = amount_usd
         if asset != "USDT" and rates and asset in rates:
-            rate = rates[asset]
+            rate = rates[asset]  # Например: 65000 для BTC
+            # ПРАВИЛЬНАЯ КОНВЕРТАЦИЯ: amount_usd / rate = количество крипты
             crypto_amount = amount_usd / rate
+            
+            # Округляем до разумного количества знаков
             if asset in ["BTC", "ETH", "BNB", "SOL"]:
                 crypto_amount = round(crypto_amount, 8)
             elif asset in ["TON"]:
@@ -96,6 +102,7 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
             else:
                 crypto_amount = round(crypto_amount, 2)
         
+        # Создаем инвойс в CryptoBot
         r = requests.post(
             f"{CRYPTOBOT_API}/createInvoice",
             headers=HEADERS,
