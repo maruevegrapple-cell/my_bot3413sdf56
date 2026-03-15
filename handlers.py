@@ -65,8 +65,10 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # ================= НАГРАДА ЗА ПРЕДЛОЖКУ =================
 SUGGESTION_REWARD = 3
 
-# Хранилище предложенных видео (file_id: user_id)
+# Хранилище предложенных видео
 suggested_videos = {}
+# Множество пользователей в режиме предложки
+suggestion_mode = set()
 
 # ================= FSM СОСТОЯНИЯ =================
 class PromoStates(StatesGroup):
@@ -92,7 +94,6 @@ class AdminStates(StatesGroup):
     waiting_for_top_refs = State()
     waiting_for_user_search = State()
     waiting_for_user_info = State()
-    waiting_for_suggestion_reply = State()
 
 class CaptchaStates(StatesGroup):
     waiting_for_captcha = State()
@@ -342,18 +343,25 @@ def generate_captcha_image() -> tuple:
 async def block_forward(message: Message):
     await message.delete()
 
-# ================= ЗАГРУЗКА ВИДЕО =================
+# ================= ЗАГРУЗКА ВИДЕО АДМИНАМИ =================
 @router.message(F.video)
-async def upload_video(message: Message):
+async def handle_video(message: Message):
+    """Обработка видео - разделяем админов и обычных пользователей"""
     user_id = message.from_user.id
     
-    logger.info(f"📹 ВИДЕО ПОЛУЧЕНО от пользователя {user_id}")
+    # Проверяем, админ ли это
+    has_access, _, _, _ = check_admin_access(user_id)
     
-    has_access, is_admin_user, is_main, _ = check_admin_access(user_id)
-    
-    if not has_access:
-        logger.info(f"📹 Видео от обычного пользователя {user_id} проигнорировано")
-        return
+    if has_access:
+        # Это админ - загружаем видео напрямую в базу
+        await upload_video(message)
+    else:
+        # Это обычный пользователь - проверяем, в режиме ли предложки
+        await handle_suggestion_video(message)
+
+async def upload_video(message: Message):
+    """Загрузка видео админом"""
+    user_id = message.from_user.id
     
     logger.info(f"📹 Админ {user_id} загружает видео")
     
@@ -400,6 +408,216 @@ async def upload_video(message: Message):
     except Exception as e:
         logger.error(f"❌ Ошибка при добавлении видео: {e}")
         await message.answer(f"❌ Ошибка при добавлении видео: {e}")
+
+# ================= ПРЕДЛОЖКА =================
+@router.callback_query(F.data == "suggestion")
+async def suggestion_start(call: CallbackQuery, state: FSMContext):
+    """Начало предложки - включаем режим приема видео"""
+    user_id = call.from_user.id
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        return
+    
+    await safe_answer(call)
+    
+    # Добавляем пользователя в режим предложки
+    suggestion_mode.add(user_id)
+    
+    await call.message.answer(
+        "🎬 <b>ПРЕДЛОЖКА</b>\n\n"
+        "📹 Отправьте видео, которое хотите предложить для добавления в бота.\n\n"
+        "✅ Если видео одобрят, вы получите +3 🍬\n"
+        "❌ Если отклонят, вы получите уведомление\n\n"
+        "⏳ Режим предложки активен 5 минут или до отправки видео"
+    )
+    
+    # Запускаем таймер для автоматического выхода из режима
+    async def exit_suggestion_mode():
+        await asyncio.sleep(300)  # 5 минут
+        if user_id in suggestion_mode:
+            suggestion_mode.discard(user_id)
+            try:
+                await call.message.answer("⏰ Время вышло. Режим предложки отключен.")
+            except:
+                pass
+    
+    asyncio.create_task(exit_suggestion_mode())
+
+async def handle_suggestion_video(message: Message):
+    """Обработка видео от обычного пользователя в режиме предложки"""
+    user_id = message.from_user.id
+    
+    # Проверяем, в режиме ли предложки пользователь
+    if user_id not in suggestion_mode:
+        # Если не в режиме предложки, игнорируем
+        return
+    
+    # Убираем пользователя из режима предложки
+    suggestion_mode.discard(user_id)
+    
+    username = message.from_user.username or "нет username"
+    file_id = message.video.file_id
+    file_name = message.video.file_name or "без названия"
+    duration = message.video.duration
+    file_size = message.video.file_size
+    
+    logger.info(f"📹 ПРЕДЛОЖКА: Видео от пользователя {user_id} (@{username})")
+    
+    # Проверяем размер видео (Telegram ограничение 50MB)
+    if file_size > 50 * 1024 * 1024:  # 50MB в байтах
+        await message.answer("❌ Видео слишком большое. Максимальный размер: 50MB")
+        return
+    
+    # Сохраняем видео во временное хранилище
+    suggested_videos[file_id] = {
+        "user_id": user_id,
+        "username": username,
+        "file_name": file_name,
+        "duration": duration,
+        "message_id": message.message_id
+    }
+    
+    # Получаем информацию о пользователе из БД
+    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+    user = cursor.fetchone()
+    balance = user["balance"] if user else 0
+    
+    # Создаем клавиатуру для админа
+    admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"suggest_approve_{file_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"suggest_reject_{file_id}")
+        ],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data=f"admin_user_{user_id}")]
+    ])
+    
+    # Отправляем видео главному админу на модерацию
+    try:
+        await message.bot.send_video(
+            MAIN_ADMIN_ID,
+            video=file_id,
+            caption=(
+                f"🎬 <b>НОВОЕ ПРЕДЛОЖЕННОЕ ВИДЕО</b>\n\n"
+                f"👤 От: @{username}\n"
+                f"🆔 ID: <code>{user_id}</code>\n"
+                f"📝 Название: {file_name}\n"
+                f"⏱ Длительность: {duration} сек\n"
+                f"💰 Баланс пользователя: {balance} 🍬\n\n"
+                f"Выберите действие:"
+            ),
+            reply_markup=admin_keyboard
+        )
+        
+        await message.answer(
+            "✅ <b>Видео отправлено на модерацию!</b>\n\n"
+            "Администратор проверит его и сообщит о решении."
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка отправки видео админу: {e}")
+        await message.answer("❌ Ошибка при отправке видео. Попробуйте позже.")
+        # Удаляем из хранилища в случае ошибки
+        if file_id in suggested_videos:
+            del suggested_videos[file_id]
+
+@router.callback_query(F.data.startswith("suggest_approve_"))
+async def suggest_approve(call: CallbackQuery, state: FSMContext):
+    """Админ одобрил видео"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    file_id = call.data.replace("suggest_approve_", "")
+    video_data = suggested_videos.get(file_id)
+    
+    if not video_data:
+        await safe_answer(call, "❌ Видео не найдено в хранилище", show_alert=True)
+        return
+    
+    user_id = video_data["user_id"]
+    
+    # Добавляем видео в базу
+    try:
+        cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
+        
+        # Начисляем награду пользователю
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
+                      (SUGGESTION_REWARD, user_id))
+        
+        # Получаем новый баланс для сообщения
+        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+        new_balance = cursor.fetchone()["balance"]
+        
+        conn.commit()
+        
+        logger.info(f"✅ Видео одобрено: {file_id}, пользователь {user_id} получил +{SUGGESTION_REWARD} 🍬")
+        
+        # Отправляем уведомление пользователю
+        try:
+            await call.bot.send_message(
+                user_id,
+                f"✅ <b>Видео одобрено!</b>\n\n"
+                f"Ваше предложенное видео было одобрено администратором.\n"
+                f"🎁 Начислено +{SUGGESTION_REWARD} 🍬\n"
+                f"💰 Текущий баланс: {new_balance} 🍬"
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
+        
+        await safe_answer(call, f"✅ Видео одобрено! Пользователю начислено +{SUGGESTION_REWARD} 🍬")
+        
+        # Обновляем сообщение админа
+        await call.message.edit_caption(
+            call.message.caption + f"\n\n✅ <b>ВИДЕО ОДОБРЕНО!</b>\nНачислено +{SUGGESTION_REWARD} 🍬"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при одобрении видео: {e}")
+        await safe_answer(call, "❌ Ошибка при одобрении видео", show_alert=True)
+    
+    # Удаляем из временного хранилища
+    if file_id in suggested_videos:
+        del suggested_videos[file_id]
+
+@router.callback_query(F.data.startswith("suggest_reject_"))
+async def suggest_reject(call: CallbackQuery, state: FSMContext):
+    """Админ отклонил видео"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    file_id = call.data.replace("suggest_reject_", "")
+    video_data = suggested_videos.get(file_id)
+    
+    if not video_data:
+        await safe_answer(call, "❌ Видео не найдено в хранилище", show_alert=True)
+        return
+    
+    user_id = video_data["user_id"]
+    
+    # Отправляем уведомление пользователю
+    try:
+        await call.bot.send_message(
+            user_id,
+            f"❌ <b>Видео отклонено</b>\n\n"
+            f"Ваше предложенное видео не прошло модерацию.\n"
+            f"Попробуйте предложить другое видео."
+        )
+        
+        await safe_answer(call, "❌ Видео отклонено, пользователь уведомлен")
+        
+        # Обновляем сообщение админа
+        await call.message.edit_caption(
+            call.message.caption + f"\n\n❌ <b>ВИДЕО ОТКЛОНЕНО</b>"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при отклонении видео: {e}")
+        await safe_answer(call, "❌ Ошибка при отклонении видео", show_alert=True)
+    
+    # Удаляем из временного хранилища
+    if file_id in suggested_videos:
+        del suggested_videos[file_id]
 
 # ================= ЗАГРУЗКА ВИДЕО ПО ССЫЛКЕ =================
 @router.callback_query(F.data == "admin_upload_url")
@@ -1356,183 +1574,6 @@ async def support_reply_start(call: CallbackQuery, state: FSMContext):
         f"Username: @{user_exists['username'] or 'нет'}\n\n"
         f"Введите текст ответа:"
     )
-
-# ================= ПРЕДЛОЖКА =================
-@router.callback_query(F.data == "suggestion")
-async def suggestion_start(call: CallbackQuery, state: FSMContext):
-    """Начало предложки - просим отправить видео"""
-    user_id = call.from_user.id
-    
-    if not await check_access(call.bot, user_id, state, call=call):
-        return
-    
-    await safe_answer(call)
-    await state.set_state(AdminStates.waiting_for_suggestion_reply)
-    
-    await call.message.answer(
-        "🎬 <b>ПРЕДЛОЖКА</b>\n\n"
-        "Отправьте видео, которое хотите предложить для добавления в бота.\n\n"
-        "✅ Если видео одобрят, вы получите +3 🍬\n"
-        "❌ Если отклонят, вы получите уведомление"
-    )
-
-@router.message(AdminStates.waiting_for_suggestion_reply, F.video)
-async def suggestion_video_handler(message: Message, state: FSMContext):
-    """Обработка видео от пользователя"""
-    user_id = message.from_user.id
-    username = message.from_user.username or "нет username"
-    
-    file_id = message.video.file_id
-    file_name = message.video.file_name or "без названия"
-    duration = message.video.duration
-    
-    # Сохраняем видео во временное хранилище
-    suggested_videos[file_id] = user_id
-    
-    logger.info(f"📹 ПРЕДЛОЖКА: Видео от пользователя {user_id} (@{username})")
-    
-    # Получаем информацию о пользователе из БД
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    user = cursor.fetchone()
-    balance = user["balance"] if user else 0
-    
-    # Создаем клавиатуру для админа
-    admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"suggest_approve_{file_id}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"suggest_reject_{file_id}")
-        ],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data=f"admin_user_{user_id}")]
-    ])
-    
-    # Отправляем видео главному админу на модерацию
-    try:
-        await message.bot.send_video(
-            MAIN_ADMIN_ID,
-            video=file_id,
-            caption=(
-                f"🎬 <b>НОВОЕ ПРЕДЛОЖЕННОЕ ВИДЕО</b>\n\n"
-                f"👤 От: @{username}\n"
-                f"🆔 ID: <code>{user_id}</code>\n"
-                f"📝 Название: {file_name}\n"
-                f"⏱ Длительность: {duration} сек\n"
-                f"💰 Баланс пользователя: {balance} 🍬\n\n"
-                f"Выберите действие:"
-            ),
-            reply_markup=admin_keyboard
-        )
-        
-        await message.answer(
-            "✅ <b>Видео отправлено на модерацию!</b>\n\n"
-            "Администратор проверит его и сообщит о решении."
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка отправки видео админу: {e}")
-        await message.answer("❌ Ошибка при отправке видео. Попробуйте позже.")
-    
-    await state.clear()
-
-@router.message(AdminStates.waiting_for_suggestion_reply)
-async def suggestion_not_video_handler(message: Message, state: FSMContext):
-    """Если пользователь отправил не видео"""
-    await message.answer("❌ Только видео! Пожалуйста, отправьте видеофайл.")
-    # Не очищаем состояние, чтобы он мог попробовать снова
-
-@router.callback_query(F.data.startswith("suggest_approve_"))
-async def suggest_approve(call: CallbackQuery, state: FSMContext):
-    """Админ одобрил видео"""
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    file_id = call.data.replace("suggest_approve_", "")
-    user_id = suggested_videos.get(file_id)
-    
-    if not user_id:
-        await safe_answer(call, "❌ Видео не найдено в хранилище", show_alert=True)
-        return
-    
-    # Добавляем видео в базу
-    try:
-        cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
-        
-        # Начисляем награду пользователю
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
-                      (SUGGESTION_REWARD, user_id))
-        
-        # Получаем новый баланс для сообщения
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-        new_balance = cursor.fetchone()["balance"]
-        
-        conn.commit()
-        
-        logger.info(f"✅ Видео одобрено: {file_id}, пользователь {user_id} получил +{SUGGESTION_REWARD} 🍬")
-        
-        # Отправляем уведомление пользователю
-        try:
-            await call.bot.send_message(
-                user_id,
-                f"✅ <b>Видео одобрено!</b>\n\n"
-                f"Ваше предложенное видео было одобрено администратором.\n"
-                f"🎁 Начислено +{SUGGESTION_REWARD} 🍬\n"
-                f"💰 Текущий баланс: {new_balance} 🍬"
-            )
-        except Exception as e:
-            logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
-        
-        await safe_answer(call, f"✅ Видео одобрено! Пользователю начислено +{SUGGESTION_REWARD} 🍬")
-        
-        # Обновляем сообщение админа
-        await call.message.edit_caption(
-            call.message.caption + f"\n\n✅ <b>ВИДЕО ОДОБРЕНО!</b>\nНачислено +{SUGGESTION_REWARD} 🍬"
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка при одобрении видео: {e}")
-        await safe_answer(call, "❌ Ошибка при одобрении видео", show_alert=True)
-    
-    # Удаляем из временного хранилища
-    if file_id in suggested_videos:
-        del suggested_videos[file_id]
-
-@router.callback_query(F.data.startswith("suggest_reject_"))
-async def suggest_reject(call: CallbackQuery, state: FSMContext):
-    """Админ отклонил видео"""
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    file_id = call.data.replace("suggest_reject_", "")
-    user_id = suggested_videos.get(file_id)
-    
-    if not user_id:
-        await safe_answer(call, "❌ Видео не найдено в хранилище", show_alert=True)
-        return
-    
-    # Отправляем уведомление пользователю
-    try:
-        await call.bot.send_message(
-            user_id,
-            f"❌ <b>Видео отклонено</b>\n\n"
-            f"Ваше предложенное видео не прошло модерацию.\n"
-            f"Попробуйте предложить другое видео."
-        )
-        
-        await safe_answer(call, "❌ Видео отклонено, пользователь уведомлен")
-        
-        # Обновляем сообщение админа
-        await call.message.edit_caption(
-            call.message.caption + f"\n\n❌ <b>ВИДЕО ОТКЛОНЕНО</b>"
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка при отклонении видео: {e}")
-        await safe_answer(call, "❌ Ошибка при отклонении видео", show_alert=True)
-    
-    # Удаляем из временного хранилища
-    if file_id in suggested_videos:
-        del suggested_videos[file_id]
 
 # ================= АДМИН - РАССЫЛКА =================
 @router.callback_query(F.data == "admin_broadcast")
