@@ -14,6 +14,7 @@ HEADERS = {
 AVAILABLE_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BUSD", "BNB", "TRX", "SOL"]
 
 def get_asset_icon(asset: str) -> str:
+    """Иконки для валют"""
     icons = {
         "BTC": "₿",
         "TON": "💎", 
@@ -31,6 +32,7 @@ def get_exchange_rates():
     """Получение актуальных курсов валют к USD"""
     try:
         if not CRYPTOBOT_TOKEN:
+            # Тестовые курсы для локальной разработки
             return {
                 "BTC": 65000.0,
                 "TON": 5.5,

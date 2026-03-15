@@ -93,6 +93,7 @@ class CaptchaStates(StatesGroup):
 class SubscribeStates(StatesGroup):
     waiting_for_subscribe = State()
     waiting_for_support_message = State()
+    waiting_for_support_photo = State()
 
 class CustomPayStates(StatesGroup):
     waiting_for_amount = State()
@@ -849,6 +850,67 @@ async def shop(call: CallbackQuery, state: FSMContext):
         reply_markup=shop_menu
     )
 
+# ================= ОПЛАТА (ПАКЕТЫ) =================
+@router.callback_query(F.data.startswith("pay_"))
+async def pay(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    # ВАЖНО: пропускаем pay_asset_
+    if call.data.startswith("pay_asset_"):
+        return
+    
+    logger.info(f"💰 pay called with data: {call.data}")
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        logger.warning(f"❌ Доступ запрещен для пользователя {user_id}")
+        return
+    
+    # ТВОИ ПАКЕТЫ - ТАКИЕ КАК ТЫ ХОЧЕШЬ
+    prices = {
+        "pay_50": (50, 0.2),      # 50 конфет = 0.2 USD
+        "pay_100": (100, 0.3),     # 100 конфет = 0.3 USD
+        "pay_140": (140, 0.4),     # 140 конфет = 0.4 USD
+        "pay_170": (170, 0.5),     # 170 конфет = 0.5 USD
+        "pay_200": (200, 0.6),     # 200 конфет = 0.6 USD
+        "pay_333": (333, 1.0),     # 333 конфет = 1.0 USD
+    }
+    
+    if call.data == "pay_custom":
+        await state.set_state(CustomPayStates.waiting_for_amount)
+        await call.message.answer("💰 Введите желаемое количество конфет (число):")
+        return
+    
+    if call.data not in prices:
+        logger.warning(f"❌ Unknown pay data: {call.data}")
+        return
+    
+    amount, usdt = prices[call.data]
+    logger.info(f"✅ Selected: {amount} candies for ${usdt}")
+    
+    await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
+    
+    # Показываем меню выбора валюты
+    keyboard = []
+    sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
+    
+    row = []
+    for i, asset in enumerate(sorted_assets):
+        icon = get_asset_icon(asset)
+        row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
+        if (i + 1) % 2 == 0:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    await call.message.answer(
+        f"💳 <b>Выберите валюту для оплаты</b>\n\n"
+        f"🍬 Конфет: {amount}\n"
+        f"💵 Сумма: ${usdt}\n\n"
+        f"Курс будет сконвертирован автоматически:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
 # ================= КАСТОМНАЯ ОПЛАТА (СКИДКА 25%) =================
 @router.message(CustomPayStates.waiting_for_amount)
 async def process_custom_pay(message: Message, state: FSMContext):
@@ -868,7 +930,7 @@ async def process_custom_pay(message: Message, state: FSMContext):
             await message.answer("❌ Максимальное количество: 10000 🍬")
             return
         
-        # РЕАЛЬНАЯ СКИДКА 25% - цена 0.003 USD за конфету вместо 0.004
+        # СКИДКА 25% - цена 0.003 USD за конфету (вместо 0.004)
         usdt = round(amount * 0.003, 2)
         
         if usdt < 0.1:
@@ -883,11 +945,8 @@ async def process_custom_pay(message: Message, state: FSMContext):
         
         # Показываем меню выбора валюты
         keyboard = []
-        
-        # Сортируем валюты: USDT и TON первые
         sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
         
-        # Создаем ряды по 2 кнопки
         row = []
         for i, asset in enumerate(sorted_assets):
             icon = get_asset_icon(asset)
@@ -955,6 +1014,7 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     
     if rates and asset in rates:
         rate = rates[asset]
+        # ПРАВИЛЬНАЯ КОНВЕРТАЦИЯ: usd / rate = количество крипты
         crypto_amount = usdt / rate
         # Округляем до разумного количества знаков
         if asset in ["BTC", "ETH", "BNB", "SOL"]:
@@ -1016,66 +1076,6 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext):
     await state.clear()
     logger.info(f"✅ State очищен для пользователя {user_id}")
 
-# ================= ОПЛАТА =================
-@router.callback_query(F.data.startswith("pay_"))
-async def pay(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    # ВАЖНО: пропускаем pay_asset_
-    if call.data.startswith("pay_asset_"):
-        return
-    
-    logger.info(f"💰 pay called with data: {call.data}")
-    
-    if not await check_access(call.bot, user_id, state, call=call):
-        logger.warning(f"❌ Доступ запрещен для пользователя {user_id}")
-        return
-    
-    prices = {
-        "pay_50": (50, 0.2),
-        "pay_100": (100, 0.3),
-        "pay_140": (140, 0.4),
-        "pay_170": (170, 0.5),
-        "pay_200": (200, 0.6),
-        "pay_333": (333, 1.0),
-    }
-    
-    if call.data == "pay_custom":
-        await state.set_state(CustomPayStates.waiting_for_amount)
-        await call.message.answer("💰 Введите желаемое количество конфет (число):")
-        return
-    
-    if call.data not in prices:
-        logger.warning(f"❌ Unknown pay data: {call.data}")
-        return
-    
-    amount, usdt = prices[call.data]
-    logger.info(f"✅ Selected: {amount} candies for ${usdt}")
-    
-    await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
-    
-    # Показываем меню выбора валюты
-    keyboard = []
-    sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
-    
-    row = []
-    for i, asset in enumerate(sorted_assets):
-        icon = get_asset_icon(asset)
-        row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"pay_asset_{asset}"))
-        if (i + 1) % 2 == 0:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-    
-    await call.message.answer(
-        f"💳 <b>Выберите валюту для оплаты</b>\n\n"
-        f"🍬 Конфет: {amount}\n"
-        f"💵 Сумма: ${usdt}\n\n"
-        f"Курс будет сконвертирован автоматически:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
-    )
-
 # ================= ПРОВЕРКА ПОДПИСКИ =================
 @router.callback_query(F.data == "check_subscribe")
 async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
@@ -1118,7 +1118,7 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext):
         except:
             pass
 
-# ================= ПРОВЕРКА ПЛАТЕЖА (ТОЛЬКО РЕАЛЬНЫЕ) =================
+# ================= ПРОВЕРКА ПЛАТЕЖА =================
 @router.callback_query(F.data.startswith("check_"))
 async def check_payment(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -1145,18 +1145,13 @@ async def check_payment(call: CallbackQuery, state: FSMContext):
     logger.info(f"📊 Результат проверки: {result}")
     
     if result.get("paid", False):
-        # Проверяем, не был ли уже оплачен
         if row["paid"] == 1:
             await call.message.answer("✅ Этот платёж уже был обработан")
             return
         
-        # Отмечаем платеж как оплаченный
         cursor.execute("UPDATE payments SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
-        
-        # Начисляем конфеты
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (row["amount"], row["user_id"]))
         
-        # Начисляем бонус рефереру
         cursor.execute("SELECT referrer FROM users WHERE user_id = ?", (row["user_id"],))
         user = cursor.fetchone()
         if user and user["referrer"]:
@@ -1236,40 +1231,6 @@ async def process_promo_input(message: Message, state: FSMContext):
     )
     await state.clear()
 
-# ================= ПОДДЕРЖКА - ОТВЕТ =================
-@router.message(AdminStates.waiting_for_support_reply)
-async def support_reply_send(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    
-    logger.info(f"📬 Support reply from admin: {message.text[:50]}...")
-    
-    data = await state.get_data()
-    user_id = data.get('reply_to_user')
-    reply_text = message.text
-    
-    if not user_id:
-        await message.answer("❌ Ошибка: не указан получатель")
-        await state.clear()
-        return
-    
-    try:
-        await message.bot.send_message(
-            chat_id=user_id,
-            text=f"📬 <b>ОТВЕТ ОТ ПОДДЕРЖКИ</b>\n\n{reply_text}"
-        )
-        
-        await message.answer(f"✅ Ответ отправлен пользователю {user_id}")
-    except Exception as e:
-        await message.answer(
-            f"❌ <b>ОШИБКА ОТПРАВКИ</b>\n\n"
-            f"👤 Пользователь: <code>{user_id}</code>\n"
-            f"❌ Ошибка: {str(e)}\n\n"
-            f"💡 Попросите пользователя написать /start"
-        )
-    
-    await state.clear()
-
 # ================= ПОДДЕРЖКА - НОВОЕ СООБЩЕНИЕ =================
 @router.callback_query(F.data == "support")
 async def support_start(call: CallbackQuery, state: FSMContext):
@@ -1284,11 +1245,13 @@ async def support_start(call: CallbackQuery, state: FSMContext):
     
     await call.message.answer(
         "📝 <b>ПОДДЕРЖКА</b>\n\n"
-        "Напишите ваше сообщение. Администратор ответит вам в ближайшее время.\n\n"
-        "💡 Вы можете продолжать пользоваться ботом, ваше сообщение будет доставлено."
+        "Напишите ваше сообщение или отправьте скриншот.\n"
+        "Администратор ответит вам в ближайшее время.\n\n"
+        "💡 Вы можете прикрепить фото к сообщению"
     )
 
-@router.message(SubscribeStates.waiting_for_support_message)
+# ================= ПОДДЕРЖКА - ОБРАБОТКА ТЕКСТА =================
+@router.message(SubscribeStates.waiting_for_support_message, F.text)
 async def support_message_handler(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user_text = message.text
@@ -1323,6 +1286,84 @@ async def support_message_handler(message: Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Failed to forward support message: {e}")
         await message.answer("❌ Ошибка при отправке сообщения. Попробуйте позже.")
+    
+    await state.clear()
+
+# ================= ПОДДЕРЖКА - ОБРАБОТКА ФОТО =================
+@router.message(SubscribeStates.waiting_for_support_message, F.photo)
+async def support_photo_handler(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user_text = message.caption or "Без описания"
+    
+    # Получаем фото самого высокого качества
+    photo = message.photo[-1]
+    file_id = photo.file_id
+    
+    cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+    user = cursor.fetchone()
+    username = user["username"] if user and user["username"] else "нет username"
+    
+    # Создаем клавиатуру для ответа
+    reply_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply_{user_id}")]
+    ])
+    
+    try:
+        # Отправляем фото админу
+        await message.bot.send_photo(
+            MAIN_ADMIN_ID,
+            photo=file_id,
+            caption=(
+                f"📸 <b>НОВЫЙ СКРИНШОТ В ПОДДЕРЖКУ</b>\n\n"
+                f"👤 Пользователь: @{username}\n"
+                f"🆔 ID: <code>{user_id}</code>\n\n"
+                f"💬 Описание: {user_text}"
+            ),
+            reply_markup=reply_keyboard
+        )
+        
+        await message.answer(
+            "✅ <b>Скриншот отправлен!</b>\n\n"
+            "Администратор ответит вам в ближайшее время."
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to forward support photo: {e}")
+        await message.answer("❌ Ошибка при отправке скриншота. Попробуйте позже.")
+    
+    await state.clear()
+
+# ================= ПОДДЕРЖКА - ОТВЕТ АДМИНА =================
+@router.message(AdminStates.waiting_for_support_reply)
+async def support_reply_send(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    logger.info(f"📬 Support reply from admin: {message.text[:50]}...")
+    
+    data = await state.get_data()
+    user_id = data.get('reply_to_user')
+    reply_text = message.text
+    
+    if not user_id:
+        await message.answer("❌ Ошибка: не указан получатель")
+        await state.clear()
+        return
+    
+    try:
+        await message.bot.send_message(
+            chat_id=user_id,
+            text=f"📬 <b>ОТВЕТ ОТ ПОДДЕРЖКИ</b>\n\n{reply_text}"
+        )
+        
+        await message.answer(f"✅ Ответ отправлен пользователю {user_id}")
+    except Exception as e:
+        await message.answer(
+            f"❌ <b>ОШИБКА ОТПРАВКИ</b>\n\n"
+            f"👤 Пользователь: <code>{user_id}</code>\n"
+            f"❌ Ошибка: {str(e)}\n\n"
+            f"💡 Попросите пользователя написать /start"
+        )
     
     await state.clear()
 
@@ -2043,7 +2084,6 @@ async def admin_search_users_result(message: Message, state: FSMContext):
         balance = user["balance"]
         verified = "✅" if user["is_verified"] else "❌"
         admin = "👑" if user["is_admin"] else ""
-        bonus = "🎁" if user["subscribe_bonus_received"] else ""
         
         text += f"<b>ID:</b> <code>{uid}</code> {admin}\n"
         text += f"<b>Username:</b> @{uname}\n"
@@ -2057,13 +2097,16 @@ async def admin_search_users_result(message: Message, state: FSMContext):
             last_bonus = datetime.fromtimestamp(user["last_bonus"]).strftime("%Y-%m-%d %H:%M")
             text += f"<b>Последний бонус:</b> {last_bonus}\n"
         
+        if user["subscribe_bonus_received"]:
+            text += f"<b>Бонус за подписку:</b> ✅\n"
+        
         text += "\n"
     
     keyboard = [[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats")]]
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
     await state.clear()
 
-# ================= АДМИН СТАТИСТИКА (РЕАЛЬНЫЕ ПЛАТЕЖИ) =================
+# ================= АДМИН СТАТИСТИКА =================
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(call: CallbackQuery):
     user_id = call.from_user.id
@@ -2076,7 +2119,6 @@ async def admin_stats(call: CallbackQuery):
     
     await safe_answer(call)
     
-    # Используем функции из db.py
     total_users = get_total_users()
     verified_users = get_verified_users()
     users_with_balance = get_users_with_balance()

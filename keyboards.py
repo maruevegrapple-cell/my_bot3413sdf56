@@ -33,6 +33,8 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
 
 # ================= АДМИН-МЕНЮ =================
 def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False):
+    """Динамическое админ-меню в зависимости от прав"""
+    
     buttons = [
         [
             InlineKeyboardButton(text="▶️ Смотреть видео", callback_data="videos"),
@@ -59,6 +61,7 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
         ]
     ]
     
+    # Кнопка управления админами (только для главного или тех, у кого есть права)
     if is_main_admin or can_manage_admins:
         buttons.append([InlineKeyboardButton(text="👥 Управление админами", callback_data="admin_manage")])
     
@@ -93,7 +96,7 @@ shop_menu = InlineKeyboardMarkup(inline_keyboard=[
     ],
     [
         InlineKeyboardButton(text="🍬 200 • 💵 0.6", callback_data="pay_200"),
-        InlineKeyboardButton(text="🍬 333 • 💵 1", callback_data="pay_333")
+        InlineKeyboardButton(text="🍬 333 • 💵 1.0", callback_data="pay_333")
     ],
     [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25%", callback_data="pay_custom")],
     [InlineKeyboardButton(text="⭐️ Для оплаты звездами нажми на меня!", url=ANON_CHAT_LINK)],
