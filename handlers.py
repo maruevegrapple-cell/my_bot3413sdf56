@@ -2852,9 +2852,9 @@ async def check_balance_command(message: Message):
     
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
 
-@router.message(Command("delete_200"))
-async def delete_first_200_command(message: Message):
-    """Удаляет первые 200 видео (только для главного админа)"""
+@router.message(Command("delete_58"))
+async def delete_first_58_command(message: Message):
+    """Удаляет первые 58 видео (только для главного админа)"""
     user_id = message.from_user.id
     
     # Проверяем, главный ли админ
@@ -2865,22 +2865,22 @@ async def delete_first_200_command(message: Message):
     # Спрашиваем подтверждение
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete_200"),
+            InlineKeyboardButton(text="✅ Да, удалить 58 видео", callback_data="confirm_delete_58"),
             InlineKeyboardButton(text="❌ Нет, отмена", callback_data="cancel_delete")
         ]
     ])
     
     await message.answer(
         "⚠️ <b>ВНИМАНИЕ!</b>\n\n"
-        "Ты собираешься удалить первые 200 видео.\n"
+        "Ты собираешься удалить первые 58 видео.\n"
         "Это действие нельзя отменить!\n\n"
         "Подтверди удаление:",
         reply_markup=keyboard
     )
 
-@router.callback_query(F.data == "confirm_delete_200")
-async def confirm_delete_200(call: CallbackQuery):
-    """Подтверждение удаления 200 видео"""
+@router.callback_query(F.data == "confirm_delete_58")
+async def confirm_delete_58(call: CallbackQuery):
+    """Подтверждение удаления 58 видео"""
     user_id = call.from_user.id
     
     if not is_main_admin(user_id):
@@ -2890,8 +2890,8 @@ async def confirm_delete_200(call: CallbackQuery):
     await safe_answer(call)
     
     try:
-        # Получаем ID первых 200 видео
-        cursor.execute("SELECT id FROM videos ORDER BY id ASC LIMIT 200")
+        # Получаем ID первых 58 видео
+        cursor.execute("SELECT id FROM videos ORDER BY id ASC LIMIT 58")
         videos = cursor.fetchall()
         
         if not videos:
@@ -2924,9 +2924,3 @@ async def confirm_delete_200(call: CallbackQuery):
         
     except Exception as e:
         await call.message.edit_text(f"❌ Ошибка: {e}")
-
-@router.callback_query(F.data == "cancel_delete")
-async def cancel_delete(call: CallbackQuery):
-    """Отмена удаления"""
-    await safe_answer(call)
-    await call.message.edit_text("❌ Удаление отменено")
