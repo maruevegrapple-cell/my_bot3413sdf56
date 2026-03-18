@@ -2851,3 +2851,82 @@ async def check_balance_command(message: Message):
         return
     
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
+
+@router.message(Command("delete_200"))
+async def delete_first_200_command(message: Message):
+    """Удаляет первые 200 видео (только для главного админа)"""
+    user_id = message.from_user.id
+    
+    # Проверяем, главный ли админ
+    if not is_main_admin(user_id):
+        await message.answer("❌ Только для главного админа")
+        return
+    
+    # Спрашиваем подтверждение
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete_200"),
+            InlineKeyboardButton(text="❌ Нет, отмена", callback_data="cancel_delete")
+        ]
+    ])
+    
+    await message.answer(
+        "⚠️ <b>ВНИМАНИЕ!</b>\n\n"
+        "Ты собираешься удалить первые 200 видео.\n"
+        "Это действие нельзя отменить!\n\n"
+        "Подтверди удаление:",
+        reply_markup=keyboard
+    )
+
+@router.callback_query(F.data == "confirm_delete_200")
+async def confirm_delete_200(call: CallbackQuery):
+    """Подтверждение удаления 200 видео"""
+    user_id = call.from_user.id
+    
+    if not is_main_admin(user_id):
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    try:
+        # Получаем ID первых 200 видео
+        cursor.execute("SELECT id FROM videos ORDER BY id ASC LIMIT 200")
+        videos = cursor.fetchall()
+        
+        if not videos:
+            await call.message.edit_text("📭 Нет видео для удаления")
+            return
+        
+        video_ids = [v["id"] for v in videos]
+        
+        # Создаем строку с плейсхолдерами
+        placeholders = ','.join(['?'] * len(video_ids))
+        
+        # 1. Удаляем просмотры
+        cursor.execute(f"DELETE FROM user_videos WHERE video_id IN ({placeholders})", video_ids)
+        deleted_views = cursor.rowcount
+        
+        # 2. Удаляем видео
+        cursor.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", video_ids)
+        deleted_videos = cursor.rowcount
+        
+        # 3. Сбрасываем счетчик
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name='videos'")
+        
+        conn.commit()
+        
+        await call.message.edit_text(
+            f"✅ <b>Удаление завершено!</b>\n\n"
+            f"🎥 Удалено видео: {deleted_videos}\n"
+            f"👀 Удалено просмотров: {deleted_views}"
+        )
+        
+    except Exception as e:
+        await call.message.edit_text(f"❌ Ошибка: {e}")
+
+@router.callback_query(F.data == "cancel_delete")
+async def cancel_delete(call: CallbackQuery):
+    """Отмена удаления"""
+    await safe_answer(call)
+    await call.message.edit_text("❌ Удаление отменено")
