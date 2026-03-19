@@ -854,18 +854,25 @@ async def start(message: Message, state: FSMContext, bot: Bot):
             """, (user_id, username, referrer_id, new_ref_code))
             conn.commit()
             
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
-            conn.commit()
-            
-            try:
-                await bot.send_message(
-                    referrer_id,
-                    f"🎁 <b>Новый реферал!</b>\n\n"
-                    f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
-                    f"➕ Вам начислено +{REF_BONUS} 🍬"
-                )
-            except:
-                pass
+            # Проверяем подписку реферала перед начислением бонуса
+            is_subscribed = await check_subscription(bot, user_id)
+            if is_subscribed:
+                cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
+                conn.commit()
+                
+                try:
+                    await bot.send_message(
+                        referrer_id,
+                        f"🎁 <b>Новый реферал!</b>\n\n"
+                        f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
+                        f"➕ Вам начислено +{REF_BONUS} 🍬"
+                    )
+                except:
+                    pass
+            else:
+                # Если не подписан, сохраняем информацию для будущего начисления
+                cursor.execute("UPDATE users SET pending_referrer_bonus = ? WHERE user_id = ?", (REF_BONUS, referrer_id))
+                conn.commit()
         
         if not is_verified(user_id):
             logger.info(f"🔐 Пользователь {user_id} не верифицирован, отправляем капчу")
@@ -915,18 +922,21 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         conn.commit()
         
         if referrer_id:
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
-            conn.commit()
-            
-            try:
-                await bot.send_message(
-                    referrer_id,
-                    f"🎁 <b>Новый реферал!</b>\n\n"
-                    f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
-                    f"➕ Вам начислено +{REF_BONUS} 🍬"
-                )
-            except:
-                pass
+            # Проверяем подписку реферала перед начислением бонуса
+            is_subscribed = await check_subscription(bot, user_id)
+            if is_subscribed:
+                cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
+                conn.commit()
+                
+                try:
+                    await bot.send_message(
+                        referrer_id,
+                        f"🎁 <b>Новый реферал!</b>\n\n"
+                        f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
+                        f"➕ Вам начислено +{REF_BONUS} 🍬"
+                    )
+                except:
+                    pass
     else:
         if not user["ref_code"]:
             new_ref_code = generate_ref_code()
@@ -1295,6 +1305,16 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext, bot: 
             bonus_text = f"\n\n🎁 Вам начислено +{SUBSCRIBE_BONUS} 🍬 за подписку!"
         else:
             bonus_text = ""
+        
+        # Проверяем, есть ли ожидающий реферальный бонус
+        cursor.execute("SELECT pending_referrer_bonus FROM users WHERE user_id = ?", (user_id,))
+        pending = cursor.fetchone()
+        if pending and pending["pending_referrer_bonus"]:
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
+                         (pending["pending_referrer_bonus"], user_id))
+            cursor.execute("UPDATE users SET pending_referrer_bonus = NULL WHERE user_id = ?", (user_id,))
+            conn.commit()
+            bonus_text += f"\n🎁 Начислен отложенный реферальный бонус +{pending['pending_referrer_bonus']} 🍬"
         
         await state.clear()
         
@@ -2777,80 +2797,44 @@ async def profile(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"🍬 Баланс: <code>{balance}</code> конфет\n"
         f"👥 Рефералов: <code>{ref_count}</code>\n\n"
         f"🔗 <b>Твоя ссылка:</b>\n"
-        f"<code>{ref_link}</code>\n\n"
+        f"<code>{ref_link}</code>\n"
+        f"{ref_link} (Синяя ссылка, жми)\n\n"
         f"🎁 За друга: +{REF_BONUS} 🍬\n"
         f"💰 С покупок рефералов: {REF_PERCENT}%"
     )
     
     try:
-        await call.message.answer(text)
+        await call.message.edit_text(text, disable_web_page_preview=False)
     except:
-        pass
+        await call.message.answer(text, disable_web_page_preview=False)
 
-# ================= ТЕСТОВЫЕ КОМАНДЫ =================
-@router.message(Command("test_captcha"))
-async def test_captcha_command(message: Message, state: FSMContext):
+# ================= ДОБАВЛЯЕМ НОВЫЕ КОМАНДЫ УДАЛЕНИЯ =================
+
+@router.message(Command("delete_200"))
+async def delete_first_200_command(message: Message):
+    """Удаляет первые 200 видео (только для главного админа)"""
     user_id = message.from_user.id
     
-    if not check_admin_access(user_id)[0]:
-        await message.answer("❌ Только для админов")
+    # Проверяем, главный ли админ
+    if not is_main_admin(user_id):
+        await message.answer("❌ Только для главного админа")
         return
     
-    image_bytes, captcha_code = generate_captcha_image()
+    # Спрашиваем подтверждение
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да, удалить 200 видео", callback_data="confirm_delete_200"),
+            InlineKeyboardButton(text="❌ Нет, отмена", callback_data="cancel_delete")
+        ]
+    ])
     
-    await message.answer_photo(
-        photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
-        caption=f"🔐 <b>ТЕСТ КАПЧИ</b>\n\n"
-                f"Код: <code>{captcha_code}</code>\n"
-                f"Размер: 800x300\n"
-                f"Буквы: 80px"
+    await message.answer(
+        "⚠️ <b>ВНИМАНИЕ!</b>\n\n"
+        "Ты собираешься удалить первые 200 видео.\n"
+        "Это действие нельзя отменить!\n\n"
+        "Подтверди удаление:",
+        reply_markup=keyboard
     )
-
-@router.message(Command("list_promos"))
-async def list_promos_command(message: Message):
-    user_id = message.from_user.id
-    
-    if not check_admin_access(user_id)[0]:
-        return
-    
-    cursor.execute("SELECT code, reward, activations_left FROM promocodes ORDER BY code")
-    promos = cursor.fetchall()
-    
-    if not promos:
-        await message.answer("📭 Промокодов нет в базе")
-        return
-    
-    text = "📋 <b>Список промокодов:</b>\n\n"
-    for promo in promos:
-        text += f"• <code>{promo['code']}</code> | +{promo['reward']} 🍬 | {promo['activations_left']} акт.\n"
-    
-    await message.answer(text)
-
-@router.message(Command("balance"))
-async def check_balance_command(message: Message):
-    user_id = message.from_user.id
-    
-    if not check_admin_access(user_id)[0]:
-        return
-    
-    try:
-        args = message.text.split()
-        if len(args) > 1:
-            target_user_id = int(args[1])
-        else:
-            target_user_id = message.from_user.id
-    except:
-        await message.answer("❌ Неверный формат. Используйте: /balance [user_id]")
-        return
-    
-    cursor.execute("SELECT balance, username FROM users WHERE user_id = ?", (target_user_id,))
-    user = cursor.fetchone()
-    
-    if not user:
-        await message.answer("❌ Пользователь не найден")
-        return
-    
-    await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
 
 @router.message(Command("delete_58"))
 async def delete_first_58_command(message: Message):
@@ -2877,6 +2861,53 @@ async def delete_first_58_command(message: Message):
         "Подтверди удаление:",
         reply_markup=keyboard
     )
+
+@router.callback_query(F.data == "confirm_delete_200")
+async def confirm_delete_200(call: CallbackQuery):
+    """Подтверждение удаления 200 видео"""
+    user_id = call.from_user.id
+    
+    if not is_main_admin(user_id):
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    try:
+        # Получаем ID первых 200 видео
+        cursor.execute("SELECT id FROM videos ORDER BY id ASC LIMIT 200")
+        videos = cursor.fetchall()
+        
+        if not videos:
+            await call.message.edit_text("📭 Нет видео для удаления")
+            return
+        
+        video_ids = [v["id"] for v in videos]
+        
+        # Создаем строку с плейсхолдерами
+        placeholders = ','.join(['?'] * len(video_ids))
+        
+        # 1. Удаляем просмотры
+        cursor.execute(f"DELETE FROM user_videos WHERE video_id IN ({placeholders})", video_ids)
+        deleted_views = cursor.rowcount
+        
+        # 2. Удаляем видео
+        cursor.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", video_ids)
+        deleted_videos = cursor.rowcount
+        
+        # 3. Сбрасываем счетчик
+        cursor.execute("DELETE FROM sqlite_sequence WHERE name='videos'")
+        
+        conn.commit()
+        
+        await call.message.edit_text(
+            f"✅ <b>Удаление завершено!</b>\n\n"
+            f"🎥 Удалено видео: {deleted_videos}\n"
+            f"👀 Удалено просмотров: {deleted_views}"
+        )
+        
+    except Exception as e:
+        await call.message.edit_text(f"❌ Ошибка: {e}")
 
 @router.callback_query(F.data == "confirm_delete_58")
 async def confirm_delete_58(call: CallbackQuery):
@@ -2924,3 +2955,9 @@ async def confirm_delete_58(call: CallbackQuery):
         
     except Exception as e:
         await call.message.edit_text(f"❌ Ошибка: {e}")
+
+@router.callback_query(F.data == "cancel_delete")
+async def cancel_delete(call: CallbackQuery):
+    """Отмена удаления"""
+    await safe_answer(call)
+    await call.message.edit_text("❌ Удаление отменено")
