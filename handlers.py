@@ -844,8 +844,28 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         logger.info(f"✅ Пользователь {user_id} перешел по реферальной ссылке")
         
         if user:
-            logger.info(f"🔄 Пользователь {user_id} уже существует. Бонус рефереру НЕ начислен.")
+            # Если пользователь уже существует, проверяем есть ли у него реферер
+            if user["referrer"] is None:
+                cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
+                conn.commit()
+                
+                # НАЧИСЛЯЕМ БОНУС СРАЗУ (без проверки подписки)
+                cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
+                conn.commit()
+                
+                try:
+                    await bot.send_message(
+                        referrer_id,
+                        f"🎁 <b>Новый реферал!</b>\n\n"
+                        f"По вашей ссылке зарегистрировался пользователь @{username}\n"
+                        f"➕ Вам начислено +{REF_BONUS} 🍬"
+                    )
+                except:
+                    pass
+            else:
+                logger.info(f"🔄 Пользователь {user_id} уже имеет реферера. Бонус НЕ начислен.")
         else:
+            # Новый пользователь
             logger.info(f"🆕 Создаем НОВОГО пользователя {user_id} с реферером {referrer_id}")
             new_ref_code = generate_ref_code()
             cursor.execute("""
@@ -854,26 +874,19 @@ async def start(message: Message, state: FSMContext, bot: Bot):
             """, (user_id, username, referrer_id, new_ref_code))
             conn.commit()
             
-            # Проверяем подписку реферала перед начислением бонуса
-            is_subscribed = await check_subscription(bot, user_id)
-            if is_subscribed:
-                cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
-                conn.commit()
-                
-                try:
-                    await bot.send_message(
-                        referrer_id,
-                        f"🎁 <b>Новый реферал!</b>\n\n"
-                        f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
-                        f"➕ Вам начислено +{REF_BONUS} 🍬"
-                    )
-                except:
-                    pass
-            else:
-                # Если не подписан, сохраняем бонус как отложенный
-                cursor.execute("UPDATE users SET pending_referrer_bonus = ? WHERE user_id = ?", (REF_BONUS, referrer_id))
-                conn.commit()
-                logger.info(f"📦 Отложенный бонус для {referrer_id}: +{REF_BONUS} 🍬 (реферал не подписан)")
+            # НАЧИСЛЯЕМ БОНУС СРАЗУ (без проверки подписки)
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
+            conn.commit()
+            
+            try:
+                await bot.send_message(
+                    referrer_id,
+                    f"🎁 <b>Новый реферал!</b>\n\n"
+                    f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
+                    f"➕ Вам начислено +{REF_BONUS} 🍬"
+                )
+            except:
+                pass
         
         if not is_verified(user_id):
             logger.info(f"🔐 Пользователь {user_id} не верифицирован, отправляем капчу")
@@ -923,26 +936,19 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         conn.commit()
         
         if referrer_id:
-            # Проверяем подписку реферала перед начислением бонуса
-            is_subscribed = await check_subscription(bot, user_id)
-            if is_subscribed:
-                cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
-                conn.commit()
-                
-                try:
-                    await bot.send_message(
-                        referrer_id,
-                        f"🎁 <b>Новый реферал!</b>\n\n"
-                        f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
-                        f"➕ Вам начислено +{REF_BONUS} 🍬"
-                    )
-                except:
-                    pass
-            else:
-                # Если не подписан, сохраняем бонус как отложенный
-                cursor.execute("UPDATE users SET pending_referrer_bonus = ? WHERE user_id = ?", (REF_BONUS, referrer_id))
-                conn.commit()
-                logger.info(f"📦 Отложенный бонус для {referrer_id}: +{REF_BONUS} 🍬 (реферал не подписан)")
+            # НАЧИСЛЯЕМ БОНУС СРАЗУ (без проверки подписки)
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
+            conn.commit()
+            
+            try:
+                await bot.send_message(
+                    referrer_id,
+                    f"🎁 <b>Новый реферал!</b>\n\n"
+                    f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
+                    f"➕ Вам начислено +{REF_BONUS} 🍬"
+                )
+            except:
+                pass
     else:
         if not user["ref_code"]:
             new_ref_code = generate_ref_code()
@@ -1311,16 +1317,6 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext, bot: 
             bonus_text = f"\n\n🎁 Вам начислено +{SUBSCRIBE_BONUS} 🍬 за подписку!"
         else:
             bonus_text = ""
-        
-        # Проверяем, есть ли ожидающий реферальный бонус для этого пользователя (как реферера)
-        cursor.execute("SELECT pending_referrer_bonus FROM users WHERE user_id = ?", (user_id,))
-        pending_row = cursor.fetchone()
-        if pending_row and pending_row["pending_referrer_bonus"]:
-            pending_bonus = pending_row["pending_referrer_bonus"]
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (pending_bonus, user_id))
-            cursor.execute("UPDATE users SET pending_referrer_bonus = NULL WHERE user_id = ?", (user_id,))
-            conn.commit()
-            bonus_text += f"\n🎁 Начислен отложенный реферальный бонус +{pending_bonus} 🍬"
         
         await state.clear()
         
