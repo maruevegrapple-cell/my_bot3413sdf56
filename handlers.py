@@ -873,6 +873,7 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 # Если не подписан, сохраняем бонус как отложенный
                 cursor.execute("UPDATE users SET pending_referrer_bonus = ? WHERE user_id = ?", (REF_BONUS, referrer_id))
                 conn.commit()
+                logger.info(f"📦 Отложенный бонус для {referrer_id}: +{REF_BONUS} 🍬 (реферал не подписан)")
         
         if not is_verified(user_id):
             logger.info(f"🔐 Пользователь {user_id} не верифицирован, отправляем капчу")
@@ -941,6 +942,7 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 # Если не подписан, сохраняем бонус как отложенный
                 cursor.execute("UPDATE users SET pending_referrer_bonus = ? WHERE user_id = ?", (REF_BONUS, referrer_id))
                 conn.commit()
+                logger.info(f"📦 Отложенный бонус для {referrer_id}: +{REF_BONUS} 🍬 (реферал не подписан)")
     else:
         if not user["ref_code"]:
             new_ref_code = generate_ref_code()
@@ -2965,3 +2967,68 @@ async def cancel_delete(call: CallbackQuery):
     """Отмена удаления"""
     await safe_answer(call)
     await call.message.edit_text("❌ Удаление отменено")
+
+# ================= ТЕСТОВЫЕ КОМАНДЫ =================
+@router.message(Command("test_captcha"))
+async def test_captcha_command(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    if not check_admin_access(user_id)[0]:
+        await message.answer("❌ Только для админов")
+        return
+    
+    image_bytes, captcha_code = generate_captcha_image()
+    
+    await message.answer_photo(
+        photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
+        caption=f"🔐 <b>ТЕСТ КАПЧИ</b>\n\n"
+                f"Код: <code>{captcha_code}</code>\n"
+                f"Размер: 800x300\n"
+                f"Буквы: 80px"
+    )
+
+@router.message(Command("list_promos"))
+async def list_promos_command(message: Message):
+    user_id = message.from_user.id
+    
+    if not check_admin_access(user_id)[0]:
+        return
+    
+    cursor.execute("SELECT code, reward, activations_left FROM promocodes ORDER BY code")
+    promos = cursor.fetchall()
+    
+    if not promos:
+        await message.answer("📭 Промокодов нет в базе")
+        return
+    
+    text = "📋 <b>Список промокодов:</b>\n\n"
+    for promo in promos:
+        text += f"• <code>{promo['code']}</code> | +{promo['reward']} 🍬 | {promo['activations_left']} акт.\n"
+    
+    await message.answer(text)
+
+@router.message(Command("balance"))
+async def check_balance_command(message: Message):
+    user_id = message.from_user.id
+    
+    if not check_admin_access(user_id)[0]:
+        return
+    
+    try:
+        args = message.text.split()
+        if len(args) > 1:
+            target_user_id = int(args[1])
+        else:
+            target_user_id = message.from_user.id
+    except:
+        await message.answer("❌ Неверный формат. Используйте: /balance [user_id]")
+        return
+    
+    cursor.execute("SELECT balance, username FROM users WHERE user_id = ?", (target_user_id,))
+    user = cursor.fetchone()
+    
+    if not user:
+        await message.answer("❌ Пользователь не найден")
+        return
+    
+    await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
