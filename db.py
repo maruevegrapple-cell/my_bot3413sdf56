@@ -65,7 +65,7 @@ def set_main_admin(user_id: int, username: str = ""):
 
 def init_db():
     """Инициализация базы данных"""
-    # Таблица пользователей (с добавленной колонкой pending_referrer_bonus)
+    # Таблица пользователей (с колонкой pending_referrer_bonus)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -84,12 +84,13 @@ def init_db():
     # Проверяем, есть ли колонка pending_referrer_bonus (для старых БД)
     try:
         cursor.execute("SELECT pending_referrer_bonus FROM users LIMIT 1")
+        print("✅ Колонка pending_referrer_bonus уже существует")
     except:
         try:
             cursor.execute("ALTER TABLE users ADD COLUMN pending_referrer_bonus INTEGER DEFAULT NULL")
             print("✅ Добавлена колонка pending_referrer_bonus в таблицу users")
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️ Ошибка добавления колонки: {e}")
 
     # Таблица для управления админами
     cursor.execute("""
