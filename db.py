@@ -65,7 +65,7 @@ def set_main_admin(user_id: int, username: str = ""):
 
 def init_db():
     """Инициализация базы данных"""
-    # Таблица пользователей
+    # Таблица пользователей (с добавленной колонкой pending_referrer_bonus)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -76,9 +76,20 @@ def init_db():
         is_verified INTEGER DEFAULT 0,
         ref_code TEXT UNIQUE,
         subscribe_bonus_received INTEGER DEFAULT 0,
-        is_admin INTEGER DEFAULT 0
+        is_admin INTEGER DEFAULT 0,
+        pending_referrer_bonus INTEGER DEFAULT NULL
     )
     """)
+    
+    # Проверяем, есть ли колонка pending_referrer_bonus (для старых БД)
+    try:
+        cursor.execute("SELECT pending_referrer_bonus FROM users LIMIT 1")
+    except:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN pending_referrer_bonus INTEGER DEFAULT NULL")
+            print("✅ Добавлена колонка pending_referrer_bonus в таблицу users")
+        except:
+            pass
 
     # Таблица для управления админами
     cursor.execute("""
@@ -363,6 +374,24 @@ def get_top_referrers(limit: int = 10):
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
+
+def get_pending_referrer_bonus(user_id: int):
+    """Получение отложенного реферального бонуса"""
+    try:
+        cursor.execute("SELECT pending_referrer_bonus FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row["pending_referrer_bonus"] if row else None
+    except:
+        return None
+
+def clear_pending_referrer_bonus(user_id: int):
+    """Очистка отложенного реферального бонуса"""
+    try:
+        cursor.execute("UPDATE users SET pending_referrer_bonus = NULL WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except:
+        return False
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПЛАТЕЖАМИ ==========
 def add_payment(invoice_id: str, user_id: int, amount: int):

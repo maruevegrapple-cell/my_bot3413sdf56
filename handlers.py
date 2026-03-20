@@ -870,7 +870,7 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 except:
                     pass
             else:
-                # Если не подписан, сохраняем информацию для будущего начисления
+                # Если не подписан, сохраняем бонус как отложенный
                 cursor.execute("UPDATE users SET pending_referrer_bonus = ? WHERE user_id = ?", (REF_BONUS, referrer_id))
                 conn.commit()
         
@@ -937,6 +937,10 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                     )
                 except:
                     pass
+            else:
+                # Если не подписан, сохраняем бонус как отложенный
+                cursor.execute("UPDATE users SET pending_referrer_bonus = ? WHERE user_id = ?", (REF_BONUS, referrer_id))
+                conn.commit()
     else:
         if not user["ref_code"]:
             new_ref_code = generate_ref_code()
@@ -1306,15 +1310,15 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext, bot: 
         else:
             bonus_text = ""
         
-        # Проверяем, есть ли ожидающий реферальный бонус
+        # Проверяем, есть ли ожидающий реферальный бонус для этого пользователя (как реферера)
         cursor.execute("SELECT pending_referrer_bonus FROM users WHERE user_id = ?", (user_id,))
-        pending = cursor.fetchone()
-        if pending and pending["pending_referrer_bonus"]:
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
-                         (pending["pending_referrer_bonus"], user_id))
+        pending_row = cursor.fetchone()
+        if pending_row and pending_row["pending_referrer_bonus"]:
+            pending_bonus = pending_row["pending_referrer_bonus"]
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (pending_bonus, user_id))
             cursor.execute("UPDATE users SET pending_referrer_bonus = NULL WHERE user_id = ?", (user_id,))
             conn.commit()
-            bonus_text += f"\n🎁 Начислен отложенный реферальный бонус +{pending['pending_referrer_bonus']} 🍬"
+            bonus_text += f"\n🎁 Начислен отложенный реферальный бонус +{pending_bonus} 🍬"
         
         await state.clear()
         
