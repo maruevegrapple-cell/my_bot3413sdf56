@@ -3028,3 +3028,120 @@ async def check_balance_command(message: Message):
         return
     
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
+
+@router.message(Command("backup_db"))
+async def backup_db_command(message: Message):
+    """Создает бэкап базы данных (только для главного админа)"""
+    user_id = message.from_user.id
+    
+    # Проверяем, главный ли админ
+    if not is_main_admin(user_id):
+        await message.answer("❌ Только для главного админа")
+        return
+    
+    await message.answer("🔄 Создаю бэкап базы данных...")
+    
+    try:
+        # Получаем все таблицы
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = cursor.fetchall()
+        
+        backup_data = {}
+        
+        for table in tables:
+            table_name = table[0]
+            cursor.execute(f"SELECT * FROM {table_name}")
+            rows = cursor.fetchall()
+            
+            # Получаем названия колонок
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            backup_data[table_name] = {
+                "columns": columns,
+                "data": [dict(row) for row in rows]
+            }
+        
+        # Сохраняем в JSON
+        import json
+        from datetime import datetime
+        
+        backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2, default=str)
+        
+        # Отправляем файл
+        from io import BytesIO
+        backup_file = BytesIO(backup_json.encode('utf-8'))
+        backup_file.name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        await message.answer_document(
+            document=BufferedInputFile(backup_json.encode('utf-8'), filename=backup_file.name),
+            caption=f"✅ Бэкап базы данных\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+@router.message(Command("restore_db"))
+async def restore_db_command(message: Message):
+    """Восстанавливает базу данных из присланного файла (только для главного админа)"""
+    user_id = message.from_user.id
+    
+    if not is_main_admin(user_id):
+        await message.answer("❌ Только для главного админа")
+        return
+    
+    await message.answer("📤 Отправьте файл бэкапа (.json) для восстановления")
+    
+    # Сохраняем состояние ожидания файла
+    global waiting_for_restore
+    waiting_for_restore = True
+
+# Обработчик для получения файла бэкапа
+waiting_for_restore = False
+
+@router.message(F.document)
+async def handle_restore_file(message: Message):
+    global waiting_for_restore
+    if not waiting_for_restore:
+        return
+    
+    user_id = message.from_user.id
+    if not is_main_admin(user_id):
+        return
+    
+    waiting_for_restore = False
+    
+    try:
+        file = await message.bot.get_file(message.document.file_id)
+        file_bytes = await message.bot.download_file(file.file_path)
+        
+        import json
+        backup_data = json.loads(file_bytes.read().decode('utf-8'))
+        
+        await message.answer("🔄 Восстанавливаю базу данных...")
+        
+        # Начинаем транзакцию
+        cursor.execute("BEGIN TRANSACTION")
+        
+        # Удаляем все данные из таблиц
+        for table_name in backup_data.keys():
+            cursor.execute(f"DELETE FROM {table_name}")
+        
+        # Восстанавливаем данные
+        for table_name, table_data in backup_data.items():
+            columns = table_data["columns"]
+            data = table_data["data"]
+            
+            if data:
+                placeholders = ','.join(['?'] * len(columns))
+                for row in data:
+                    values = [row.get(col) for col in columns]
+                    cursor.execute(f"INSERT INTO {table_name} ({','.join(columns)}) VALUES ({placeholders})", values)
+        
+        conn.commit()
+        
+        await message.answer("✅ База данных успешно восстановлена!")
+        
+    except Exception as e:
+        conn.rollback()
+        await message.answer(f"❌ Ошибка при восстановлении: {e}")
