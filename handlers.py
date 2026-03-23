@@ -608,6 +608,8 @@ async def start(message: Message, state: FSMContext, bot: Bot):
     username = message.from_user.username or "пользователь"
     first_name = message.from_user.first_name or "Пользователь"
     
+    logger.info(f"🟢 START command from user {user_id} (@{username})")
+    
     banned, ban_until = is_banned(user_id)
     if banned:
         remaining = ban_until - datetime.now()
@@ -617,13 +619,20 @@ async def start(message: Message, state: FSMContext, bot: Bot):
     has_access, _, is_main, can_manage = check_admin_access(user_id)
     
     if has_access:
-        cursor.execute("INSERT OR IGNORE INTO users (user_id, username, is_verified, is_admin) VALUES (?, ?, 1, 1)", (user_id, username))
+        cursor.execute("""
+            INSERT OR IGNORE INTO users (user_id, username, is_verified, is_admin)
+            VALUES (?, ?, 1, 1)
+        """, (user_id, username))
         cursor.execute("UPDATE users SET is_verified = 1, username = ? WHERE user_id = ?", (username, user_id))
+        
         cursor.execute("SELECT ref_code FROM users WHERE user_id = ?", (user_id,))
-        if not cursor.fetchone() or not cursor.fetchone()["ref_code"]:
+        row = cursor.fetchone()
+        if not row or not row["ref_code"]:
             ref_code = generate_ref_code()
             cursor.execute("UPDATE users SET ref_code = ? WHERE user_id = ?", (ref_code, user_id))
+        
         conn.commit()
+        
         await message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
         return
     
@@ -649,16 +658,19 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
                 conn.commit()
                 try:
-                    await bot.send_message(referrer_id, f"🎁 <b>Новый реферал!</b>\n\n@username\n➕ +{REF_BONUS} 🍬")
+                    await bot.send_message(referrer_id, f"🎁 <b>Новый реферал!</b>\n\n@{username}\n➕ +{REF_BONUS} 🍬")
                 except:
                     pass
         else:
             new_ref_code = generate_ref_code()
-            cursor.execute("INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin) VALUES (?, ?, ?, 0, ?, 0, 0)", (user_id, username, referrer_id, new_ref_code))
+            cursor.execute("""
+                INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin)
+                VALUES (?, ?, ?, 0, ?, 0, 0)
+            """, (user_id, username, referrer_id, new_ref_code))
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
             conn.commit()
             try:
-                await bot.send_message(referrer_id, f"🎁 <b>Новый реферал!</b>\n\n@username\n➕ +{REF_BONUS} 🍬")
+                await bot.send_message(referrer_id, f"🎁 <b>Новый реферал!</b>\n\n@{username}\n➕ +{REF_BONUS} 🍬")
             except:
                 pass
         
@@ -680,13 +692,16 @@ async def start(message: Message, state: FSMContext, bot: Bot):
     
     if not user:
         new_ref_code = generate_ref_code()
-        cursor.execute("INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin) VALUES (?, ?, ?, 0, ?, 0, 0)", (user_id, username, referrer_id, new_ref_code))
+        cursor.execute("""
+            INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin)
+            VALUES (?, ?, ?, 0, ?, 0, 0)
+        """, (user_id, username, referrer_id, new_ref_code))
         conn.commit()
         if referrer_id:
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
             conn.commit()
             try:
-                await bot.send_message(referrer_id, f"🎁 <b>Новый реферал!</b>\n\n@username\n➕ +{REF_BONUS} 🍬")
+                await bot.send_message(referrer_id, f"🎁 <b>Новый реферал!</b>\n\n@{username}\n➕ +{REF_BONUS} 🍬")
             except:
                 pass
     else:
