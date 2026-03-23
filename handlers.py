@@ -117,6 +117,7 @@ captcha_attempts = {}
 banned_users = {}
 broadcast_mode = set()
 custom_pay_wait = set()
+waiting_for_restore_file = False  # Для восстановления базы
 
 # ================= КОМАНДА ДЛЯ НАЗНАЧЕНИЯ ГЛАВНОГО АДМИНА =================
 @router.message(Command("set_main_admin"))
@@ -3029,6 +3030,7 @@ async def check_balance_command(message: Message):
     
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
 
+# ================= БЭКАП БАЗЫ ДАННЫХ =================
 @router.message(Command("backup_db"))
 async def backup_db_command(message: Message):
     """Создает бэкап базы данных (только для главного админа)"""
@@ -3069,149 +3071,156 @@ async def backup_db_command(message: Message):
         backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2, default=str)
         
         # Отправляем файл
-        from io import BytesIO
-        backup_file = BytesIO(backup_json.encode('utf-8'))
-        backup_file.name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        
         await message.answer_document(
-            document=BufferedInputFile(backup_json.encode('utf-8'), filename=backup_file.name),
+            document=BufferedInputFile(backup_json.encode('utf-8'), filename=f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"),
             caption=f"✅ Бэкап базы данных\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-@router.message(Command("restore_db"))
+# ================= ВОССТАНОВЛЕНИЕ БАЗЫ ДАННЫХ =================
+@router.message(Command("restore"))
 async def restore_db_command(message: Message):
-    """Восстанавливает базу данных из присланного файла (только для главного админа)"""
+    """Команда для восстановления базы данных из JSON файла (только для главного админа)"""
     user_id = message.from_user.id
     
+    # Проверяем, главный ли админ
     if not is_main_admin(user_id):
         await message.answer("❌ Только для главного админа")
         return
     
-    await message.answer("📤 Отправьте файл бэкапа (.json) для восстановления")
+    global waiting_for_restore_file
+    waiting_for_restore_file = True
     
-    # Сохраняем состояние ожидания файла
-    global waiting_for_restore
-    waiting_for_restore = True
-
-# Обработчик для получения файла бэкапа
-waiting_for_restore = False
+    await message.answer(
+        "📤 <b>Восстановление базы данных</b>\n\n"
+        "Отправьте JSON файл с бэкапом.\n"
+        "⚠️ <b>ВНИМАНИЕ:</b> Текущая база данных будет полностью заменена!\n\n"
+        "Файл должен быть создан командой /backup_db"
+    )
+    
+    # Автоматический выход из режима через 60 секунд
+    async def exit_restore_mode():
+        await asyncio.sleep(60)
+        global waiting_for_restore_file
+        waiting_for_restore_file = False
+    
+    asyncio.create_task(exit_restore_mode())
 
 @router.message(F.document)
-async def handle_restore_file(message: Message):
-    global waiting_for_restore
-    if not waiting_for_restore:
-        return
+async def handle_restore_file(message: Message, bot: Bot):
+    """Обработчик загрузки файла для восстановления базы данных"""
+    global waiting_for_restore_file
     
     user_id = message.from_user.id
-    if not is_main_admin(user_id):
+    
+    # Проверяем, ожидаем ли мы файл и является ли пользователь главным админом
+    if not waiting_for_restore_file or not is_main_admin(user_id):
         return
     
-    waiting_for_restore = False
+    # Проверяем, что это JSON файл
+    if not message.document.file_name or not message.document.file_name.endswith('.json'):
+        await message.answer("❌ Неверный формат файла. Ожидается .json файл")
+        waiting_for_restore_file = False
+        return
+    
+    status_msg = await message.answer("🔄 <b>Восстанавливаю базу данных...</b>\n\n⏳ Пожалуйста, подождите...")
     
     try:
-        file = await message.bot.get_file(message.document.file_id)
-        file_bytes = await message.bot.download_file(file.file_path)
+        # Скачиваем файл
+        file = await bot.get_file(message.document.file_id)
+        file_bytes = await bot.download_file(file.file_path)
         
         import json
+        
+        # Парсим JSON
         backup_data = json.loads(file_bytes.read().decode('utf-8'))
         
-        await message.answer("🔄 Восстанавливаю базу данных...")
+        # Проверяем структуру
+        required_tables = ['users', 'videos', 'payments', 'promocodes', 'user_videos']
+        for table in required_tables:
+            if table not in backup_data:
+                await status_msg.edit_text(
+                    f"❌ <b>Ошибка структуры файла</b>\n\n"
+                    f"Отсутствует таблица: {table}\n"
+                    f"Файл должен быть создан командой /backup_db"
+                )
+                waiting_for_restore_file = False
+                return
         
         # Начинаем транзакцию
         cursor.execute("BEGIN TRANSACTION")
         
-        # Удаляем все данные из таблиц
-        for table_name in backup_data.keys():
-            cursor.execute(f"DELETE FROM {table_name}")
+        # Список таблиц для восстановления
+        tables_to_restore = ['users', 'videos', 'payments', 'promocodes', 'used_promocodes', 'user_videos']
         
-        # Восстанавливаем данные
-        for table_name, table_data in backup_data.items():
-            columns = table_data["columns"]
-            data = table_data["data"]
-            
-            if data:
-                placeholders = ','.join(['?'] * len(columns))
-                for row in data:
-                    values = [row.get(col) for col in columns]
-                    cursor.execute(f"INSERT INTO {table_name} ({','.join(columns)}) VALUES ({placeholders})", values)
+        restored_counts = {}
         
-        conn.commit()
+        for table_name in tables_to_restore:
+            if table_name in backup_data:
+                table_info = backup_data[table_name]
+                columns = table_info.get("columns", [])
+                rows = table_info.get("data", [])
+                
+                # Очищаем таблицу
+                cursor.execute(f"DELETE FROM {table_name}")
+                
+                # Восстанавливаем данные если есть
+                if rows and columns:
+                    placeholders = ','.join(['?'] * len(columns))
+                    for row in rows:
+                        values = [row.get(col) for col in columns]
+                        try:
+                            cursor.execute(
+                                f"INSERT INTO {table_name} ({','.join(columns)}) VALUES ({placeholders})", 
+                                values
+                            )
+                        except Exception as e:
+                            logger.error(f"Ошибка вставки в {table_name}: {e}")
+                            # Пропускаем проблемную строку
+                            continue
+                    
+                    restored_counts[table_name] = len(rows)
+                    await status_msg.edit_text(
+                        f"🔄 <b>Восстановление базы данных...</b>\n\n"
+                        f"✅ {table_name}: {len(rows)} записей"
+                    )
+                else:
+                    restored_counts[table_name] = 0
         
-        await message.answer("✅ База данных успешно восстановлена!")
+        # Сбрасываем автоинкремент для таблиц
+        cursor.execute("DELETE FROM sqlite_sequence")
         
-    except Exception as e:
-        conn.rollback()
-        await message.answer(f"❌ Ошибка при восстановлении: {e}")
-# ================= ВОССТАНОВЛЕНИЕ БАЗЫ ИЗ JSON =================
-@router.message(Command("restore"))
-async def restore_db(message: Message):
-    user_id = message.from_user.id
-    
-    # Проверка на админа
-    if user_id != MAIN_ADMIN_ID:
-        await message.answer("❌ Нет доступа")
-        return
-    
-    await message.answer("📤 Отправь JSON файл с бэкапом")
-
-@router.message(F.document)
-async def restore_from_json(message: Message):
-    user_id = message.from_user.id
-    
-    # Проверка на админа
-    if user_id != MAIN_ADMIN_ID:
-        return
-    
-    if not message.document.file_name.endswith('.json'):
-        return
-    
-    status_msg = await message.answer("🔄 Восстанавливаю базу данных...")
-    
-    try:
-        # Скачиваем файл
-        file = await message.bot.get_file(message.document.file_id)
-        file_bytes = await message.bot.download_file(file.file_path)
-        
-        import json
-        data = json.loads(file_bytes.read().decode('utf-8'))
-        
-        # Восстанавливаем базу
-        for table_name, table_data in data.items():
-            if table_name == "sqlite_sequence":
-                continue
-            
-            columns = table_data["columns"]
-            rows = table_data["data"]
-            
-            if not rows:
-                continue
-            
-            # Очищаем таблицу
-            cursor.execute(f"DELETE FROM {table_name}")
-            
-            # Вставляем данные
-            placeholders = ','.join(['?'] * len(columns))
-            for row in rows:
-                values = [row.get(col) for col in columns]
-                cursor.execute(f"INSERT INTO {table_name} ({','.join(columns)}) VALUES ({placeholders})", values)
-        
+        # Фиксируем транзакцию
         conn.commit()
         
         # Проверяем результат
-        cursor.execute("SELECT COUNT(*) FROM users")
-        users_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM videos")
-        videos_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) as count FROM users")
+        users_count = cursor.fetchone()["count"]
+        cursor.execute("SELECT COUNT(*) as count FROM videos")
+        videos_count = cursor.fetchone()["count"]
+        cursor.execute("SELECT COUNT(*) as count FROM payments")
+        payments_count = cursor.fetchone()["count"]
         
-        await status_msg.edit_text(
-            f"✅ База восстановлена!\n\n"
-            f"👥 Пользователей: {users_count}\n"
-            f"🎥 Видео: {videos_count}\n"
-            f"📊 Просмотры сохранены"
+        # Формируем отчет
+        report = (
+            f"✅ <b>База данных успешно восстановлена!</b>\n\n"
+            f"📊 <b>Статистика восстановления:</b>\n"
+            f"├ 👥 Пользователей: {users_count}\n"
+            f"├ 🎥 Видео: {videos_count}\n"
+            f"├ 💳 Платежей: {payments_count}\n"
+            f"└ 📊 Просмотры сохранены\n\n"
+            f"📁 Файл: {message.document.file_name}"
         )
         
+        await status_msg.edit_text(report)
+        
+    except json.JSONDecodeError as e:
+        await status_msg.edit_text(f"❌ <b>Ошибка парсинга JSON</b>\n\n{e}")
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка: {e}")
+        conn.rollback()
+        logger.error(f"Ошибка восстановления: {e}")
+        await status_msg.edit_text(f"❌ <b>Ошибка при восстановлении</b>\n\n{str(e)}")
+    finally:
+        waiting_for_restore_file = False
