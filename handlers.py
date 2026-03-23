@@ -3247,3 +3247,45 @@ async def handle_restore_file(message: Message, bot: Bot):
     finally:
         waiting_for_restore_file = False
         restore_user_id = None
+
+# ================= КОМАНДА ДЛЯ ОСТАНОВКИ ЛИШНИХ ЭКЗЕМПЛЯРОВ =================
+@router.message(Command("stop_duplicates"))
+async def stop_duplicates_command(message: Message, bot: Bot):
+    """Остановка дублирующихся экземпляров бота (только для главного админа)"""
+    user_id = message.from_user.id
+    
+    if not is_main_admin(user_id):
+        await message.answer("❌ Только для главного админа")
+        return
+    
+    await message.answer("🔍 Проверяю дублирующиеся экземпляры...")
+    
+    try:
+        # Отключаем webhook, если он используется
+        await bot.delete_webhook(drop_pending_updates=True)
+        await message.answer("✅ Webhook отключен. Дублирующиеся запросы остановлены.")
+        
+        # Создаем lock файл для предотвращения запуска второго экземпляра
+        import fcntl
+        import sys
+        import os
+        
+        lock_file_path = "/tmp/bot_single_instance.lock"
+        try:
+            lock_file = open(lock_file_path, 'w')
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            await message.answer("✅ Lock файл создан. Теперь бот будет работать в единственном экземпляре.")
+        except:
+            await message.answer("⚠️ Lock файл уже существует. Возможно, другой экземпляр уже создал его.")
+            
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+    
+    await message.answer(
+        "📊 <b>Что нужно сделать для полного решения:</b>\n\n"
+        "1. Зайдите в Railway Dashboard\n"
+        "2. Остановите все лишние деплои\n"
+        "3. Оставьте только один активный деплой\n"
+        "4. Перезапустите бота\n\n"
+        "После этого статистика будет стабильной, а промокоды начнут работать правильно!"
+    )
