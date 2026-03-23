@@ -420,6 +420,14 @@ def add_video(file_id: str):
     except:
         return False
 
+def get_user_watched_videos(user_id: int):
+    """Получение просмотренных пользователем видео"""
+    try:
+        cursor.execute("SELECT video_id FROM user_videos WHERE user_id = ?", (user_id,))
+        return [row["video_id"] for row in cursor.fetchall()]
+    except:
+        return []
+
 def mark_video_watched(user_id: int, video_id: int):
     try:
         cursor.execute("INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)", (user_id, video_id))
@@ -746,3 +754,4 @@ except:
         pass
 
 conn.commit()
+print("✅ База данных полностью готова!")
