@@ -3145,3 +3145,42 @@ async def handle_restore_file(message: Message):
     except Exception as e:
         conn.rollback()
         await message.answer(f"❌ Ошибка при восстановлении: {e}")
+
+# download_all_videos.py - запусти один раз на старом боте
+
+import asyncio
+import json
+from aiogram import Bot
+import aiohttp
+import os
+
+async def download_all_videos():
+    # Токен СТАРОГО бота (который работает сейчас)
+    bot = Bot(token="СТАРЫЙ_ТОКЕН_БОТА")
+    
+    # Создаем папку для видео
+    os.makedirs("videos", exist_ok=True)
+    
+    # Получаем все video_id из базы
+    import sqlite3
+    conn = sqlite3.connect("database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, file_id FROM videos ORDER BY id")
+    videos = cursor.fetchall()
+    
+    print(f"📥 Скачиваю {len(videos)} видео...")
+    
+    for video_id, file_id in videos:
+        try:
+            # Скачиваем видео
+            file = await bot.get_file(file_id)
+            file_path = f"videos/video_{video_id}.mp4"
+            await bot.download_file(file.file_path, file_path)
+            print(f"✅ Скачано видео {video_id}")
+        except Exception as e:
+            print(f"❌ Ошибка скачивания видео {video_id}: {e}")
+    
+    print("✅ Все видео скачаны!")
+    await bot.session.close()
+
+asyncio.run(download_all_videos())
