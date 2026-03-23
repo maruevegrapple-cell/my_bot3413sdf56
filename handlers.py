@@ -3145,3 +3145,73 @@ async def handle_restore_file(message: Message):
     except Exception as e:
         conn.rollback()
         await message.answer(f"❌ Ошибка при восстановлении: {e}")
+# ================= ВОССТАНОВЛЕНИЕ БАЗЫ ИЗ JSON =================
+@router.message(Command("restore"))
+async def restore_db(message: Message):
+    user_id = message.from_user.id
+    
+    # Проверка на админа
+    if user_id != MAIN_ADMIN_ID:
+        await message.answer("❌ Нет доступа")
+        return
+    
+    await message.answer("📤 Отправь JSON файл с бэкапом")
+
+@router.message(F.document)
+async def restore_from_json(message: Message):
+    user_id = message.from_user.id
+    
+    # Проверка на админа
+    if user_id != MAIN_ADMIN_ID:
+        return
+    
+    if not message.document.file_name.endswith('.json'):
+        return
+    
+    status_msg = await message.answer("🔄 Восстанавливаю базу данных...")
+    
+    try:
+        # Скачиваем файл
+        file = await message.bot.get_file(message.document.file_id)
+        file_bytes = await message.bot.download_file(file.file_path)
+        
+        import json
+        data = json.loads(file_bytes.read().decode('utf-8'))
+        
+        # Восстанавливаем базу
+        for table_name, table_data in data.items():
+            if table_name == "sqlite_sequence":
+                continue
+            
+            columns = table_data["columns"]
+            rows = table_data["data"]
+            
+            if not rows:
+                continue
+            
+            # Очищаем таблицу
+            cursor.execute(f"DELETE FROM {table_name}")
+            
+            # Вставляем данные
+            placeholders = ','.join(['?'] * len(columns))
+            for row in rows:
+                values = [row.get(col) for col in columns]
+                cursor.execute(f"INSERT INTO {table_name} ({','.join(columns)}) VALUES ({placeholders})", values)
+        
+        conn.commit()
+        
+        # Проверяем результат
+        cursor.execute("SELECT COUNT(*) FROM users")
+        users_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM videos")
+        videos_count = cursor.fetchone()[0]
+        
+        await status_msg.edit_text(
+            f"✅ База восстановлена!\n\n"
+            f"👥 Пользователей: {users_count}\n"
+            f"🎥 Видео: {videos_count}\n"
+            f"📊 Просмотры сохранены"
+        )
+        
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Ошибка: {e}")
