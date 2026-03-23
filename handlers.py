@@ -3432,7 +3432,7 @@ async def task_reject(call: CallbackQuery, state: FSMContext, bot: Bot):
 # ================= АДМИН - УПРАВЛЕНИЕ ЗАДАНИЯМИ =================
 
 @router.callback_query(F.data == "admin_tasks")
-async def admin_tasks_menu(call: CallbackQuery):
+async def admin_tasks_menu_handler(call: CallbackQuery):
     """Меню управления заданиями"""
     user_id = call.from_user.id
     
@@ -3452,7 +3452,7 @@ async def admin_tasks_menu(call: CallbackQuery):
         f"📌 Всего заданий: {total_tasks}\n"
         f"⏳ На проверке: {pending_count}\n\n"
         f"Выберите действие:",
-        reply_markup=admin_tasks_menu
+        reply_markup=admin_tasks_menu  # ← это переменная из keyboards.py
     )
 
 @router.callback_query(F.data == "admin_task_add")

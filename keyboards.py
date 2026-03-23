@@ -36,13 +36,18 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # ================= МЕНЮ ЗАДАНИЙ =================
-def get_tasks_menu(tasks):
-    """Динамическое меню заданий"""
+def get_tasks_menu(user_tasks):
     keyboard = []
-    for task in tasks:
-        status_emoji = "✅" if task.get("completed") else "❌" if not task.get("pending") else "⏳"
+    for task in user_tasks:
+        if task.get("status") == "approved":
+            emoji = "✅"
+        elif task.get("status") == "pending":
+            emoji = "⏳"
+        else:
+            emoji = "❌"
+        
         keyboard.append([InlineKeyboardButton(
-            text=f"{status_emoji} {task['title']} | +{task['reward']} 🍬",
+            text=f"{emoji} {task['title']} | +{task['reward']} 🍬",
             callback_data=f"task_{task['id']}"
         )])
     
@@ -51,17 +56,15 @@ def get_tasks_menu(tasks):
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-def get_task_action_menu(task_id: int, task_title: str, task_reward: int):
-    """Меню для конкретного задания"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Выполнить задание", callback_data=f"do_task_{task_id}")],
-        [InlineKeyboardButton(text="⬅️ Назад к заданиям", callback_data="tasks")]
-    ])
+def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_status: str = None):
+    keyboard = []
+    if task_status != "approved" and task_status != "pending":
+        keyboard.append([InlineKeyboardButton(text="✅ Выполнить задание", callback_data=f"do_task_{task_id}")])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад к заданиям", callback_data="tasks")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 # ================= АДМИН-МЕНЮ =================
 def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False):
-    """Динамическое админ-меню в зависимости от прав"""
-    
     buttons = [
         [
             InlineKeyboardButton(text="▶️ Смотреть видео", callback_data="videos"),
@@ -91,7 +94,6 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
         ]
     ]
     
-    # Кнопка управления админами (только для главного или тех, у кого есть права)
     if is_main_admin or can_manage_admins:
         buttons.append([InlineKeyboardButton(text="👥 Управление админами", callback_data="admin_manage")])
     
@@ -102,6 +104,7 @@ admin_tasks_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="➕ Создать задание", callback_data="admin_task_add")],
     [InlineKeyboardButton(text="🗑 Удалить задание", callback_data="admin_task_remove")],
     [InlineKeyboardButton(text="📋 Список заданий", callback_data="admin_task_list")],
+    [InlineKeyboardButton(text="⏳ На проверке", callback_data="admin_task_pending")],
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
 ])
 
@@ -123,7 +126,6 @@ op_menu = InlineKeyboardMarkup(inline_keyboard=[
 
 # ================= МАГАЗИН =================
 shop_menu = InlineKeyboardMarkup(inline_keyboard=[
-    # Пакеты конфет
     [
         InlineKeyboardButton(text="🍬 50 • 💵 0.2", callback_data="pay_50"),
         InlineKeyboardButton(text="🍬 100 • 💵 0.3", callback_data="pay_100")
@@ -136,17 +138,9 @@ shop_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="🍬 200 • 💵 0.6", callback_data="pay_200"),
         InlineKeyboardButton(text="🍬 333 • 💵 1.0", callback_data="pay_333")
     ],
-    
-    # Свое количество
     [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25%", callback_data="pay_custom")],
-    
-    # Кнопка оплаты звездами
     [InlineKeyboardButton(text="⭐️ Для оплаты звездами нажми на меня!", url=ANON_CHAT_LINK)],
-    
-    # 🔐 ПРИВАТКА
     [InlineKeyboardButton(text="🔐 ПРИВАТКА | 599 ⭐️ / $5", callback_data="pay_private")],
-    
-    # Назад
     [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
 ])
 
