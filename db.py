@@ -321,6 +321,29 @@ def get_referrals_count(user_id: int) -> int:
     except:
         return 0
 
+def get_user_by_ref_code(ref_code: str):
+    try:
+        cursor.execute("SELECT user_id FROM users WHERE ref_code = ?", (ref_code,))
+        row = cursor.fetchone()
+        return row["user_id"] if row else None
+    except:
+        return None
+
+def get_top_referrers(limit: int = 10):
+    try:
+        cursor.execute("""
+            SELECT u.user_id, u.username, u.balance, COUNT(r.user_id) as referrals_count
+            FROM users u
+            LEFT JOIN users r ON r.referrer = u.user_id
+            GROUP BY u.user_id
+            HAVING referrals_count > 0
+            ORDER BY referrals_count DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
 # ========== ФУНКЦИИ ДЛЯ ПЛАТЕЖЕЙ ==========
 def add_payment(invoice_id: str, user_id: int, amount: int):
     try:
@@ -345,6 +368,19 @@ def get_payment(invoice_id: str):
         return dict(row) if row else None
     except:
         return None
+
+def get_user_payments(user_id: int, limit: int = 10):
+    """Получение платежей пользователя"""
+    try:
+        cursor.execute("""
+            SELECT * FROM payments 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC 
+            LIMIT ?
+        """, (user_id, limit))
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
 
 def get_payments_stats():
     try:
@@ -415,6 +451,15 @@ def get_promo_code(code: str):
         return dict(row) if row else None
     except:
         return None
+
+def use_promo_code(code: str, user_id: int):
+    try:
+        cursor.execute("UPDATE promocodes SET activations_left = activations_left - 1 WHERE code = ?", (code,))
+        cursor.execute("INSERT INTO used_promocodes (user_id, code) VALUES (?, ?)", (user_id, code))
+        conn.commit()
+        return True
+    except:
+        return False
 
 def check_promo_used(user_id: int, code: str) -> bool:
     try:
@@ -677,29 +722,11 @@ def grant_private_access(user_id: int):
     except:
         return False
 
-# Инициализация
+# ========== ИНИЦИАЛИЗАЦИЯ ==========
+
 init_db()
 init_tasks_tables()
 
-# Добавляем колонку is_private если её нет
-try:
-    cursor.execute("SELECT is_private FROM videos LIMIT 1")
-except:
-    try:
-        cursor.execute("ALTER TABLE videos ADD COLUMN is_private INTEGER DEFAULT 0")
-        print("✅ Добавлена колонка is_private")
-    except:
-        pass
-
-# Создаём таблицу private_access
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS private_access (
-    user_id INTEGER PRIMARY KEY,
-    purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-""")
-
-conn.commit()
 # Создаём таблицу private_access
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS private_access (
