@@ -117,7 +117,8 @@ captcha_attempts = {}
 banned_users = {}
 broadcast_mode = set()
 custom_pay_wait = set()
-waiting_for_restore_file = False  # Для восстановления базы
+waiting_for_restore_file = False
+restore_user_id = None
 
 # ================= КОМАНДА ДЛЯ НАЗНАЧЕНИЯ ГЛАВНОГО АДМИНА =================
 @router.message(Command("set_main_admin"))
@@ -3090,39 +3091,48 @@ async def restore_db_command(message: Message):
         await message.answer("❌ Только для главного админа")
         return
     
-    global waiting_for_restore_file
+    global waiting_for_restore_file, restore_user_id
     waiting_for_restore_file = True
+    restore_user_id = user_id
     
     await message.answer(
         "📤 <b>Восстановление базы данных</b>\n\n"
         "Отправьте JSON файл с бэкапом.\n"
         "⚠️ <b>ВНИМАНИЕ:</b> Текущая база данных будет полностью заменена!\n\n"
-        "Файл должен быть создан командой /backup_db"
+        "Файл должен быть создан командой /backup_db\n\n"
+        "⏳ У вас есть 120 секунд на отправку файла"
     )
     
-    # Автоматический выход из режима через 60 секунд
+    # Автоматический выход из режима через 120 секунд
     async def exit_restore_mode():
-        await asyncio.sleep(60)
-        global waiting_for_restore_file
-        waiting_for_restore_file = False
+        await asyncio.sleep(120)
+        global waiting_for_restore_file, restore_user_id
+        if waiting_for_restore_file:
+            waiting_for_restore_file = False
+            restore_user_id = None
+            try:
+                await message.answer("⏰ Время вышло. Режим восстановления отключен.")
+            except:
+                pass
     
     asyncio.create_task(exit_restore_mode())
 
 @router.message(F.document)
 async def handle_restore_file(message: Message, bot: Bot):
     """Обработчик загрузки файла для восстановления базы данных"""
-    global waiting_for_restore_file
+    global waiting_for_restore_file, restore_user_id
     
     user_id = message.from_user.id
     
-    # Проверяем, ожидаем ли мы файл и является ли пользователь главным админом
-    if not waiting_for_restore_file or not is_main_admin(user_id):
+    # Проверяем, ожидаем ли мы файл и является ли пользователь тем, кто запустил восстановление
+    if not waiting_for_restore_file or user_id != restore_user_id:
         return
     
     # Проверяем, что это JSON файл
     if not message.document.file_name or not message.document.file_name.endswith('.json'):
         await message.answer("❌ Неверный формат файла. Ожидается .json файл")
         waiting_for_restore_file = False
+        restore_user_id = None
         return
     
     status_msg = await message.answer("🔄 <b>Восстанавливаю базу данных...</b>\n\n⏳ Пожалуйста, подождите...")
@@ -3139,20 +3149,25 @@ async def handle_restore_file(message: Message, bot: Bot):
         
         # Проверяем структуру
         required_tables = ['users', 'videos', 'payments', 'promocodes', 'user_videos']
+        missing_tables = []
         for table in required_tables:
             if table not in backup_data:
-                await status_msg.edit_text(
-                    f"❌ <b>Ошибка структуры файла</b>\n\n"
-                    f"Отсутствует таблица: {table}\n"
-                    f"Файл должен быть создан командой /backup_db"
-                )
-                waiting_for_restore_file = False
-                return
+                missing_tables.append(table)
+        
+        if missing_tables:
+            await status_msg.edit_text(
+                f"❌ <b>Ошибка структуры файла</b>\n\n"
+                f"Отсутствуют таблицы: {', '.join(missing_tables)}\n"
+                f"Файл должен быть создан командой /backup_db"
+            )
+            waiting_for_restore_file = False
+            restore_user_id = None
+            return
         
         # Начинаем транзакцию
         cursor.execute("BEGIN TRANSACTION")
         
-        # Список таблиц для восстановления
+        # Список таблиц для восстановления (в правильном порядке)
         tables_to_restore = ['users', 'videos', 'payments', 'promocodes', 'used_promocodes', 'user_videos']
         
         restored_counts = {}
@@ -3169,6 +3184,7 @@ async def handle_restore_file(message: Message, bot: Bot):
                 # Восстанавливаем данные если есть
                 if rows and columns:
                     placeholders = ','.join(['?'] * len(columns))
+                    inserted = 0
                     for row in rows:
                         values = [row.get(col) for col in columns]
                         try:
@@ -3176,21 +3192,25 @@ async def handle_restore_file(message: Message, bot: Bot):
                                 f"INSERT INTO {table_name} ({','.join(columns)}) VALUES ({placeholders})", 
                                 values
                             )
+                            inserted += 1
                         except Exception as e:
-                            logger.error(f"Ошибка вставки в {table_name}: {e}")
+                            logger.error(f"Ошибка вставки в {table_name}: {e}, row: {row}")
                             # Пропускаем проблемную строку
                             continue
                     
-                    restored_counts[table_name] = len(rows)
+                    restored_counts[table_name] = inserted
                     await status_msg.edit_text(
                         f"🔄 <b>Восстановление базы данных...</b>\n\n"
-                        f"✅ {table_name}: {len(rows)} записей"
+                        f"✅ {table_name}: {inserted} из {len(rows)} записей"
                     )
                 else:
                     restored_counts[table_name] = 0
         
         # Сбрасываем автоинкремент для таблиц
-        cursor.execute("DELETE FROM sqlite_sequence")
+        try:
+            cursor.execute("DELETE FROM sqlite_sequence")
+        except:
+            pass
         
         # Фиксируем транзакцию
         conn.commit()
@@ -3211,16 +3231,19 @@ async def handle_restore_file(message: Message, bot: Bot):
             f"├ 🎥 Видео: {videos_count}\n"
             f"├ 💳 Платежей: {payments_count}\n"
             f"└ 📊 Просмотры сохранены\n\n"
-            f"📁 Файл: {message.document.file_name}"
+            f"📁 Файл: {message.document.file_name}\n"
+            f"📦 Размер: {message.document.file_size // 1024} KB"
         )
         
         await status_msg.edit_text(report)
         
     except json.JSONDecodeError as e:
-        await status_msg.edit_text(f"❌ <b>Ошибка парсинга JSON</b>\n\n{e}")
+        await status_msg.edit_text(f"❌ <b>Ошибка парсинга JSON</b>\n\n{str(e)}")
     except Exception as e:
         conn.rollback()
         logger.error(f"Ошибка восстановления: {e}")
+        traceback.print_exc()
         await status_msg.edit_text(f"❌ <b>Ошибка при восстановлении</b>\n\n{str(e)}")
     finally:
         waiting_for_restore_file = False
+        restore_user_id = None
