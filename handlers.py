@@ -80,8 +80,6 @@ SUGGESTION_REWARD = 3
 suggested_videos = {}
 # Множество пользователей в режиме предложки
 suggestion_mode = set()
-# Хранилище для создания заданий
-admin_task_data = {}
 
 # ================= FSM СОСТОЯНИЯ =================
 class PromoStates(StatesGroup):
@@ -125,6 +123,9 @@ class OpStates(StatesGroup):
     waiting_for_channel_link = State()
 
 class TaskStates(StatesGroup):
+    waiting_for_task_proof = State()
+
+class CreateTaskStates(StatesGroup):
     waiting_for_title = State()
     waiting_for_description = State()
     waiting_for_reward = State()
@@ -134,7 +135,6 @@ class TaskStates(StatesGroup):
     waiting_for_photo = State()
     waiting_for_video = State()
     waiting_for_max_completions = State()
-    waiting_for_task_proof = State()
 
 class AdminTaskStates(StatesGroup):
     waiting_for_task_id_to_delete = State()
@@ -145,6 +145,7 @@ captcha_attempts = {}
 banned_users = {}
 broadcast_mode = set()
 custom_pay_wait = set()
+create_task_data = {}  # Временное хранилище для создания заданий
 
 # ================= КОМАНДА ДЛЯ НАЗНАЧЕНИЯ ГЛАВНОГО АДМИНА =================
 @router.message(Command("set_main_admin"))
@@ -1925,36 +1926,36 @@ async def admin_task_add_start(call: CallbackQuery, state: FSMContext):
         return
     
     await safe_answer(call)
-    await state.set_state(TaskStates.waiting_for_title)
+    await state.set_state(CreateTaskStates.waiting_for_title)
     await call.message.answer("📝 Введите название задания:")
 
-@router.message(TaskStates.waiting_for_title)
+@router.message(CreateTaskStates.waiting_for_title)
 async def admin_task_title(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
     
-    admin_task_data[message.from_user.id] = {"title": message.text}
-    await state.set_state(TaskStates.waiting_for_description)
+    await state.update_data(title=message.text)
+    await state.set_state(CreateTaskStates.waiting_for_description)
     await message.answer("📄 Введите описание задания:")
 
-@router.message(TaskStates.waiting_for_description)
+@router.message(CreateTaskStates.waiting_for_description)
 async def admin_task_description(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
     
-    admin_task_data[message.from_user.id]["description"] = message.text
-    await state.set_state(TaskStates.waiting_for_reward)
+    await state.update_data(description=message.text)
+    await state.set_state(CreateTaskStates.waiting_for_reward)
     await message.answer("🎁 Введите награду (в 🍬):")
 
-@router.message(TaskStates.waiting_for_reward)
+@router.message(CreateTaskStates.waiting_for_reward)
 async def admin_task_reward(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
     
     try:
         reward = int(message.text)
-        admin_task_data[message.from_user.id]["reward"] = reward
-        await state.set_state(TaskStates.waiting_for_type)
+        await state.update_data(reward=reward)
+        await state.set_state(CreateTaskStates.waiting_for_type)
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔗 Ссылка", callback_data="task_type_link")],
@@ -1970,83 +1971,103 @@ async def admin_task_reward(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Введите число")
 
-@router.callback_query(F.data.startswith("task_type_"))
-async def admin_task_type(call: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "task_type_link")
+async def task_type_link(call: CallbackQuery, state: FSMContext):
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
-    task_type = call.data.replace("task_type_", "")
-    admin_task_data[call.from_user.id]["task_type"] = task_type
+    await state.update_data(task_type="link")
     await safe_answer(call)
-    
-    # Устанавливаем состояние в зависимости от типа
-    if task_type == "link":
-        await state.set_state(TaskStates.waiting_for_link)
-        await call.message.answer("🔗 Введите ссылку для задания:")
-    elif task_type == "text":
-        await state.set_state(TaskStates.waiting_for_text)
-        await call.message.answer("📝 Введите текст задания (что нужно сделать):")
-    elif task_type == "photo":
-        await state.set_state(TaskStates.waiting_for_photo)
-        await call.message.answer("📸 Отправьте фото-задание (что нужно сделать):")
-    elif task_type == "video":
-        await state.set_state(TaskStates.waiting_for_video)
-        await call.message.answer("🎬 Отправьте видео-задание (что нужно сделать):")
+    await state.set_state(CreateTaskStates.waiting_for_link)
+    await call.message.answer("🔗 Введите ссылку для задания:")
 
-@router.message(TaskStates.waiting_for_link, F.text)
+@router.callback_query(F.data == "task_type_text")
+async def task_type_text(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.update_data(task_type="text")
+    await safe_answer(call)
+    await state.set_state(CreateTaskStates.waiting_for_text)
+    await call.message.answer("📝 Введите текст задания (что нужно сделать):")
+
+@router.callback_query(F.data == "task_type_photo")
+async def task_type_photo(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.update_data(task_type="photo")
+    await safe_answer(call)
+    await state.set_state(CreateTaskStates.waiting_for_photo)
+    await call.message.answer("📸 Отправьте фото-задание (что нужно сделать):")
+
+@router.callback_query(F.data == "task_type_video")
+async def task_type_video(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.update_data(task_type="video")
+    await safe_answer(call)
+    await state.set_state(CreateTaskStates.waiting_for_video)
+    await call.message.answer("🎬 Отправьте видео-задание (что нужно сделать):")
+
+@router.message(CreateTaskStates.waiting_for_link, F.text)
 async def admin_task_link(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
     
-    admin_task_data[message.from_user.id]["task_data"] = message.text
-    await state.set_state(TaskStates.waiting_for_max_completions)
+    await state.update_data(task_data=message.text.strip())
+    await state.set_state(CreateTaskStates.waiting_for_max_completions)
     await message.answer("📊 Введите максимальное количество выполнений (1-999):")
 
-@router.message(TaskStates.waiting_for_text, F.text)
+@router.message(CreateTaskStates.waiting_for_text, F.text)
 async def admin_task_text(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
     
-    admin_task_data[message.from_user.id]["task_data"] = message.text
-    await state.set_state(TaskStates.waiting_for_max_completions)
+    await state.update_data(task_data=message.text.strip())
+    await state.set_state(CreateTaskStates.waiting_for_max_completions)
     await message.answer("📊 Введите максимальное количество выполнений (1-999):")
 
-@router.message(TaskStates.waiting_for_photo, F.photo)
+@router.message(CreateTaskStates.waiting_for_photo, F.photo)
 async def admin_task_photo(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
     
     photo = message.photo[-1]
-    admin_task_data[message.from_user.id]["task_data"] = f"photo_{photo.file_id}"
-    admin_task_data[message.from_user.id]["task_caption"] = message.caption or ""
-    await state.set_state(TaskStates.waiting_for_max_completions)
+    await state.update_data(task_data=f"photo_{photo.file_id}")
+    await state.update_data(task_caption=message.caption or "")
+    await state.set_state(CreateTaskStates.waiting_for_max_completions)
     await message.answer("📊 Введите максимальное количество выполнений (1-999):")
 
-@router.message(TaskStates.waiting_for_video, F.video)
+@router.message(CreateTaskStates.waiting_for_video, F.video)
 async def admin_task_video(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
     
     video = message.video
-    admin_task_data[message.from_user.id]["task_data"] = f"video_{video.file_id}"
-    admin_task_data[message.from_user.id]["task_caption"] = message.caption or ""
-    await state.set_state(TaskStates.waiting_for_max_completions)
+    await state.update_data(task_data=f"video_{video.file_id}")
+    await state.update_data(task_caption=message.caption or "")
+    await state.set_state(CreateTaskStates.waiting_for_max_completions)
     await message.answer("📊 Введите максимальное количество выполнений (1-999):")
 
-@router.message(TaskStates.waiting_for_max_completions)
+@router.message(CreateTaskStates.waiting_for_max_completions)
 async def admin_task_max_completions(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
     
     try:
-        max_completions = int(message.text)
+        max_completions = int(message.text.strip())
         if max_completions < 1:
             max_completions = 1
         if max_completions > 999:
             max_completions = 999
         
-        data = admin_task_data.get(message.from_user.id, {})
+        data = await state.get_data()
         
         task_id = add_task(
             title=data.get("title", "Без названия"),
@@ -2065,29 +2086,30 @@ async def admin_task_max_completions(message: Message, state: FSMContext):
                 f"📊 Макс. выполнений: {max_completions}\n"
                 f"🆔 ID: {task_id}"
             )
+            
+            # Отправляем превью для фото/видео заданий
+            if data.get("task_type") in ["photo", "video"]:
+                task_data = data.get("task_data", "")
+                caption = data.get("task_caption", "")
+                if task_data.startswith("photo_"):
+                    file_id = task_data.replace("photo_", "")
+                    await message.answer_photo(
+                        photo=file_id,
+                        caption=f"📸 Превью задания:\n{caption}"
+                    )
+                elif task_data.startswith("video_"):
+                    file_id = task_data.replace("video_", "")
+                    await message.answer_video(
+                        video=file_id,
+                        caption=f"🎬 Превью задания:\n{caption}"
+                    )
         else:
             await message.answer("❌ Ошибка при создании задания")
         
-        if data.get("task_type") in ["photo", "video"] and data.get("task_data", "").startswith(("photo_", "video_")):
-            file_id = data["task_data"].split("_", 1)[1]
-            caption = data.get("task_caption", "")
-            
-            if data["task_type"] == "photo":
-                await message.answer_photo(
-                    photo=file_id,
-                    caption=f"📸 Превью задания:\n{caption}"
-                )
-            else:
-                await message.answer_video(
-                    video=file_id,
-                    caption=f"🎬 Превью задания:\n{caption}"
-                )
-        
-        admin_task_data.pop(message.from_user.id, None)
         await state.clear()
         
     except ValueError:
-        await message.answer("❌ Введите число")
+        await message.answer("❌ Введите корректное число")
 
 @router.callback_query(F.data == "admin_task_remove")
 async def admin_task_remove_start(call: CallbackQuery, state: FSMContext):
@@ -2116,7 +2138,7 @@ async def admin_task_remove(message: Message, state: FSMContext):
         return
     
     try:
-        task_id = int(message.text)
+        task_id = int(message.text.strip())
         task = get_task(task_id)
         
         if not task:
@@ -3434,6 +3456,7 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     try:
+        # Отправляем видео новым сообщением
         await call.message.answer_video(
             video["file_id"],
             caption=f"🎥 <b>Видео</b>",
