@@ -7,8 +7,10 @@ import string
 import os
 import requests
 import traceback
+import json
 from datetime import datetime, timedelta
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from io import BytesIO
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, FSInputFile
@@ -26,6 +28,8 @@ from config import (
     REF_PERCENT,
     CHANNEL_ID,
     SUBSCRIBE_BONUS,
+    ANON_CHAT_LINK,
+    PRIVATE_PRICE_USD,
 )
 
 from db import (
@@ -39,11 +43,18 @@ from db import (
     update_user_balance, get_user, get_user_payments, get_referrals_count,
     get_top_referrers, add_payment, mark_payment_paid, get_payment,
     add_promo_code, get_promo_code, use_promo_code, check_promo_used,
-    update_last_bonus, add_video, mark_video_watched, get_user_watched_videos
+    update_last_bonus, add_video, mark_video_watched, get_user_watched_videos,
+    get_pending_referrer_bonus, clear_pending_referrer_bonus,
+    get_active_tasks, get_task, add_task, remove_task,
+    get_user_task_status, submit_task, approve_task, reject_task,
+    get_pending_tasks, get_user_completed_tasks, can_complete_task,
+    has_private_access, add_private_purchase, mark_private_paid, get_private_purchase
 )
 from keyboards import (
     fake_menu, main_menu, video_menu, shop_menu, get_admin_menu, 
-    confirm_menu, subscribe_menu, op_menu, admin_manage_menu
+    confirm_menu, subscribe_menu, op_menu, admin_manage_menu,
+    get_tasks_menu, get_task_action_menu, admin_tasks_menu,
+    private_pay_menu, get_private_crypto_menu
 )
 from payments import (
     create_invoice, 
@@ -69,6 +80,8 @@ SUGGESTION_REWARD = 3
 suggested_videos = {}
 # Множество пользователей в режиме предложки
 suggestion_mode = set()
+# Хранилище для создания заданий
+admin_task_data = {}
 
 # ================= FSM СОСТОЯНИЯ =================
 class PromoStates(StatesGroup):
@@ -111,14 +124,27 @@ class OpStates(StatesGroup):
     waiting_for_channel_name = State()
     waiting_for_channel_link = State()
 
+class TaskStates(StatesGroup):
+    waiting_for_title = State()
+    waiting_for_description = State()
+    waiting_for_reward = State()
+    waiting_for_type = State()
+    waiting_for_link = State()
+    waiting_for_text = State()
+    waiting_for_photo = State()
+    waiting_for_video = State()
+    waiting_for_max_completions = State()
+    waiting_for_task_proof = State()
+
+class AdminTaskStates(StatesGroup):
+    waiting_for_task_id_to_delete = State()
+
 # ================= ХРАНИЛИЩЕ ДАННЫХ =================
 captcha_data = {}
 captcha_attempts = {}
 banned_users = {}
 broadcast_mode = set()
 custom_pay_wait = set()
-waiting_for_restore_file = False
-restore_user_id = None
 
 # ================= КОМАНДА ДЛЯ НАЗНАЧЕНИЯ ГЛАВНОГО АДМИНА =================
 @router.message(Command("set_main_admin"))
@@ -194,23 +220,17 @@ def check_admin_access(user_id: int, require_main: bool = False, require_manage:
     Проверка прав доступа админа
     Возвращает (has_access, is_admin, is_main, can_manage)
     """
-    # Проверяем, является ли пользователь главным админом
     if is_main_admin(user_id):
         return True, True, True, True
     
-    # Проверяем, является ли пользователь обычным админом
     if is_admin(user_id):
         can_manage = can_manage_admins(user_id)
-        # Если требуются права главного, но пользователь не главный
         if require_main:
             return False, True, False, can_manage
-        # Если требуются права управления админами
         if require_manage and not can_manage:
             return False, True, False, can_manage
-        # Все проверки пройдены - даем доступ
         return True, True, False, can_manage
     
-    # Не админ
     return False, False, False, False
 
 # ================= БЕЗОПАСНЫЕ ФУНКЦИИ ДЛЯ CALLBACK =================
@@ -227,7 +247,6 @@ async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = 
 # ================= ФУНКЦИЯ ДЛЯ ПРОВЕРКИ ДОСТУПА =================
 async def check_access(bot, user_id: int, state: FSMContext, message: Message = None, call: CallbackQuery = None) -> bool:
     """Проверяет доступ пользователя и показывает меню подписки если нужно"""
-    # Админы всегда имеют доступ
     if check_admin_access(user_id)[0]:
         return True
     
@@ -259,35 +278,28 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
 
 # ================= ГЕНЕРАЦИЯ КАПЧИ =================
 def generate_captcha_image() -> tuple:
-    """Генерация изображения капчи - БОЛЬШИЕ ВИДИМЫЕ БУКВЫ"""
+    """Генерация изображения капчи"""
     length = 4
     chars = string.ascii_uppercase + string.digits
-    # Убираем похожие символы
     exclude = ['O', '0', 'I', '1', 'S', '5', 'Z', '2']
     for c in exclude:
         chars = chars.replace(c, '')
     code = ''.join(random.choices(chars, k=length))
     
-    # РАЗМЕР
     width, height = 800, 300
     
-    # Создаем изображение с белым фоном
     image = Image.new('RGB', (width, height), 'white')
     draw = ImageDraw.Draw(image)
     
-    # Заливка фона
     draw.rectangle([(0, 0), (width, height)], fill=(255, 255, 255))
     
-    # Добавляем легкие серые линии для защиты
     for i in range(0, width, 50):
         draw.line([(i, 0), (i, height)], fill=(230, 230, 230), width=1)
     for i in range(0, height, 50):
         draw.line([(0, i), (width, i)], fill=(230, 230, 230), width=1)
     
-    # Пытаемся загрузить жирный шрифт
     font = None
     try:
-        # Пробуем разные шрифты
         font_paths = [
             "C:\\Windows\\Fonts\\Arial.ttf",
             "C:\\Windows\\Fonts\\Impact.ttf",
@@ -308,7 +320,6 @@ def generate_captcha_image() -> tuple:
         font = ImageFont.load_default()
         print("⚠️ Используется встроенный шрифт")
     
-    # Рисуем буквы
     colors = [(0, 0, 0), (0, 0, 150), (150, 0, 0), (0, 150, 0)]
     positions = [(120, 100), (270, 100), (420, 100), (570, 100)]
     
@@ -327,7 +338,6 @@ def generate_captcha_image() -> tuple:
                 for dy in range(-3, 4):
                     draw.text((x + dx, y + dy), char, fill=color, font=font)
     
-    # Добавляем немного шума
     for _ in range(100):
         x = random.randint(0, width)
         y = random.randint(0, height)
@@ -351,14 +361,11 @@ async def handle_video(message: Message, bot: Bot):
     """Обработка видео - разделяем админов и обычных пользователей"""
     user_id = message.from_user.id
     
-    # Проверяем, админ ли это
     has_access, _, _, _ = check_admin_access(user_id)
     
     if has_access:
-        # Это админ - загружаем видео напрямую в базу
         await upload_video(message)
     else:
-        # Это обычный пользователь - проверяем, в режиме ли предложки
         await handle_suggestion_video(message, bot)
 
 async def upload_video(message: Message):
@@ -371,8 +378,6 @@ async def upload_video(message: Message):
     file_name = message.video.file_name if message.video.file_name else "без названия"
     file_size = message.video.file_size
     duration = message.video.duration
-    
-    logger.info(f"📹 Детали видео - ID: {file_id}, Name: {file_name}, Size: {file_size}, Duration: {duration}")
     
     try:
         cursor.execute("SELECT id FROM videos WHERE file_id = ?", (file_id,))
@@ -405,7 +410,6 @@ async def upload_video(message: Message):
             f"📊 <b>Размер:</b> {file_size // 1024} KB\n"
             f"🎥 <b>Всего видео в базе:</b> {total_videos}"
         )
-        logger.info(f"✅ Видео {video_id} добавлено в базу: {file_id}")
         
     except Exception as e:
         logger.error(f"❌ Ошибка при добавлении видео: {e}")
@@ -414,15 +418,13 @@ async def upload_video(message: Message):
 # ================= ПРЕДЛОЖКА =================
 @router.callback_query(F.data == "suggestion")
 async def suggestion_start(call: CallbackQuery, state: FSMContext):
-    """Начало предложки - включаем режим приема видео"""
+    """Начало предложки"""
     user_id = call.from_user.id
     
     if not await check_access(call.bot, user_id, state, call=call):
         return
     
     await safe_answer(call)
-    
-    # Добавляем пользователя в режим предложки
     suggestion_mode.add(user_id)
     
     await call.message.answer(
@@ -430,12 +432,11 @@ async def suggestion_start(call: CallbackQuery, state: FSMContext):
         "📹 Отправьте видео, которое хотите предложить для добавления в бота.\n\n"
         "✅ Если видео одобрят, вы получите +3 🍬\n"
         "❌ Если отклонят, вы получите уведомление\n\n"
-        "⏳ Режим предложки активен 5 минут или до отправки видео"
+        "⏳ Режим предложки активен 5 минут"
     )
     
-    # Запускаем таймер для автоматического выхода из режима
     async def exit_suggestion_mode():
-        await asyncio.sleep(300)  # 5 минут
+        await asyncio.sleep(300)
         if user_id in suggestion_mode:
             suggestion_mode.discard(user_id)
             try:
@@ -449,12 +450,9 @@ async def handle_suggestion_video(message: Message, bot: Bot):
     """Обработка видео от обычного пользователя в режиме предложки"""
     user_id = message.from_user.id
     
-    # Проверяем, в режиме ли предложки пользователь
     if user_id not in suggestion_mode:
-        # Если не в режиме предложки, игнорируем
         return
     
-    # Убираем пользователя из режима предложки
     suggestion_mode.discard(user_id)
     
     username = message.from_user.username or "нет username"
@@ -463,35 +461,27 @@ async def handle_suggestion_video(message: Message, bot: Bot):
     duration = message.video.duration
     file_size = message.video.file_size
     
-    logger.info(f"📹 ПРЕДЛОЖКА: Видео от пользователя {user_id} (@{username})")
-    
-    # Проверяем размер видео (Telegram ограничение 50MB)
-    if file_size > 50 * 1024 * 1024:  # 50MB в байтах
+    if file_size > 50 * 1024 * 1024:
         await message.answer("❌ Видео слишком большое. Максимальный размер: 50MB")
         return
     
-    # Генерируем короткий уникальный ID для видео (последние 8 символов от file_id)
     short_id = file_id[-8:]
     
-    # Сохраняем видео во временное хранилище с коротким ключом
     suggested_videos[short_id] = {
         "user_id": user_id,
         "username": username,
         "file_name": file_name,
         "duration": duration,
         "message_id": message.message_id,
-        "file_id": file_id  # сохраняем оригинальный file_id
+        "file_id": file_id
     }
     
-    # Получаем информацию о пользователе из БД
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     user = cursor.fetchone()
     balance = user["balance"] if user else 0
     
-    # Получаем список всех админов
     admins = get_all_admins()
     
-    # Создаем клавиатуру для админов с КОРОТКИМИ callback_data
     admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Одобрить", callback_data=f"app_{short_id}"),
@@ -499,7 +489,6 @@ async def handle_suggestion_video(message: Message, bot: Bot):
         ]
     ])
     
-    # Отправляем видео ВСЕМ админам
     sent_count = 0
     for admin in admins:
         admin_id = admin["user_id"]
@@ -523,13 +512,9 @@ async def handle_suggestion_video(message: Message, bot: Bot):
             logger.error(f"Не удалось отправить видео админу {admin_id}: {e}")
     
     if sent_count > 0:
-        await message.answer(
-            "✅ <b>Видео отправлено на модерацию!</b>\n\n"
-            "Администраторы проверят его и сообщат о решении."
-        )
+        await message.answer("✅ <b>Видео отправлено на модерацию!</b>")
     else:
-        await message.answer("❌ Ошибка при отправке видео. Попробуйте позже.")
-        # Удаляем из хранилища в случае ошибки
+        await message.answer("❌ Ошибка при отправке видео.")
         if short_id in suggested_videos:
             del suggested_videos[short_id]
 
@@ -544,51 +529,38 @@ async def suggest_approve(call: CallbackQuery, state: FSMContext, bot: Bot):
     video_data = suggested_videos.get(short_id)
     
     if not video_data:
-        await safe_answer(call, "❌ Видео не найдено в хранилище", show_alert=True)
+        await safe_answer(call, "❌ Видео не найдено", show_alert=True)
         await call.message.delete()
         return
     
-    file_id = video_data["file_id"]  # берем оригинальный file_id из хранилища
+    file_id = video_data["file_id"]
     user_id = video_data["user_id"]
     
-    # Добавляем видео в базу
     try:
         cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUGGESTION_REWARD, user_id))
         
-        # Начисляем награду пользователю
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", 
-                      (SUGGESTION_REWARD, user_id))
-        
-        # Получаем новый баланс для сообщения
         cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
         new_balance = cursor.fetchone()["balance"]
-        
         conn.commit()
         
-        logger.info(f"✅ Видео одобрено: {file_id}, пользователь {user_id} получил +{SUGGESTION_REWARD} 🍬")
-        
-        # Отправляем уведомление пользователю
         try:
             await bot.send_message(
                 user_id,
                 f"✅ <b>Видео одобрено!</b>\n\n"
-                f"Ваше предложенное видео было одобрено администратором.\n"
                 f"🎁 Начислено +{SUGGESTION_REWARD} 🍬\n"
                 f"💰 Текущий баланс: {new_balance} 🍬"
             )
-        except Exception as e:
-            logger.error(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
+        except:
+            pass
         
-        await safe_answer(call, f"✅ Видео одобрено! Пользователю начислено +{SUGGESTION_REWARD} 🍬")
-        
-        # Удаляем сообщение у админа
+        await safe_answer(call, f"✅ Видео одобрено! +{SUGGESTION_REWARD} 🍬")
         await call.message.delete()
         
     except Exception as e:
-        logger.error(f"Ошибка при одобрении видео: {e}")
-        await safe_answer(call, "❌ Ошибка при одобрении видео", show_alert=True)
+        logger.error(f"Ошибка при одобрении: {e}")
+        await safe_answer(call, "❌ Ошибка", show_alert=True)
     
-    # Удаляем из временного хранилища
     if short_id in suggested_videos:
         del suggested_videos[short_id]
 
@@ -603,31 +575,26 @@ async def suggest_reject(call: CallbackQuery, state: FSMContext, bot: Bot):
     video_data = suggested_videos.get(short_id)
     
     if not video_data:
-        await safe_answer(call, "❌ Видео не найдено в хранилище", show_alert=True)
+        await safe_answer(call, "❌ Видео не найдено", show_alert=True)
         await call.message.delete()
         return
     
     user_id = video_data["user_id"]
     
-    # Отправляем уведомление пользователю
     try:
         await bot.send_message(
             user_id,
             f"❌ <b>Видео отклонено</b>\n\n"
-            f"Ваше предложенное видео не прошло модерацию.\n"
             f"Попробуйте предложить другое видео."
         )
         
-        await safe_answer(call, "❌ Видео отклонено, пользователь уведомлен")
-        
-        # Удаляем сообщение у админа
+        await safe_answer(call, "❌ Видео отклонено")
         await call.message.delete()
         
     except Exception as e:
-        logger.error(f"Ошибка при отклонении видео: {e}")
-        await safe_answer(call, "❌ Ошибка при отклонении видео", show_alert=True)
+        logger.error(f"Ошибка при отклонении: {e}")
+        await safe_answer(call, "❌ Ошибка", show_alert=True)
     
-    # Удаляем из временного хранилища
     if short_id in suggested_videos:
         del suggested_videos[short_id]
 
@@ -647,11 +614,7 @@ async def admin_upload_url(call: CallbackQuery, state: FSMContext):
     await call.message.answer(
         "🔗 <b>Загрузка видео по ссылке</b>\n\n"
         "Отправьте ссылку на видео.\n\n"
-        "Поддерживаются:\n"
-        "• Прямые ссылки на .mp4\n"
-        "• Google Drive\n"
-        "• Dropbox\n"
-        "• Любые другие ссылки"
+        "Поддерживаются прямые ссылки на .mp4, Google Drive, Dropbox"
     )
 
 @router.message(AdminStates.waiting_for_cloud_url)
@@ -724,8 +687,7 @@ async def process_video_url(message: Message, state: FSMContext, bot: Bot):
             f"✅ <b>ВИДЕО УСПЕШНО ДОБАВЛЕНО!</b>\n\n"
             f"📹 <b>File ID:</b> <code>{file_id}</code>\n"
             f"📊 <b>Размер:</b> {file_size // (1024 * 1024)} MB\n"
-            f"🎥 <b>Всего видео в базе:</b> {total}\n\n"
-            f"💡 Теперь можно смотреть!"
+            f"🎥 <b>Всего видео в базе:</b> {total}"
         )
         
     except Exception as e:
@@ -786,9 +748,8 @@ async def start(message: Message, state: FSMContext, bot: Bot):
     username = message.from_user.username or "пользователь"
     first_name = message.from_user.first_name or "Пользователь"
     
-    logger.info(f"🟢 START command from user {user_id} (@{username})")
+    logger.info(f"🟢 START from {user_id} (@{username})")
     
-    # Проверка на бан
     banned, ban_until = is_banned(user_id)
     if banned:
         remaining = ban_until - datetime.now()
@@ -796,12 +757,10 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         seconds = remaining.seconds % 60
         await message.answer(
             f"🚫 <b>ДОСТУП ЗАБЛОКИРОВАН</b>\n\n"
-            f"Причина: слишком много неверных попыток ввода капчи\n"
             f"⏳ Осталось: {minutes} мин {seconds} сек"
         )
         return
     
-    # Проверка на админа
     has_access, _, is_main, can_manage = check_admin_access(user_id)
     
     if has_access:
@@ -822,11 +781,9 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         await message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
         return
     
-    # Получаем информацию о пользователе
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = cursor.fetchone()
     
-    # Проверка на реферальный код
     args = message.text.split()
     referrer_id = None
     has_ref_in_link = False
@@ -839,19 +796,16 @@ async def start(message: Message, state: FSMContext, bot: Bot):
             referrer_id = referrer["user_id"]
             if referrer_id != user_id:
                 has_ref_in_link = True
-                logger.info(f"🔗 Реферальная ссылка обнаружена! Код: {ref_code}, Реферер: {referrer_id}")
+                logger.info(f"🔗 Реферальная ссылка! Код: {ref_code}, Реферер: {referrer_id}")
     
-    # ========== ЕСЛИ В ССЫЛКЕ ЕСТЬ РЕФ КОД ==========
     if has_ref_in_link:
         logger.info(f"✅ Пользователь {user_id} перешел по реферальной ссылке")
         
         if user:
-            # Если пользователь уже существует, проверяем есть ли у него реферер
             if user["referrer"] is None:
                 cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
                 conn.commit()
                 
-                # НАЧИСЛЯЕМ БОНУС СРАЗУ (без проверки подписки)
                 cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
                 conn.commit()
                 
@@ -865,10 +819,9 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 except:
                     pass
             else:
-                logger.info(f"🔄 Пользователь {user_id} уже имеет реферера. Бонус НЕ начислен.")
+                logger.info(f"🔄 Пользователь уже имеет реферера")
         else:
-            # Новый пользователь
-            logger.info(f"🆕 Создаем НОВОГО пользователя {user_id} с реферером {referrer_id}")
+            logger.info(f"🆕 Создаем нового пользователя {user_id} с реферером {referrer_id}")
             new_ref_code = generate_ref_code()
             cursor.execute("""
                 INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin)
@@ -876,7 +829,6 @@ async def start(message: Message, state: FSMContext, bot: Bot):
             """, (user_id, username, referrer_id, new_ref_code))
             conn.commit()
             
-            # НАЧИСЛЯЕМ БОНУС СРАЗУ (без проверки подписки)
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
             conn.commit()
             
@@ -891,7 +843,6 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 pass
         
         if not is_verified(user_id):
-            logger.info(f"🔐 Пользователь {user_id} не верифицирован, отправляем капчу")
             if user_id in captcha_attempts:
                 del captcha_attempts[user_id]
             
@@ -910,7 +861,6 @@ async def start(message: Message, state: FSMContext, bot: Bot):
             return
         
         if is_verified(user_id):
-            logger.info(f"✅ Пользователь {user_id} верифицирован, проверяем подписку")
             is_subscribed = await check_subscription(bot, user_id)
             if not is_subscribed:
                 await state.set_state(SubscribeStates.waiting_for_subscribe)
@@ -922,11 +872,8 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                 )
                 return
             
-            logger.info(f"🎉 Пользователь {user_id} получает доступ к основному меню!")
             await message.answer("🎥 Видео платформа", reply_markup=main_menu)
             return
-    
-    # ========== ЕСЛИ В ССЫЛКЕ НЕТ РЕФ КОДА ==========
     
     if not user:
         new_ref_code = generate_ref_code()
@@ -938,7 +885,6 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         conn.commit()
         
         if referrer_id:
-            # НАЧИСЛЯЕМ БОНУС СРАЗУ (без проверки подписки)
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
             conn.commit()
             
@@ -1002,7 +948,7 @@ async def process_captcha(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     user_input = message.text.strip().upper()
     
-    logger.info(f"🔍 Captcha input from user {user_id}: {user_input}")
+    logger.info(f"🔍 Captcha input: {user_input}")
     
     banned, ban_until = is_banned(user_id)
     if banned:
@@ -1011,7 +957,6 @@ async def process_captcha(message: Message, state: FSMContext, bot: Bot):
         seconds = remaining.seconds % 60
         await message.answer(
             f"🚫 <b>ДОСТУП ЗАБЛОКИРОВАН</b>\n\n"
-            f"Причина: слишком много неверных попыток ввода капчи\n"
             f"⏳ Осталось: {minutes} мин {seconds} сек"
         )
         await state.clear()
@@ -1019,8 +964,6 @@ async def process_captcha(message: Message, state: FSMContext, bot: Bot):
     
     data = await state.get_data()
     correct_code = data.get('captcha_code') or captcha_data.get(user_id)
-    
-    logger.info(f"✅ Correct captcha code: {correct_code}")
     
     if not correct_code:
         await message.answer("❌ Ошибка верификации. Нажми /start заново")
@@ -1096,18 +1039,149 @@ async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not await check_access(bot, user_id, state, call=call):
         return
     
-    text = (
+    await call.message.answer(
         "🍬 <b>Магазин конфет</b>\n\n"
         "💰 Выберите количество конфет для покупки:\n\n"
-        "⭐️ Для оплаты звездами нажми на кнопку ниже\n"
-        "⭐️ 1 телеграмм звезда = 3 конфеты 🍬\n"
-        "⭐️ 15 телеграмм звезд (минималка) = 45 конфет 🍬"
-    )
-    
-    await call.message.answer(
-        text,
+        "⭐️ 1 звезда = 3 конфеты\n"
+        "⭐️ 15 звезд (минималка) = 45 конфет",
         reply_markup=shop_menu
     )
+
+@router.callback_query(F.data == "buy_private")
+async def buy_private(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Покупка приватки"""
+    user_id = call.from_user.id
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    await safe_answer(call)
+    await call.message.answer(
+        f"🔐 <b>ПОКУПКА ПРИВАТКИ</b>\n\n"
+        f"💰 Цена: {PRIVATE_PRICE_USD}$ или 499⭐️\n\n"
+        f"Выберите способ оплаты:",
+        reply_markup=private_pay_menu
+    )
+
+@router.callback_query(F.data == "private_stars")
+async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Оплата приватки звездами"""
+    user_id = call.from_user.id
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    await safe_answer(call)
+    
+    # Отправляем ссылку на анонимный чат
+    await call.message.answer(
+        f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
+        f"Для получения доступа к приватке:\n\n"
+        f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
+        f"2. Отправьте <code>499</code> звезд\n"
+        f"3. Напишите <code>Купил приватку</code>\n\n"
+        f"После проверки администратор выдаст доступ вручную.\n\n"
+        f"🔗 <b>Ссылка для оплаты:</b>\n{ANON_CHAT_LINK}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐️ Оплатить звездами", url=ANON_CHAT_LINK)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private")]
+        ])
+    )
+
+@router.callback_query(F.data == "private_crypto")
+async def private_pay_crypto(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Оплата приватки криптовалютой"""
+    user_id = call.from_user.id
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    await safe_answer(call)
+    
+    # Показываем меню выбора валюты
+    sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
+    await call.message.answer(
+        f"💳 <b>ОПЛАТА КРИПТОВАЛЮТОЙ</b>\n\n"
+        f"💰 Сумма: ${PRIVATE_PRICE_USD}\n\n"
+        f"Выберите валюту для оплаты:",
+        reply_markup=get_private_crypto_menu(sorted_assets)
+    )
+
+@router.callback_query(F.data.startswith("private_asset_"))
+async def private_pay_with_asset(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Оплата приватки выбранной криптовалютой"""
+    user_id = call.from_user.id
+    
+    await safe_answer(call)
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    asset = call.data.replace("private_asset_", "")
+    logger.info(f"💰 Оплата приватки в {asset}")
+    
+    try:
+        invoice = create_invoice(PRIVATE_PRICE_USD, asset)
+        logger.info(f"🧾 Счет создан: {invoice}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания счета: {e}")
+        await call.message.answer("❌ Ошибка при создании платежа")
+        return
+    
+    crypto_amount = invoice.get("crypto_amount", PRIVATE_PRICE_USD)
+    rate = invoice.get("rate", "")
+    
+    add_private_purchase(user_id, invoice["invoice_id"], PRIVATE_PRICE_USD)
+    
+    icon = get_asset_icon(asset)
+    
+    rate_text = f"\n💰 К оплате: {crypto_amount} {asset}"
+    if rate:
+        rate_text = f"\n1 {asset} = ${rate}\n💰 К оплате: {crypto_amount} {asset}"
+    
+    await call.message.answer(
+        f"💳 <b>Оплата приватки в {icon} {asset}</b>\n\n"
+        f"💰 Сумма: ${PRIVATE_PRICE_USD}{rate_text}\n\n"
+        f"🔄 После оплаты доступ откроется автоматически",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} {asset}", url=invoice["pay_url"])],
+            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_private_{invoice['invoice_id']}")]
+        ])
+    )
+
+@router.callback_query(F.data.startswith("check_private_"))
+async def check_private_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Проверка оплаты приватки"""
+    user_id = call.from_user.id
+    
+    await safe_answer(call)
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    invoice_id = call.data.replace("check_private_", "")
+    
+    purchase = get_private_purchase(invoice_id)
+    if not purchase:
+        await call.message.answer("❌ Платёж не найден")
+        return
+    
+    result = check_invoice(invoice_id)
+    
+    if result.get("paid", False):
+        if purchase["paid"] == 1:
+            await call.message.answer("✅ Доступ к приватке уже открыт!")
+            return
+        
+        mark_private_paid(invoice_id)
+        
+        await call.message.answer(
+            f"✅ <b>Оплата подтверждена!</b>\n\n"
+            f"🔐 Доступ к приватке открыт!\n"
+            f"🎉 Поздравляем!"
+        )
+    else:
+        await call.message.answer("⏳ Платёж ещё не оплачен")
 
 # ================= КАСТОМНАЯ ОПЛАТА =================
 @router.message(CustomPayStates.waiting_for_amount)
@@ -1116,8 +1190,6 @@ async def process_custom_pay(message: Message, state: FSMContext, bot: Bot):
     
     if not await check_access(bot, user_id, state, message=message):
         return
-    
-    logger.info(f"💰 Custom pay input from user {user_id}: {message.text}")
     
     try:
         amount = int(message.text.strip())
@@ -1128,19 +1200,16 @@ async def process_custom_pay(message: Message, state: FSMContext, bot: Bot):
             await message.answer("❌ Максимальное количество: 10000 🍬")
             return
         
-        # СКИДКА 25% - цена 0.003 USD за конфету
         usdt = round(amount * 0.003, 2)
         
         if usdt < 0.1:
             usdt = 0.1
         
-        # Показываем выгоду
         standard_price = round(amount * 0.004, 2)
         savings = round(standard_price - usdt, 2)
         
         await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=True)
         
-        # Показываем меню выбора валюты
         keyboard = []
         sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
         
@@ -1166,14 +1235,11 @@ async def process_custom_pay(message: Message, state: FSMContext, bot: Bot):
         
     except ValueError:
         await message.answer("❌ Введите корректное число")
-        return
 
 # ================= ВЫБОР ВАЛЮТЫ =================
 @router.callback_query(F.data.startswith("pay_asset_"))
 async def pay_with_asset(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
-    
-    logger.info(f"💰 pay_with_asset ВЫЗВАНА с data: {call.data}")
     
     await safe_answer(call)
     
@@ -1181,7 +1247,6 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     asset = call.data.replace("pay_asset_", "")
-    logger.info(f"✅ Выбрана валюта: {asset}")
     
     data = await state.get_data()
     amount = data.get('pay_amount')
@@ -1191,22 +1256,16 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext, bot: Bot):
         await call.message.answer("❌ Ошибка: данные платежа не найдены")
         return
     
-    logger.info(f"💰 Сумма: {amount} конфет = ${usdt}")
-    
-    # СОЗДАЕМ СЧЕТ - ВСЯ КОНВЕРТАЦИЯ ВНУТРИ create_invoice
     try:
         invoice = create_invoice(usdt, asset)
-        logger.info(f"🧾 Счет создан: {invoice}")
     except Exception as e:
         logger.error(f"❌ Ошибка создания счета: {e}")
         await call.message.answer("❌ Ошибка при создании платежа")
         return
     
-    # Получаем конвертированную сумму из ответа
     crypto_amount = invoice.get("crypto_amount", usdt)
     rate = invoice.get("rate", "")
     
-    # Сохраняем в БД
     cursor.execute(
         "INSERT INTO payments (invoice_id, user_id, amount, paid) VALUES (?, ?, ?, 0)",
         (invoice["invoice_id"], user_id, amount)
@@ -1215,12 +1274,10 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     icon = get_asset_icon(asset)
     
-    # Формируем текст с курсом если есть
     rate_text = f"\n💰 К оплате: {crypto_amount} {asset}"
     if rate:
         rate_text = f"\n1 {asset} = ${rate}\n💰 К оплате: {crypto_amount} {asset}"
     
-    # Отправляем сообщение
     await call.message.answer(
         f"💳 <b>Оплата в {icon} {asset}</b>\n\n"
         f"🍬 Конфет: {amount}\n"
@@ -1239,11 +1296,8 @@ async def pay_with_asset(call: CallbackQuery, state: FSMContext, bot: Bot):
 async def pay(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    # ВАЖНО: пропускаем pay_asset_
-    if call.data.startswith("pay_asset_"):
+    if call.data.startswith("pay_asset_") or call.data == "buy_private" or call.data == "private_stars" or call.data == "private_crypto" or call.data.startswith("private_asset_"):
         return
-    
-    logger.info(f"💰 pay called with data: {call.data}")
     
     if not await check_access(bot, user_id, state, call=call):
         return
@@ -1263,15 +1317,12 @@ async def pay(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     if call.data not in prices:
-        logger.warning(f"❌ Unknown pay data: {call.data}")
         return
     
     amount, usdt = prices[call.data]
-    logger.info(f"✅ Selected: {amount} candies for ${usdt}")
     
     await state.update_data(pay_amount=amount, pay_usdt=usdt, pay_custom=False)
     
-    # Показываем меню выбора валюты
     keyboard = []
     sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
     
@@ -1340,7 +1391,7 @@ async def check_subscribe_callback(call: CallbackQuery, state: FSMContext, bot: 
 async def check_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    if call.data == "check_subscribe":
+    if call.data == "check_subscribe" or call.data.startswith("check_private_"):
         return
     
     await safe_answer(call)
@@ -1349,7 +1400,6 @@ async def check_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     invoice_id = call.data.split("_", 1)[1]
-    logger.info(f"🔍 Проверка платежа: {invoice_id}")
     
     cursor.execute("SELECT user_id, amount, paid FROM payments WHERE invoice_id = ?", (invoice_id,))
     row = cursor.fetchone()
@@ -1359,7 +1409,6 @@ async def check_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     result = check_invoice(invoice_id)
-    logger.info(f"📊 Результат проверки: {result}")
     
     if result.get("paid", False):
         if row["paid"] == 1:
@@ -1408,8 +1457,6 @@ async def process_promo_input(message: Message, state: FSMContext, bot: Bot):
     
     code = message.text.strip().upper()
     
-    logger.info(f"🎟️ Promo input from user {user_id}: {code}")
-    
     cursor.execute("SELECT * FROM promocodes WHERE UPPER(code) = UPPER(?)", (code,))
     promo = cursor.fetchone()
     
@@ -1448,7 +1495,695 @@ async def process_promo_input(message: Message, state: FSMContext, bot: Bot):
     )
     await state.clear()
 
-# ================= ПОДДЕРЖКА - НОВОЕ СООБЩЕНИЕ =================
+# ================= ЗАДАНИЯ =================
+@router.callback_query(F.data == "tasks")
+async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Меню заданий"""
+    user_id = call.from_user.id
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    await safe_answer(call)
+    
+    tasks = get_active_tasks()
+    
+    if not tasks:
+        await call.message.answer("📭 Нет активных заданий")
+        return
+    
+    user_tasks = []
+    for task in tasks:
+        status = get_user_task_status(user_id, task["id"])
+        task["status"] = status["status"] if status else None
+        user_tasks.append(task)
+    
+    await call.message.answer(
+        "📋 <b>ДОСТУПНЫЕ ЗАДАНИЯ</b>\n\n"
+        "Выполняйте задания и получайте награды!",
+        reply_markup=get_tasks_menu(user_tasks)
+    )
+
+@router.callback_query(F.data.startswith("task_"))
+async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Детали задания"""
+    user_id = call.from_user.id
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    task_id = int(call.data.split("_")[1])
+    task = get_task(task_id)
+    
+    if not task or not task["is_active"]:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    
+    status = get_user_task_status(user_id, task_id)
+    task_status = status["status"] if status else None
+    
+    text = (
+        f"📋 <b>{task['title']}</b>\n\n"
+        f"📝 {task['description']}\n\n"
+        f"🎁 Награда: +{task['reward']} 🍬\n"
+        f"📊 Макс. выполнений: {task['max_completions']}\n"
+    )
+    
+    if task_status == "pending":
+        text += "\n⏳ Задание на проверке у администратора"
+    elif task_status == "approved":
+        text += "\n✅ Задание уже выполнено"
+    
+    await call.message.answer(
+        text,
+        reply_markup=get_task_action_menu(
+            task_id, task["title"], task["reward"],
+            task["task_type"], task["task_data"], task_status
+        )
+    )
+
+@router.callback_query(F.data.startswith("do_task_"))
+async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Выполнение задания"""
+    user_id = call.from_user.id
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    task_id = int(call.data.split("_")[2])
+    task = get_task(task_id)
+    
+    if not task or not task["is_active"]:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    
+    if not can_complete_task(user_id, task_id, task["max_completions"]):
+        await safe_answer(call, "❌ Вы уже выполнили это задание максимальное количество раз", show_alert=True)
+        return
+    
+    status = get_user_task_status(user_id, task_id)
+    if status and status["status"] == "pending":
+        await safe_answer(call, "⏳ Задание уже на проверке", show_alert=True)
+        return
+    
+    if task["task_type"] == "link":
+        # Задание со ссылкой
+        await state.update_data(task_id=task_id)
+        await state.set_state(TaskStates.waiting_for_task_proof)
+        await call.message.answer(
+            f"🔗 <b>Задание: {task['title']}</b>\n\n"
+            f"1. Перейдите по ссылке: {task['task_data']}\n"
+            f"2. Нажмите кнопку \"Я выполнил\"\n\n"
+            f"После подтверждения вы получите награду!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔗 Перейти по ссылке", url=task["task_data"])],
+                [InlineKeyboardButton(text="✅ Я выполнил", callback_data=f"submit_task_{task_id}")]
+            ])
+        )
+    elif task["task_type"] == "text":
+        # Текстовое задание
+        await state.update_data(task_id=task_id)
+        await state.set_state(TaskStates.waiting_for_task_proof)
+        await call.message.answer(
+            f"📝 <b>Задание: {task['title']}</b>\n\n"
+            f"{task['description']}\n\n"
+            f"Отправьте текст для проверки:"
+        )
+    elif task["task_type"] == "photo":
+        await state.update_data(task_id=task_id)
+        await state.set_state(TaskStates.waiting_for_task_proof)
+        await call.message.answer(
+            f"📸 <b>Задание: {task['title']}</b>\n\n"
+            f"{task['description']}\n\n"
+            f"Отправьте фото для проверки:"
+        )
+    elif task["task_type"] == "video":
+        await state.update_data(task_id=task_id)
+        await state.set_state(TaskStates.waiting_for_task_proof)
+        await call.message.answer(
+            f"🎬 <b>Задание: {task['title']}</b>\n\n"
+            f"{task['description']}\n\n"
+            f"Отправьте видео для проверки:"
+        )
+
+@router.callback_query(F.data.startswith("submit_task_"))
+async def submit_task_link(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Отправка задания со ссылкой"""
+    user_id = call.from_user.id
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    task_id = int(call.data.split("_")[2])
+    task = get_task(task_id)
+    
+    if not task or not task["is_active"]:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    
+    if not can_complete_task(user_id, task_id, task["max_completions"]):
+        await safe_answer(call, "❌ Вы уже выполнили это задание", show_alert=True)
+        return
+    
+    if submit_task(user_id, task_id, "Выполнено через ссылку"):
+        await safe_answer(call, "✅ Задание отправлено на проверку!")
+        
+        admins = get_all_admins()
+        for admin in admins:
+            try:
+                await bot.send_message(
+                    admin["user_id"],
+                    f"📋 <b>НОВОЕ ЗАДАНИЕ НА ПРОВЕРКУ</b>\n\n"
+                    f"👤 Пользователь: @{call.from_user.username or 'нет'}\n"
+                    f"🆔 ID: {user_id}\n"
+                    f"📝 Задание: {task['title']}\n"
+                    f"🎁 Награда: +{task['reward']} 🍬\n\n"
+                    f"Способ выполнения: переход по ссылке",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_task_{task_id}_{user_id}"),
+                            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
+                        ]
+                    ])
+                )
+            except:
+                pass
+        
+        await call.message.edit_text(f"✅ Задание отправлено на проверку!")
+    else:
+        await safe_answer(call, "❌ Ошибка при отправке")
+
+@router.message(TaskStates.waiting_for_task_proof, F.text)
+async def submit_task_text(message: Message, state: FSMContext, bot: Bot):
+    """Отправка текстового задания"""
+    user_id = message.from_user.id
+    proof = message.text
+    
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    
+    if not task_id:
+        await state.clear()
+        return
+    
+    task = get_task(task_id)
+    
+    if not task or not task["is_active"]:
+        await message.answer("❌ Задание не найдено")
+        await state.clear()
+        return
+    
+    if not can_complete_task(user_id, task_id, task["max_completions"]):
+        await message.answer("❌ Вы уже выполнили это задание")
+        await state.clear()
+        return
+    
+    if submit_task(user_id, task_id, proof):
+        await message.answer("✅ Задание отправлено на проверку!")
+        
+        admins = get_all_admins()
+        for admin in admins:
+            try:
+                await bot.send_message(
+                    admin["user_id"],
+                    f"📋 <b>НОВОЕ ЗАДАНИЕ НА ПРОВЕРКУ</b>\n\n"
+                    f"👤 Пользователь: @{message.from_user.username or 'нет'}\n"
+                    f"🆔 ID: {user_id}\n"
+                    f"📝 Задание: {task['title']}\n"
+                    f"🎁 Награда: +{task['reward']} 🍬\n\n"
+                    f"📄 Доказательство:\n{proof}",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_task_{task_id}_{user_id}"),
+                            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
+                        ]
+                    ])
+                )
+            except:
+                pass
+    else:
+        await message.answer("❌ Ошибка при отправке")
+    
+    await state.clear()
+
+@router.message(TaskStates.waiting_for_task_proof, F.photo)
+async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
+    """Отправка фото-задания"""
+    user_id = message.from_user.id
+    photo = message.photo[-1]
+    caption = message.caption or "Фото отправлено"
+    
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    
+    if not task_id:
+        await state.clear()
+        return
+    
+    task = get_task(task_id)
+    
+    if not task or not task["is_active"]:
+        await message.answer("❌ Задание не найдено")
+        await state.clear()
+        return
+    
+    if not can_complete_task(user_id, task_id, task["max_completions"]):
+        await message.answer("❌ Вы уже выполнили это задание")
+        await state.clear()
+        return
+    
+    if submit_task(user_id, task_id, f"Фото: {photo.file_id}\nОписание: {caption}"):
+        await message.answer("✅ Задание отправлено на проверку!")
+        
+        admins = get_all_admins()
+        for admin in admins:
+            try:
+                await bot.send_photo(
+                    admin["user_id"],
+                    photo=photo.file_id,
+                    caption=(
+                        f"📋 <b>НОВОЕ ЗАДАНИЕ НА ПРОВЕРКУ</b>\n\n"
+                        f"👤 Пользователь: @{message.from_user.username or 'нет'}\n"
+                        f"🆔 ID: {user_id}\n"
+                        f"📝 Задание: {task['title']}\n"
+                        f"🎁 Награда: +{task['reward']} 🍬\n\n"
+                        f"📄 Описание: {caption}"
+                    ),
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_task_{task_id}_{user_id}"),
+                            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
+                        ]
+                    ])
+                )
+            except:
+                pass
+    else:
+        await message.answer("❌ Ошибка при отправке")
+    
+    await state.clear()
+
+@router.message(TaskStates.waiting_for_task_proof, F.video)
+async def submit_task_video(message: Message, state: FSMContext, bot: Bot):
+    """Отправка видео-задания"""
+    user_id = message.from_user.id
+    video = message.video
+    caption = message.caption or "Видео отправлено"
+    
+    data = await state.get_data()
+    task_id = data.get("task_id")
+    
+    if not task_id:
+        await state.clear()
+        return
+    
+    task = get_task(task_id)
+    
+    if not task or not task["is_active"]:
+        await message.answer("❌ Задание не найдено")
+        await state.clear()
+        return
+    
+    if not can_complete_task(user_id, task_id, task["max_completions"]):
+        await message.answer("❌ Вы уже выполнили это задание")
+        await state.clear()
+        return
+    
+    if submit_task(user_id, task_id, f"Видео: {video.file_id}\nОписание: {caption}"):
+        await message.answer("✅ Задание отправлено на проверку!")
+        
+        admins = get_all_admins()
+        for admin in admins:
+            try:
+                await bot.send_video(
+                    admin["user_id"],
+                    video=video.file_id,
+                    caption=(
+                        f"📋 <b>НОВОЕ ЗАДАНИЕ НА ПРОВЕРКУ</b>\n\n"
+                        f"👤 Пользователь: @{message.from_user.username or 'нет'}\n"
+                        f"🆔 ID: {user_id}\n"
+                        f"📝 Задание: {task['title']}\n"
+                        f"🎁 Награда: +{task['reward']} 🍬\n\n"
+                        f"📄 Описание: {caption}"
+                    ),
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_task_{task_id}_{user_id}"),
+                            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
+                        ]
+                    ])
+                )
+            except:
+                pass
+    else:
+        await message.answer("❌ Ошибка при отправке")
+    
+    await state.clear()
+
+@router.callback_query(F.data.startswith("approve_task_"))
+async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Админ одобряет задание"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    parts = call.data.split("_")
+    task_id = int(parts[2])
+    user_id = int(parts[3])
+    
+    task = get_task(task_id)
+    
+    if not task:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    
+    if approve_task(user_id, task_id, task["reward"]):
+        await safe_answer(call, "✅ Задание одобрено!")
+        await call.message.edit_text(call.message.text + "\n\n✅ <b>ОДОБРЕНО</b>")
+        
+        try:
+            await bot.send_message(
+                user_id,
+                f"✅ <b>Задание одобрено!</b>\n\n"
+                f"📋 {task['title']}\n"
+                f"🎁 Начислено: +{task['reward']} 🍬"
+            )
+        except:
+            pass
+    else:
+        await safe_answer(call, "❌ Ошибка", show_alert=True)
+
+@router.callback_query(F.data.startswith("reject_task_"))
+async def reject_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Админ отклоняет задание"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    parts = call.data.split("_")
+    task_id = int(parts[2])
+    user_id = int(parts[3])
+    
+    task = get_task(task_id)
+    
+    if reject_task(user_id, task_id):
+        await safe_answer(call, "❌ Задание отклонено")
+        await call.message.edit_text(call.message.text + "\n\n❌ <b>ОТКЛОНЕНО</b>")
+        
+        try:
+            await bot.send_message(
+                user_id,
+                f"❌ <b>Задание отклонено</b>\n\n"
+                f"📋 {task['title']}\n\n"
+                f"Попробуйте выполнить задание заново или обратитесь в поддержку."
+            )
+        except:
+            pass
+    else:
+        await safe_answer(call, "❌ Ошибка", show_alert=True)
+
+# ================= АДМИН-ЗАДАНИЯ =================
+@router.callback_query(F.data == "admin_tasks")
+async def admin_tasks_menu(call: CallbackQuery):
+    """Меню управления заданиями"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await call.message.answer(
+        "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
+        "Выберите действие:",
+        reply_markup=admin_tasks_menu
+    )
+
+@router.callback_query(F.data == "admin_task_add")
+async def admin_task_add_start(call: CallbackQuery, state: FSMContext):
+    """Начало создания задания"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await state.set_state(TaskStates.waiting_for_title)
+    await call.message.answer("📝 Введите название задания:")
+
+@router.message(TaskStates.waiting_for_title)
+async def admin_task_title(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    admin_task_data[message.from_user.id] = {"title": message.text}
+    await state.set_state(TaskStates.waiting_for_description)
+    await message.answer("📄 Введите описание задания:")
+
+@router.message(TaskStates.waiting_for_description)
+async def admin_task_description(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    admin_task_data[message.from_user.id]["description"] = message.text
+    await state.set_state(TaskStates.waiting_for_reward)
+    await message.answer("🎁 Введите награду (в 🍬):")
+
+@router.message(TaskStates.waiting_for_reward)
+async def admin_task_reward(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    try:
+        reward = int(message.text)
+        admin_task_data[message.from_user.id]["reward"] = reward
+        await state.set_state(TaskStates.waiting_for_type)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔗 Ссылка", callback_data="task_type_link")],
+            [InlineKeyboardButton(text="📝 Текст", callback_data="task_type_text")],
+            [InlineKeyboardButton(text="📸 Фото", callback_data="task_type_photo")],
+            [InlineKeyboardButton(text="🎬 Видео", callback_data="task_type_video")]
+        ])
+        
+        await message.answer(
+            "📋 Выберите тип задания:",
+            reply_markup=keyboard
+        )
+    except ValueError:
+        await message.answer("❌ Введите число")
+
+@router.callback_query(F.data.startswith("task_type_"))
+async def admin_task_type(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    task_type = call.data.replace("task_type_", "")
+    admin_task_data[call.from_user.id]["task_type"] = task_type
+    await safe_answer(call)
+    
+    if task_type == "link":
+        await state.set_state(TaskStates.waiting_for_link)
+        await call.message.answer("🔗 Введите ссылку для задания:")
+    elif task_type == "text":
+        await state.set_state(TaskStates.waiting_for_text)
+        await call.message.answer("📝 Введите текст задания (что нужно сделать):")
+    elif task_type == "photo":
+        await state.set_state(TaskStates.waiting_for_photo)
+        await call.message.answer("📸 Отправьте фото-задание (что нужно сделать):")
+    elif task_type == "video":
+        await state.set_state(TaskStates.waiting_for_video)
+        await call.message.answer("🎬 Отправьте видео-задание (что нужно сделать):")
+    
+    await state.set_state(TaskStates.waiting_for_max_completions)
+
+@router.message(TaskStates.waiting_for_link)
+async def admin_task_link(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    admin_task_data[message.from_user.id]["task_data"] = message.text
+    await state.set_state(TaskStates.waiting_for_max_completions)
+    await message.answer("📊 Введите максимальное количество выполнений (1-999):")
+
+@router.message(TaskStates.waiting_for_text)
+async def admin_task_text(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    admin_task_data[message.from_user.id]["task_data"] = message.text
+    await state.set_state(TaskStates.waiting_for_max_completions)
+    await message.answer("📊 Введите максимальное количество выполнений (1-999):")
+
+@router.message(TaskStates.waiting_for_photo, F.photo)
+async def admin_task_photo(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    photo = message.photo[-1]
+    admin_task_data[message.from_user.id]["task_data"] = f"photo_{photo.file_id}"
+    admin_task_data[message.from_user.id]["task_caption"] = message.caption or ""
+    await state.set_state(TaskStates.waiting_for_max_completions)
+    await message.answer("📊 Введите максимальное количество выполнений (1-999):")
+
+@router.message(TaskStates.waiting_for_video, F.video)
+async def admin_task_video(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    video = message.video
+    admin_task_data[message.from_user.id]["task_data"] = f"video_{video.file_id}"
+    admin_task_data[message.from_user.id]["task_caption"] = message.caption or ""
+    await state.set_state(TaskStates.waiting_for_max_completions)
+    await message.answer("📊 Введите максимальное количество выполнений (1-999):")
+
+@router.message(TaskStates.waiting_for_max_completions)
+async def admin_task_max_completions(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    try:
+        max_completions = int(message.text)
+        if max_completions < 1:
+            max_completions = 1
+        if max_completions > 999:
+            max_completions = 999
+        
+        data = admin_task_data.get(message.from_user.id, {})
+        
+        task_id = add_task(
+            title=data.get("title", "Без названия"),
+            description=data.get("description", ""),
+            reward=data.get("reward", 0),
+            task_type=data.get("task_type", "text"),
+            task_data=data.get("task_data", None),
+            max_completions=max_completions
+        )
+        
+        if task_id:
+            await message.answer(
+                f"✅ <b>Задание создано!</b>\n\n"
+                f"📋 Название: {data.get('title')}\n"
+                f"🎁 Награда: +{data.get('reward')} 🍬\n"
+                f"📊 Макс. выполнений: {max_completions}\n"
+                f"🆔 ID: {task_id}"
+            )
+        else:
+            await message.answer("❌ Ошибка при создании задания")
+        
+        if data.get("task_type") in ["photo", "video"] and data.get("task_data", "").startswith(("photo_", "video_")):
+            file_id = data["task_data"].split("_", 1)[1]
+            caption = data.get("task_caption", "")
+            
+            if data["task_type"] == "photo":
+                await message.answer_photo(
+                    photo=file_id,
+                    caption=f"📸 Превью задания:\n{caption}"
+                )
+            else:
+                await message.answer_video(
+                    video=file_id,
+                    caption=f"🎬 Превью задания:\n{caption}"
+                )
+        
+        admin_task_data.pop(message.from_user.id, None)
+        await state.clear()
+        
+    except ValueError:
+        await message.answer("❌ Введите число")
+
+@router.callback_query(F.data == "admin_task_remove")
+async def admin_task_remove_start(call: CallbackQuery, state: FSMContext):
+    """Начало удаления задания"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await state.set_state(AdminTaskStates.waiting_for_task_id_to_delete)
+    
+    tasks = get_active_tasks()
+    if not tasks:
+        await call.message.answer("📭 Нет активных заданий")
+        return
+    
+    text = "📋 <b>Список заданий:</b>\n\n"
+    for task in tasks:
+        text += f"🆔 {task['id']} | {task['title']} | +{task['reward']} 🍬\n"
+    
+    await call.message.answer(text + "\n🗑 Введите ID задания для удаления:")
+
+@router.message(AdminTaskStates.waiting_for_task_id_to_delete)
+async def admin_task_remove(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    try:
+        task_id = int(message.text)
+        task = get_task(task_id)
+        
+        if not task:
+            await message.answer("❌ Задание не найдено")
+            await state.clear()
+            return
+        
+        if remove_task(task_id):
+            await message.answer(f"✅ Задание \"{task['title']}\" удалено!")
+        else:
+            await message.answer("❌ Ошибка при удалении")
+        
+        await state.clear()
+        
+    except ValueError:
+        await message.answer("❌ Введите ID задания (число)")
+
+@router.callback_query(F.data == "admin_task_list")
+async def admin_task_list(call: CallbackQuery):
+    """Список заданий для админа"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    tasks = get_active_tasks()
+    
+    if not tasks:
+        await call.message.answer("📭 Нет активных заданий")
+        return
+    
+    text = "📋 <b>СПИСОК ЗАДАНИЙ</b>\n\n"
+    for task in tasks:
+        text += f"🆔 <b>{task['id']}</b> | {task['title']}\n"
+        text += f"   🎁 +{task['reward']} 🍬\n"
+        text += f"   📊 {task['max_completions']} раз\n"
+        text += f"   📝 {task['description'][:50]}...\n\n"
+    
+    await call.message.answer(text)
+
+@router.callback_query(F.data == "admin_task_pending")
+async def admin_task_pending(call: CallbackQuery):
+    """Задания на проверке"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    pending = get_pending_tasks()
+    
+    if not pending:
+        await call.message.answer("📭 Нет заданий на проверке")
+        return
+    
+    text = "⏳ <b>ЗАДАНИЯ НА ПРОВЕРКЕ</b>\n\n"
+    for p in pending:
+        text += f"👤 @{p['username']} (ID: {p['user_id']})\n"
+        text += f"📋 {p['title']} | +{p['reward']} 🍬\n"
+        text += f"📄 {p['proof'][:100]}...\n"
+        text += f"🆔 Задания: {p['task_id']}\n\n"
+    
+    await call.message.answer(text)
+
+# ================= ПОДДЕРЖКА =================
 @router.callback_query(F.data == "support")
 async def support_start(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1457,17 +2192,13 @@ async def support_start(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     await safe_answer(call)
-    
     await state.set_state(SubscribeStates.waiting_for_support_message)
-    
     await call.message.answer(
         "📝 <b>ПОДДЕРЖКА</b>\n\n"
         "Напишите ваше сообщение или отправьте скриншот.\n"
-        "Администратор ответит вам в ближайшее время.\n\n"
-        "💡 Вы можете прикрепить фото к сообщению"
+        "Администратор ответит вам в ближайшее время."
     )
 
-# ================= ПОДДЕРЖКА - ОБРАБОТКА ТЕКСТА =================
 @router.message(SubscribeStates.waiting_for_support_message, F.text)
 async def support_message_handler(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
@@ -1495,10 +2226,7 @@ async def support_message_handler(message: Message, state: FSMContext, bot: Bot)
             reply_markup=reply_keyboard
         )
         
-        await message.answer(
-            "✅ <b>Сообщение отправлено!</b>\n\n"
-            "Администратор ответит вам в ближайшее время."
-        )
+        await message.answer("✅ <b>Сообщение отправлено!</b>\n\nАдминистратор ответит вам в ближайшее время.")
         
     except Exception as e:
         logger.error(f"Failed to forward support message: {e}")
@@ -1506,13 +2234,11 @@ async def support_message_handler(message: Message, state: FSMContext, bot: Bot)
     
     await state.clear()
 
-# ================= ПОДДЕРЖКА - ОБРАБОТКА ФОТО =================
 @router.message(SubscribeStates.waiting_for_support_message, F.photo)
 async def support_photo_handler(message: Message, state: FSMContext, bot: Bot):
     user_id = message.from_user.id
     user_text = message.caption or "Без описания"
     
-    # Получаем фото самого высокого качества
     photo = message.photo[-1]
     file_id = photo.file_id
     
@@ -1520,13 +2246,11 @@ async def support_photo_handler(message: Message, state: FSMContext, bot: Bot):
     user = cursor.fetchone()
     username = user["username"] if user and user["username"] else "нет username"
     
-    # Создаем клавиатуру для ответа
     reply_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Ответить", callback_data=f"reply_{user_id}")]
     ])
     
     try:
-        # Отправляем фото админу
         await bot.send_photo(
             MAIN_ADMIN_ID,
             photo=file_id,
@@ -1539,10 +2263,7 @@ async def support_photo_handler(message: Message, state: FSMContext, bot: Bot):
             reply_markup=reply_keyboard
         )
         
-        await message.answer(
-            "✅ <b>Скриншот отправлен!</b>\n\n"
-            "Администратор ответит вам в ближайшее время."
-        )
+        await message.answer("✅ <b>Скриншот отправлен!</b>\n\nАдминистратор ответит вам в ближайшее время.")
         
     except Exception as e:
         logger.error(f"Failed to forward support photo: {e}")
@@ -1550,13 +2271,10 @@ async def support_photo_handler(message: Message, state: FSMContext, bot: Bot):
     
     await state.clear()
 
-# ================= ПОДДЕРЖКА - ОТВЕТ АДМИНА =================
 @router.message(AdminStates.waiting_for_support_reply)
 async def support_reply_send(message: Message, state: FSMContext, bot: Bot):
     if not check_admin_access(message.from_user.id)[0]:
         return
-    
-    logger.info(f"📬 Support reply from admin: {message.text[:50]}...")
     
     data = await state.get_data()
     user_id = data.get('reply_to_user')
@@ -1572,7 +2290,6 @@ async def support_reply_send(message: Message, state: FSMContext, bot: Bot):
             chat_id=user_id,
             text=f"📬 <b>ОТВЕТ ОТ ПОДДЕРЖКИ</b>\n\n{reply_text}"
         )
-        
         await message.answer(f"✅ Ответ отправлен пользователю {user_id}")
     except Exception as e:
         await message.answer(
@@ -1596,12 +2313,11 @@ async def support_reply_start(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_exists = cursor.fetchone()
     
     if not user_exists:
-        await call.message.answer(f"❌ Пользователь с ID {user_id} не найден в базе")
+        await call.message.answer(f"❌ Пользователь с ID {user_id} не найден")
         return
     
     await state.update_data(reply_to_user=user_id)
     await state.set_state(AdminStates.waiting_for_support_reply)
-    
     await call.message.answer(
         f"✏️ <b>ОТВЕТ ПОЛЬЗОВАТЕЛЮ</b>\n\n"
         f"ID: <code>{user_id}</code>\n"
@@ -1681,7 +2397,6 @@ async def confirm_broadcast(call: CallbackQuery, state: FSMContext, bot: Bot):
             await asyncio.sleep(0.05)
         except Exception as e:
             failed += 1
-            logger.error(f"Failed to send to {uid}: {e}")
     
     broadcast_mode.discard(call.from_user.id)
     
@@ -2683,8 +3398,6 @@ async def bonus(call: CallbackQuery, state: FSMContext, bot: Bot):
 async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    logger.info(f"🎥 Videos request from user {user_id}")
-    
     if not await check_access(bot, user_id, state, call=call):
         return
     
@@ -2722,7 +3435,6 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     try:
-        logger.info(f"📤 Sending video {video['id']} to user {user_id}")
         await call.message.answer_video(
             video["file_id"],
             caption=f"🎥 <b>Видео</b>",
@@ -2735,7 +3447,6 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
         
         cursor.execute("INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)", (user_id, video["id"]))
         conn.commit()
-        logger.info(f"✅ Video {video['id']} sent successfully to user {user_id}")
         
     except Exception as e:
         logger.error(f"❌ Error sending video: {e}")
@@ -2813,18 +3524,15 @@ async def profile(call: CallbackQuery, state: FSMContext, bot: Bot):
         await call.message.answer(text, disable_web_page_preview=False)
 
 # ================= ДОБАВЛЯЕМ НОВЫЕ КОМАНДЫ УДАЛЕНИЯ =================
-
 @router.message(Command("delete_200"))
 async def delete_first_200_command(message: Message):
     """Удаляет первые 200 видео (только для главного админа)"""
     user_id = message.from_user.id
     
-    # Проверяем, главный ли админ
     if not is_main_admin(user_id):
         await message.answer("❌ Только для главного админа")
         return
     
-    # Спрашиваем подтверждение
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Да, удалить 200 видео", callback_data="confirm_delete_200"),
@@ -2845,12 +3553,10 @@ async def delete_first_58_command(message: Message):
     """Удаляет первые 58 видео (только для главного админа)"""
     user_id = message.from_user.id
     
-    # Проверяем, главный ли админ
     if not is_main_admin(user_id):
         await message.answer("❌ Только для главного админа")
         return
     
-    # Спрашиваем подтверждение
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Да, удалить 58 видео", callback_data="confirm_delete_58"),
@@ -2878,7 +3584,6 @@ async def confirm_delete_200(call: CallbackQuery):
     await safe_answer(call)
     
     try:
-        # Получаем ID первых 200 видео
         cursor.execute("SELECT id FROM videos ORDER BY id ASC LIMIT 200")
         videos = cursor.fetchall()
         
@@ -2887,21 +3592,15 @@ async def confirm_delete_200(call: CallbackQuery):
             return
         
         video_ids = [v["id"] for v in videos]
-        
-        # Создаем строку с плейсхолдерами
         placeholders = ','.join(['?'] * len(video_ids))
         
-        # 1. Удаляем просмотры
         cursor.execute(f"DELETE FROM user_videos WHERE video_id IN ({placeholders})", video_ids)
         deleted_views = cursor.rowcount
         
-        # 2. Удаляем видео
         cursor.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", video_ids)
         deleted_videos = cursor.rowcount
         
-        # 3. Сбрасываем счетчик
         cursor.execute("DELETE FROM sqlite_sequence WHERE name='videos'")
-        
         conn.commit()
         
         await call.message.edit_text(
@@ -2925,7 +3624,6 @@ async def confirm_delete_58(call: CallbackQuery):
     await safe_answer(call)
     
     try:
-        # Получаем ID первых 58 видео
         cursor.execute("SELECT id FROM videos ORDER BY id ASC LIMIT 58")
         videos = cursor.fetchall()
         
@@ -2934,21 +3632,15 @@ async def confirm_delete_58(call: CallbackQuery):
             return
         
         video_ids = [v["id"] for v in videos]
-        
-        # Создаем строку с плейсхолдерами
         placeholders = ','.join(['?'] * len(video_ids))
         
-        # 1. Удаляем просмотры
         cursor.execute(f"DELETE FROM user_videos WHERE video_id IN ({placeholders})", video_ids)
         deleted_views = cursor.rowcount
         
-        # 2. Удаляем видео
         cursor.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", video_ids)
         deleted_videos = cursor.rowcount
         
-        # 3. Сбрасываем счетчик
         cursor.execute("DELETE FROM sqlite_sequence WHERE name='videos'")
-        
         conn.commit()
         
         await call.message.edit_text(
@@ -3030,220 +3722,3 @@ async def check_balance_command(message: Message):
         return
     
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
-
-# ================= БЭКАП БАЗЫ ДАННЫХ =================
-@router.message(Command("backup_db"))
-async def backup_db_command(message: Message):
-    """Создает бэкап базы данных (только для главного админа)"""
-    user_id = message.from_user.id
-    
-    # Проверяем, главный ли админ
-    if not is_main_admin(user_id):
-        await message.answer("❌ Только для главного админа")
-        return
-    
-    await message.answer("🔄 Создаю бэкап базы данных...")
-    
-    try:
-        # Получаем все таблицы
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        tables = cursor.fetchall()
-        
-        backup_data = {}
-        
-        for table in tables:
-            table_name = table[0]
-            cursor.execute(f"SELECT * FROM {table_name}")
-            rows = cursor.fetchall()
-            
-            # Получаем названия колонок
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            columns = [col[1] for col in cursor.fetchall()]
-            
-            backup_data[table_name] = {
-                "columns": columns,
-                "data": [dict(row) for row in rows]
-            }
-        
-        # Сохраняем в JSON
-        import json
-        from datetime import datetime
-        
-        backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2, default=str)
-        
-        # Отправляем файл
-        await message.answer_document(
-            document=BufferedInputFile(backup_json.encode('utf-8'), filename=f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"),
-            caption=f"✅ Бэкап базы данных\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-
-# ================= ВОССТАНОВЛЕНИЕ БАЗЫ ДАННЫХ =================
-@router.message(Command("restore"))
-async def restore_db_command(message: Message):
-    """Команда для восстановления базы данных из JSON файла (только для главного админа)"""
-    user_id = message.from_user.id
-    
-    # Проверяем, главный ли админ
-    if not is_main_admin(user_id):
-        await message.answer("❌ Только для главного админа")
-        return
-    
-    global waiting_for_restore_file, restore_user_id
-    waiting_for_restore_file = True
-    restore_user_id = user_id
-    
-    await message.answer(
-        "📤 <b>Восстановление базы данных</b>\n\n"
-        "Отправьте JSON файл с бэкапом.\n"
-        "⚠️ <b>ВНИМАНИЕ:</b> Текущая база данных будет полностью заменена!\n\n"
-        "Файл должен быть создан командой /backup_db\n\n"
-        "⏳ У вас есть 120 секунд на отправку файла"
-    )
-    
-    # Автоматический выход из режима через 120 секунд
-    async def exit_restore_mode():
-        await asyncio.sleep(120)
-        global waiting_for_restore_file, restore_user_id
-        if waiting_for_restore_file:
-            waiting_for_restore_file = False
-            restore_user_id = None
-            try:
-                await message.answer("⏰ Время вышло. Режим восстановления отключен.")
-            except:
-                pass
-    
-    asyncio.create_task(exit_restore_mode())
-
-@router.message(F.document)
-async def handle_restore_file(message: Message, bot: Bot):
-    """Обработчик загрузки файла для восстановления базы данных"""
-    global waiting_for_restore_file, restore_user_id
-    
-    user_id = message.from_user.id
-    
-    # Проверяем, ожидаем ли мы файл и является ли пользователь тем, кто запустил восстановление
-    if not waiting_for_restore_file or user_id != restore_user_id:
-        return
-    
-    # Проверяем, что это JSON файл
-    if not message.document.file_name or not message.document.file_name.endswith('.json'):
-        await message.answer("❌ Неверный формат файла. Ожидается .json файл")
-        waiting_for_restore_file = False
-        restore_user_id = None
-        return
-    
-    status_msg = await message.answer("🔄 <b>Восстанавливаю базу данных...</b>\n\n⏳ Пожалуйста, подождите...")
-    
-    try:
-        # Скачиваем файл
-        file = await bot.get_file(message.document.file_id)
-        file_bytes = await bot.download_file(file.file_path)
-        
-        import json
-        
-        # Парсим JSON
-        backup_data = json.loads(file_bytes.read().decode('utf-8'))
-        
-        # Проверяем структуру
-        required_tables = ['users', 'videos', 'payments', 'promocodes', 'user_videos']
-        missing_tables = []
-        for table in required_tables:
-            if table not in backup_data:
-                missing_tables.append(table)
-        
-        if missing_tables:
-            await status_msg.edit_text(
-                f"❌ <b>Ошибка структуры файла</b>\n\n"
-                f"Отсутствуют таблицы: {', '.join(missing_tables)}\n"
-                f"Файл должен быть создан командой /backup_db"
-            )
-            waiting_for_restore_file = False
-            restore_user_id = None
-            return
-        
-        # Начинаем транзакцию
-        cursor.execute("BEGIN TRANSACTION")
-        
-        # Список таблиц для восстановления (в правильном порядке)
-        tables_to_restore = ['users', 'videos', 'payments', 'promocodes', 'used_promocodes', 'user_videos']
-        
-        restored_counts = {}
-        
-        for table_name in tables_to_restore:
-            if table_name in backup_data:
-                table_info = backup_data[table_name]
-                columns = table_info.get("columns", [])
-                rows = table_info.get("data", [])
-                
-                # Очищаем таблицу
-                cursor.execute(f"DELETE FROM {table_name}")
-                
-                # Восстанавливаем данные если есть
-                if rows and columns:
-                    placeholders = ','.join(['?'] * len(columns))
-                    inserted = 0
-                    for row in rows:
-                        values = [row.get(col) for col in columns]
-                        try:
-                            cursor.execute(
-                                f"INSERT INTO {table_name} ({','.join(columns)}) VALUES ({placeholders})", 
-                                values
-                            )
-                            inserted += 1
-                        except Exception as e:
-                            logger.error(f"Ошибка вставки в {table_name}: {e}, row: {row}")
-                            # Пропускаем проблемную строку
-                            continue
-                    
-                    restored_counts[table_name] = inserted
-                    await status_msg.edit_text(
-                        f"🔄 <b>Восстановление базы данных...</b>\n\n"
-                        f"✅ {table_name}: {inserted} из {len(rows)} записей"
-                    )
-                else:
-                    restored_counts[table_name] = 0
-        
-        # Сбрасываем автоинкремент для таблиц
-        try:
-            cursor.execute("DELETE FROM sqlite_sequence")
-        except:
-            pass
-        
-        # Фиксируем транзакцию
-        conn.commit()
-        
-        # Проверяем результат
-        cursor.execute("SELECT COUNT(*) as count FROM users")
-        users_count = cursor.fetchone()["count"]
-        cursor.execute("SELECT COUNT(*) as count FROM videos")
-        videos_count = cursor.fetchone()["count"]
-        cursor.execute("SELECT COUNT(*) as count FROM payments")
-        payments_count = cursor.fetchone()["count"]
-        
-        # Формируем отчет
-        report = (
-            f"✅ <b>База данных успешно восстановлена!</b>\n\n"
-            f"📊 <b>Статистика восстановления:</b>\n"
-            f"├ 👥 Пользователей: {users_count}\n"
-            f"├ 🎥 Видео: {videos_count}\n"
-            f"├ 💳 Платежей: {payments_count}\n"
-            f"└ 📊 Просмотры сохранены\n\n"
-            f"📁 Файл: {message.document.file_name}\n"
-            f"📦 Размер: {message.document.file_size // 1024} KB"
-        )
-        
-        await status_msg.edit_text(report)
-        
-    except json.JSONDecodeError as e:
-        await status_msg.edit_text(f"❌ <b>Ошибка парсинга JSON</b>\n\n{str(e)}")
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"Ошибка восстановления: {e}")
-        traceback.print_exc()
-        await status_msg.edit_text(f"❌ <b>Ошибка при восстановлении</b>\n\n{str(e)}")
-    finally:
-        waiting_for_restore_file = False
-        restore_user_id = None

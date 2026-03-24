@@ -77,11 +77,12 @@ def init_db():
         ref_code TEXT UNIQUE,
         subscribe_bonus_received INTEGER DEFAULT 0,
         is_admin INTEGER DEFAULT 0,
-        pending_referrer_bonus INTEGER DEFAULT NULL
+        pending_referrer_bonus INTEGER DEFAULT NULL,
+        private_access INTEGER DEFAULT 0
     )
     """)
     
-    # Проверяем колонку pending_referrer_bonus
+    # Проверяем, есть ли колонка pending_referrer_bonus
     try:
         cursor.execute("SELECT pending_referrer_bonus FROM users LIMIT 1")
     except:
@@ -90,8 +91,18 @@ def init_db():
             print("✅ Добавлена колонка pending_referrer_bonus")
         except:
             pass
+    
+    # Проверяем, есть ли колонка private_access
+    try:
+        cursor.execute("SELECT private_access FROM users LIMIT 1")
+    except:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN private_access INTEGER DEFAULT 0")
+            print("✅ Добавлена колонка private_access")
+        except:
+            pass
 
-    # Таблица админов
+    # Таблица для управления админами
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
@@ -104,7 +115,7 @@ def init_db():
     )
     """)
 
-    # Таблица обязательных каналов
+    # Таблица обязательных каналов (ОП)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS mandatory_channels (
         channel_id TEXT PRIMARY KEY,
@@ -113,16 +124,13 @@ def init_db():
     )
     """)
 
-    # Таблица видео с колонкой is_private
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS videos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        file_id TEXT UNIQUE,
-        is_private INTEGER DEFAULT 0
+        file_id TEXT UNIQUE
     )
     """)
 
-    # Таблица просмотренных видео
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_videos (
         user_id INTEGER,
@@ -131,7 +139,6 @@ def init_db():
     )
     """)
 
-    # Таблица промокодов
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS promocodes (
         code TEXT PRIMARY KEY,
@@ -140,7 +147,6 @@ def init_db():
     )
     """)
 
-    # Таблица использованных промокодов
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS used_promocodes (
         user_id INTEGER,
@@ -160,28 +166,239 @@ def init_db():
     )
     """)
     
-    # Проверяем колонку paid
+    # Проверяем, есть ли колонка paid
     try:
         cursor.execute("SELECT paid FROM payments LIMIT 1")
     except:
         try:
             cursor.execute("ALTER TABLE payments ADD COLUMN paid INTEGER DEFAULT 0")
-            print("✅ Добавлена колонка paid")
+            print("✅ Добавлена колонка paid в таблицу payments")
         except:
             pass
+    
+    # Таблица заданий
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        description TEXT,
+        reward INTEGER,
+        task_type TEXT DEFAULT 'text',
+        task_data TEXT,
+        max_completions INTEGER DEFAULT 1,
+        is_active INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    
+    # Таблица выполненных заданий
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_tasks (
+        user_id INTEGER,
+        task_id INTEGER,
+        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'pending',
+        proof TEXT,
+        UNIQUE(user_id, task_id)
+    )
+    """)
+    
+    # Таблица покупок приватки
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS private_purchases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        invoice_id TEXT,
+        amount REAL,
+        paid INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
     
     conn.commit()
     print("✅ База данных инициализирована")
 
-# ========== ФУНКЦИИ ДЛЯ КАНАЛОВ ОП ==========
-def get_mandatory_channels():
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЗАДАНИЯМИ ==========
+def get_active_tasks():
+    """Получение активных заданий"""
     try:
-        cursor.execute("SELECT channel_id, channel_name, channel_link FROM mandatory_channels")
+        cursor.execute("SELECT * FROM tasks WHERE is_active = 1 ORDER BY id")
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
 
+def get_task(task_id: int):
+    """Получение задания по ID"""
+    try:
+        cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+def add_task(title: str, description: str, reward: int, task_type: str = "text", task_data: str = None, max_completions: int = 1):
+    """Добавление нового задания"""
+    try:
+        cursor.execute("""
+            INSERT INTO tasks (title, description, reward, task_type, task_data, max_completions)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (title, description, reward, task_type, task_data, max_completions))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        print(f"❌ Ошибка добавления задания: {e}")
+        return None
+
+def remove_task(task_id: int):
+    """Удаление задания"""
+    try:
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("DELETE FROM user_tasks WHERE task_id = ?", (task_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def get_user_task_status(user_id: int, task_id: int):
+    """Получение статуса выполнения задания пользователем"""
+    try:
+        cursor.execute("SELECT status, completed_at FROM user_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+def submit_task(user_id: int, task_id: int, proof: str = None):
+    """Отправка задания на проверку"""
+    try:
+        cursor.execute("""
+            INSERT INTO user_tasks (user_id, task_id, status, proof)
+            VALUES (?, ?, 'pending', ?)
+        """, (user_id, task_id, proof))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def approve_task(user_id: int, task_id: int, reward: int):
+    """Одобрение задания и начисление награды"""
+    try:
+        cursor.execute("""
+            UPDATE user_tasks SET status = 'approved' 
+            WHERE user_id = ? AND task_id = ?
+        """, (user_id, task_id))
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def reject_task(user_id: int, task_id: int):
+    """Отклонение задания"""
+    try:
+        cursor.execute("""
+            UPDATE user_tasks SET status = 'rejected' 
+            WHERE user_id = ? AND task_id = ?
+        """, (user_id, task_id))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def get_pending_tasks():
+    """Получение заданий на проверке"""
+    try:
+        cursor.execute("""
+            SELECT ut.*, u.username, t.title, t.reward 
+            FROM user_tasks ut
+            JOIN users u ON ut.user_id = u.user_id
+            JOIN tasks t ON ut.task_id = t.id
+            WHERE ut.status = 'pending'
+            ORDER BY ut.completed_at
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+def get_user_completed_tasks(user_id: int):
+    """Получение выполненных пользователем заданий"""
+    try:
+        cursor.execute("""
+            SELECT t.*, ut.status, ut.completed_at 
+            FROM user_tasks ut
+            JOIN tasks t ON ut.task_id = t.id
+            WHERE ut.user_id = ? AND ut.status = 'approved'
+        """, (user_id,))
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
+    """Проверка, может ли пользователь выполнить задание"""
+    try:
+        cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
+        completed = cursor.fetchone()["count"]
+        return completed < max_completions
+    except:
+        return False
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРИВАТКОЙ ==========
+def add_private_purchase(user_id: int, invoice_id: str, amount: float):
+    """Добавление покупки приватки"""
+    try:
+        cursor.execute("""
+            INSERT INTO private_purchases (user_id, invoice_id, amount)
+            VALUES (?, ?, ?)
+        """, (user_id, invoice_id, amount))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def mark_private_paid(invoice_id: str):
+    """Отметка оплаты приватки"""
+    try:
+        cursor.execute("UPDATE private_purchases SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
+        cursor.execute("""
+            UPDATE users SET private_access = 1 
+            WHERE user_id = (SELECT user_id FROM private_purchases WHERE invoice_id = ?)
+        """, (invoice_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def get_private_purchase(invoice_id: str):
+    """Получение информации о покупке приватки"""
+    try:
+        cursor.execute("SELECT * FROM private_purchases WHERE invoice_id = ?", (invoice_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+def has_private_access(user_id: int) -> bool:
+    """Проверка наличия доступа к приватке"""
+    try:
+        cursor.execute("SELECT private_access FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row and row["private_access"] == 1
+    except:
+        return False
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========
+def get_mandatory_channels():
+    """Получение списка обязательных каналов"""
+    try:
+        cursor.execute("SELECT channel_id, channel_name, channel_link FROM mandatory_channels")
+        channels = [dict(row) for row in cursor.fetchall()]
+        return channels
+    except Exception as e:
+        print(f"❌ Ошибка получения каналов ОП: {e}")
+        return []
+
 def add_mandatory_channel(channel_id, channel_name, channel_link):
+    """Добавление канала в ОП"""
     try:
         cursor.execute(
             "INSERT OR REPLACE INTO mandatory_channels (channel_id, channel_name, channel_link) VALUES (?, ?, ?)",
@@ -189,19 +406,23 @@ def add_mandatory_channel(channel_id, channel_name, channel_link):
         )
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка добавления канала ОП: {e}")
         return False
 
 def remove_mandatory_channel(channel_id):
+    """Удаление канала из ОП"""
     try:
         cursor.execute("DELETE FROM mandatory_channels WHERE channel_id = ?", (channel_id,))
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка удаления канала ОП: {e}")
         return False
 
-# ========== ФУНКЦИИ ДЛЯ АДМИНОВ ==========
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С АДМИНАМИ ==========
 def is_admin(user_id: int) -> bool:
+    """Проверка, является ли пользователь админом"""
     try:
         cursor.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
@@ -210,6 +431,7 @@ def is_admin(user_id: int) -> bool:
         return False
 
 def is_main_admin(user_id: int) -> bool:
+    """Проверка, является ли пользователь главным админом"""
     try:
         cursor.execute("SELECT is_main_admin FROM admins WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
@@ -218,6 +440,7 @@ def is_main_admin(user_id: int) -> bool:
         return False
 
 def can_manage_admins(user_id: int) -> bool:
+    """Проверка, может ли админ управлять другими админами"""
     try:
         if is_main_admin(user_id):
             return True
@@ -228,6 +451,7 @@ def can_manage_admins(user_id: int) -> bool:
         return False
 
 def get_all_admins():
+    """Получение списка всех админов"""
     try:
         cursor.execute("""
             SELECT a.user_id, a.username, a.added_at, a.is_main_admin, a.can_add_admins, u.username as current_username
@@ -240,21 +464,26 @@ def get_all_admins():
         return []
 
 def add_admin(admin_id: int, username: str, added_by: int, can_add: bool = False):
+    """Добавление нового админа"""
     try:
         cursor.execute("""
             INSERT OR REPLACE INTO users (user_id, username, is_verified, is_admin)
             VALUES (?, ?, 1, 1)
         """, (admin_id, username))
+        
         cursor.execute("""
             INSERT OR REPLACE INTO admins (user_id, username, added_by, added_at, is_main_admin, can_add_admins)
             VALUES (?, ?, ?, datetime('now'), 0, ?)
         """, (admin_id, username, added_by, 1 if can_add else 0))
+        
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка добавления админа: {e}")
         return False
 
 def remove_admin(admin_id: int):
+    """Удаление админа"""
     try:
         cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (admin_id,))
         cursor.execute("DELETE FROM admins WHERE user_id = ?", (admin_id,))
@@ -263,24 +492,38 @@ def remove_admin(admin_id: int):
     except:
         return False
 
-# ========== ФУНКЦИИ ДЛЯ БОНУСОВ ==========
-def has_received_subscribe_bonus(user_id: int) -> bool:
+def update_admin_permissions(admin_id: int, can_add: bool):
+    """Обновление прав админа"""
     try:
-        cursor.execute("SELECT subscribe_bonus_received FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        return row and row["subscribe_bonus_received"] == 1
-    except:
-        return False
-
-def mark_subscribe_bonus_received(user_id: int):
-    try:
-        cursor.execute("UPDATE users SET subscribe_bonus_received = 1 WHERE user_id = ?", (user_id,))
+        cursor.execute("UPDATE admins SET can_add_admins = ? WHERE user_id = ?", (1 if can_add else 0, admin_id))
         conn.commit()
         return True
     except:
         return False
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С БОНУСАМИ ==========
+def has_received_subscribe_bonus(user_id: int) -> bool:
+    """Проверка, получал ли пользователь бонус за подписку"""
+    try:
+        cursor.execute("SELECT subscribe_bonus_received FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row and row["subscribe_bonus_received"] == 1
+    except Exception as e:
+        print(f"❌ Ошибка проверки бонуса: {e}")
+        return False
+
+def mark_subscribe_bonus_received(user_id: int):
+    """Отметить, что пользователь получил бонус за подписку"""
+    try:
+        cursor.execute("UPDATE users SET subscribe_bonus_received = 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка отметки бонуса: {e}")
+        return False
+
 def update_last_bonus(user_id: int, timestamp: int):
+    """Обновление времени последнего бонуса"""
     try:
         cursor.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (timestamp, user_id))
         conn.commit()
@@ -289,6 +532,7 @@ def update_last_bonus(user_id: int, timestamp: int):
         return False
 
 def get_bonus_stats():
+    """Получение статистики по бонусам"""
     try:
         cursor.execute("SELECT COUNT(*) as users_took_bonus FROM users WHERE last_bonus > 0")
         row = cursor.fetchone()
@@ -296,8 +540,9 @@ def get_bonus_stats():
     except:
         return {"users_took_bonus": 0}
 
-# ========== ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ==========
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ ==========
 def get_user(user_id: int):
+    """Получение информации о пользователе"""
     try:
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
@@ -306,6 +551,7 @@ def get_user(user_id: int):
         return None
 
 def update_user_balance(user_id: int, amount: int):
+    """Обновление баланса пользователя"""
     try:
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
         conn.commit()
@@ -313,15 +559,8 @@ def update_user_balance(user_id: int, amount: int):
     except:
         return False
 
-def get_referrals_count(user_id: int) -> int:
-    try:
-        cursor.execute("SELECT COUNT(*) as count FROM users WHERE referrer = ?", (user_id,))
-        row = cursor.fetchone()
-        return row["count"] if row else 0
-    except:
-        return 0
-
 def get_user_by_ref_code(ref_code: str):
+    """Получение пользователя по реферальному коду"""
     try:
         cursor.execute("SELECT user_id FROM users WHERE ref_code = ?", (ref_code,))
         row = cursor.fetchone()
@@ -329,7 +568,17 @@ def get_user_by_ref_code(ref_code: str):
     except:
         return None
 
+def get_referrals_count(user_id: int) -> int:
+    """Получение количества рефералов пользователя"""
+    try:
+        cursor.execute("SELECT COUNT(*) as count FROM users WHERE referrer = ?", (user_id,))
+        row = cursor.fetchone()
+        return row["count"] if row else 0
+    except:
+        return 0
+
 def get_top_referrers(limit: int = 10):
+    """Получение топ рефереров"""
     try:
         cursor.execute("""
             SELECT u.user_id, u.username, u.balance, COUNT(r.user_id) as referrals_count
@@ -344,16 +593,39 @@ def get_top_referrers(limit: int = 10):
     except:
         return []
 
-# ========== ФУНКЦИИ ДЛЯ ПЛАТЕЖЕЙ ==========
-def add_payment(invoice_id: str, user_id: int, amount: int):
+def get_pending_referrer_bonus(user_id: int):
+    """Получение отложенного реферального бонуса"""
     try:
-        cursor.execute("INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)", (invoice_id, user_id, amount))
+        cursor.execute("SELECT pending_referrer_bonus FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row["pending_referrer_bonus"] if row else None
+    except:
+        return None
+
+def clear_pending_referrer_bonus(user_id: int):
+    """Очистка отложенного реферального бонуса"""
+    try:
+        cursor.execute("UPDATE users SET pending_referrer_bonus = NULL WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПЛАТЕЖАМИ ==========
+def add_payment(invoice_id: str, user_id: int, amount: int):
+    """Добавление записи о платеже"""
+    try:
+        cursor.execute(
+            "INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)",
+            (invoice_id, user_id, amount)
+        )
         conn.commit()
         return True
     except:
         return False
 
 def mark_payment_paid(invoice_id: str):
+    """Отметка платежа как оплаченного"""
     try:
         cursor.execute("UPDATE payments SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
         conn.commit()
@@ -362,6 +634,7 @@ def mark_payment_paid(invoice_id: str):
         return False
 
 def get_payment(invoice_id: str):
+    """Получение информации о платеже"""
     try:
         cursor.execute("SELECT * FROM payments WHERE invoice_id = ?", (invoice_id,))
         row = cursor.fetchone()
@@ -383,6 +656,7 @@ def get_user_payments(user_id: int, limit: int = 10):
         return []
 
 def get_payments_stats():
+    """Получение статистики по платежам"""
     try:
         cursor.execute("""
             SELECT 
@@ -394,17 +668,24 @@ def get_payments_stats():
         """)
         return dict(cursor.fetchone())
     except:
-        return {"total_attempts": 0, "successful": 0, "pending": 0, "total_candies": 0}
+        return {
+            "total_attempts": 0,
+            "successful": 0,
+            "pending": 0,
+            "total_candies": 0
+        }
 
-# ========== ФУНКЦИИ ДЛЯ ВИДЕО ==========
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ВИДЕО ==========
 def get_all_videos():
+    """Получение всех видео"""
     try:
-        cursor.execute("SELECT id, file_id, is_private FROM videos ORDER BY id")
+        cursor.execute("SELECT id, file_id FROM videos ORDER BY id")
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
 
 def get_video_count() -> int:
+    """Получение количества видео"""
     try:
         cursor.execute("SELECT COUNT(*) as count FROM videos")
         row = cursor.fetchone()
@@ -413,6 +694,7 @@ def get_video_count() -> int:
         return 0
 
 def add_video(file_id: str):
+    """Добавление видео"""
     try:
         cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
         conn.commit()
@@ -429,30 +711,45 @@ def get_user_watched_videos(user_id: int):
         return []
 
 def mark_video_watched(user_id: int, video_id: int):
+    """Отметка видео как просмотренного"""
     try:
-        cursor.execute("INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)", (user_id, video_id))
+        cursor.execute(
+            "INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)",
+            (user_id, video_id)
+        )
         conn.commit()
         return True
     except:
         return False
 
 def get_watched_stats():
+    """Получение статистики просмотров"""
     try:
-        cursor.execute("SELECT COUNT(DISTINCT user_id) as unique_viewers, COUNT(*) as total_views FROM user_videos")
+        cursor.execute("""
+            SELECT 
+                COUNT(DISTINCT user_id) as unique_viewers,
+                COUNT(*) as total_views
+            FROM user_videos
+        """)
         return dict(cursor.fetchone())
     except:
         return {"unique_viewers": 0, "total_views": 0}
 
-# ========== ФУНКЦИИ ДЛЯ ПРОМОКОДОВ ==========
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРОМОКОДАМИ ==========
 def add_promo_code(code: str, reward: int, activations: int):
+    """Добавление промокода"""
     try:
-        cursor.execute("INSERT INTO promocodes (code, reward, activations_left) VALUES (?, ?, ?)", (code, reward, activations))
+        cursor.execute(
+            "INSERT INTO promocodes (code, reward, activations_left) VALUES (?, ?, ?)",
+            (code, reward, activations)
+        )
         conn.commit()
         return True
     except:
         return False
 
 def get_promo_code(code: str):
+    """Получение информации о промокоде"""
     try:
         cursor.execute("SELECT * FROM promocodes WHERE code = ?", (code,))
         row = cursor.fetchone()
@@ -461,6 +758,7 @@ def get_promo_code(code: str):
         return None
 
 def use_promo_code(code: str, user_id: int):
+    """Использование промокода"""
     try:
         cursor.execute("UPDATE promocodes SET activations_left = activations_left - 1 WHERE code = ?", (code,))
         cursor.execute("INSERT INTO used_promocodes (user_id, code) VALUES (?, ?)", (user_id, code))
@@ -470,13 +768,18 @@ def use_promo_code(code: str, user_id: int):
         return False
 
 def check_promo_used(user_id: int, code: str) -> bool:
+    """Проверка, использовал ли пользователь промокод"""
     try:
-        cursor.execute("SELECT 1 FROM used_promocodes WHERE user_id = ? AND code = ?", (user_id, code))
+        cursor.execute(
+            "SELECT 1 FROM used_promocodes WHERE user_id = ? AND code = ?",
+            (user_id, code)
+        )
         return cursor.fetchone() is not None
     except:
         return False
 
 def get_promo_stats():
+    """Получение статистики по промокодам"""
     try:
         cursor.execute("""
             SELECT 
@@ -489,8 +792,9 @@ def get_promo_stats():
     except:
         return {"total_codes": 0, "total_left": 0, "total_used": 0}
 
-# ========== СТАТИСТИКА ==========
+# ========== ФУНКЦИИ ДЛЯ ПОЛУЧЕНИЯ ОБЩЕЙ СТАТИСТИКИ ==========
 def get_total_users() -> int:
+    """Получение общего количества пользователей"""
     try:
         cursor.execute("SELECT COUNT(*) as count FROM users")
         row = cursor.fetchone()
@@ -499,6 +803,7 @@ def get_total_users() -> int:
         return 0
 
 def get_verified_users() -> int:
+    """Получение количества верифицированных пользователей"""
     try:
         cursor.execute("SELECT COUNT(*) as count FROM users WHERE is_verified = 1")
         row = cursor.fetchone()
@@ -507,6 +812,7 @@ def get_verified_users() -> int:
         return 0
 
 def get_users_with_balance() -> int:
+    """Получение количества пользователей с балансом > 0"""
     try:
         cursor.execute("SELECT COUNT(*) as count FROM users WHERE balance > 0")
         row = cursor.fetchone()
@@ -515,6 +821,7 @@ def get_users_with_balance() -> int:
         return 0
 
 def get_total_balance() -> int:
+    """Получение общего баланса всех пользователей"""
     try:
         cursor.execute("SELECT SUM(balance) as total FROM users")
         row = cursor.fetchone()
@@ -523,6 +830,7 @@ def get_total_balance() -> int:
         return 0
 
 def get_max_balance() -> int:
+    """Получение максимального баланса"""
     try:
         cursor.execute("SELECT MAX(balance) as max FROM users")
         row = cursor.fetchone()
@@ -531,6 +839,7 @@ def get_max_balance() -> int:
         return 0
 
 def get_avg_balance() -> float:
+    """Получение среднего баланса"""
     try:
         cursor.execute("SELECT AVG(balance) as avg FROM users")
         row = cursor.fetchone()
@@ -539,219 +848,18 @@ def get_avg_balance() -> float:
         return 0
 
 def get_referral_stats():
-    try:
-        cursor.execute("SELECT COUNT(*) as total_refs FROM users WHERE referrer IS NOT NULL")
-        row = cursor.fetchone()
-        return {"total_refs": row["total_refs"] if row else 0}
-    except:
-        return {"total_refs": 0}
-
-# ========== ФУНКЦИИ ДЛЯ ЗАДАНИЙ ==========
-
-def init_tasks_tables():
+    """Получение статистики по рефералам"""
     try:
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            description TEXT,
-            reward INTEGER NOT NULL,
-            type TEXT DEFAULT 'text',
-            content TEXT,
-            is_active INTEGER DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
+            SELECT 
+                COUNT(*) as total_refs,
+                COUNT(DISTINCT referrer) as unique_referrers
+            FROM users 
+            WHERE referrer IS NOT NULL
         """)
-        
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS completed_tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            task_id INTEGER,
-            status TEXT DEFAULT 'pending',
-            submission TEXT,
-            submission_type TEXT,
-            approved_by INTEGER,
-            completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(user_id, task_id)
-        )
-        """)
-        
-        conn.commit()
-        print("✅ Таблицы заданий созданы")
-    except Exception as e:
-        print(f"⚠️ Ошибка создания таблиц заданий: {e}")
-
-def get_all_tasks():
-    try:
-        cursor.execute("SELECT * FROM tasks WHERE is_active = 1 ORDER BY id")
-        return [dict(row) for row in cursor.fetchall()]
+        return dict(cursor.fetchone())
     except:
-        return []
+        return {"total_refs": 0, "unique_referrers": 0}
 
-def get_task(task_id: int):
-    try:
-        cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-    except:
-        return None
-
-def add_task(title: str, reward: int, description: str = "", task_type: str = "text", content: str = ""):
-    try:
-        cursor.execute("""
-            INSERT INTO tasks (title, description, reward, type, content, is_active)
-            VALUES (?, ?, ?, ?, ?, 1)
-        """, (title, description, reward, task_type, content))
-        conn.commit()
-        return cursor.lastrowid
-    except:
-        return None
-
-def delete_task(task_id: int):
-    try:
-        cursor.execute("UPDATE tasks SET is_active = 0 WHERE id = ?", (task_id,))
-        conn.commit()
-        return True
-    except:
-        return False
-
-def get_user_task_status(user_id: int, task_id: int):
-    try:
-        cursor.execute("SELECT status, submission, completed_at, id FROM completed_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-    except:
-        return None
-
-def submit_task(user_id: int, task_id: int, submission: str, submission_type: str):
-    try:
-        existing = get_user_task_status(user_id, task_id)
-        if existing:
-            if existing["status"] == "pending":
-                return False, "already_pending"
-            elif existing["status"] == "approved":
-                return False, "already_approved"
-        
-        cursor.execute("""
-            INSERT OR REPLACE INTO completed_tasks (user_id, task_id, status, submission, submission_type)
-            VALUES (?, ?, 'pending', ?, ?)
-        """, (user_id, task_id, submission, submission_type))
-        conn.commit()
-        return True, "ok"
-    except:
-        return False, "error"
-
-def approve_task(submission_id: int, admin_id: int):
-    try:
-        cursor.execute("SELECT user_id, task_id FROM completed_tasks WHERE id = ? AND status = 'pending'", (submission_id,))
-        submission = cursor.fetchone()
-        if not submission:
-            return False, 0
-        
-        user_id = submission["user_id"]
-        task_id = submission["task_id"]
-        task = get_task(task_id)
-        if not task:
-            return False, 0
-        
-        cursor.execute("UPDATE completed_tasks SET status = 'approved', approved_by = ? WHERE id = ?", (admin_id, submission_id))
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (task["reward"], user_id))
-        conn.commit()
-        return True, task["reward"]
-    except:
-        conn.rollback()
-        return False, 0
-
-def reject_task(submission_id: int, admin_id: int):
-    try:
-        cursor.execute("UPDATE completed_tasks SET status = 'rejected', approved_by = ? WHERE id = ? AND status = 'pending'", (admin_id, submission_id))
-        conn.commit()
-        return cursor.rowcount > 0
-    except:
-        return False
-
-def get_user_completed_tasks(user_id: int):
-    try:
-        cursor.execute("""
-            SELECT t.*, ct.status, ct.completed_at, ct.id as submission_id
-            FROM tasks t
-            LEFT JOIN completed_tasks ct ON t.id = ct.task_id AND ct.user_id = ?
-            WHERE t.is_active = 1
-            ORDER BY t.id
-        """, (user_id,))
-        return [dict(row) for row in cursor.fetchall()]
-    except:
-        return []
-
-def get_pending_submissions():
-    try:
-        cursor.execute("""
-            SELECT ct.id, ct.user_id, ct.task_id, ct.submission, ct.submission_type, 
-                   ct.completed_at, u.username, t.title, t.reward
-            FROM completed_tasks ct
-            JOIN users u ON ct.user_id = u.user_id
-            JOIN tasks t ON ct.task_id = t.id
-            WHERE ct.status = 'pending'
-            ORDER BY ct.completed_at DESC
-        """)
-        return [dict(row) for row in cursor.fetchall()]
-    except:
-        return []
-
-def get_tasks_stats():
-    try:
-        cursor.execute("SELECT COUNT(*) as total FROM tasks WHERE is_active = 1")
-        total = cursor.fetchone()["total"]
-        cursor.execute("SELECT COUNT(*) as pending FROM completed_tasks WHERE status = 'pending'")
-        pending = cursor.fetchone()["pending"]
-        cursor.execute("SELECT COUNT(*) as approved FROM completed_tasks WHERE status = 'approved'")
-        approved = cursor.fetchone()["approved"]
-        cursor.execute("SELECT COALESCE(SUM(reward), 0) as total_reward FROM completed_tasks ct JOIN tasks t ON ct.task_id = t.id WHERE ct.status = 'approved'")
-        total_reward = cursor.fetchone()["total_reward"]
-        return {"total": total, "pending": pending, "approved": approved, "total_reward": total_reward}
-    except:
-        return {"total": 0, "pending": 0, "approved": 0, "total_reward": 0}
-
-# ========== ФУНКЦИИ ДЛЯ ПРИВАТКИ ==========
-
-def has_private_access(user_id: int) -> bool:
-    try:
-        cursor.execute("SELECT 1 FROM private_access WHERE user_id = ?", (user_id,))
-        return cursor.fetchone() is not None
-    except:
-        return False
-
-def grant_private_access(user_id: int):
-    try:
-        cursor.execute("INSERT OR REPLACE INTO private_access (user_id) VALUES (?)", (user_id,))
-        conn.commit()
-        return True
-    except:
-        return False
-
-# ========== ИНИЦИАЛИЗАЦИЯ ==========
-
+# Инициализация при импорте
 init_db()
-init_tasks_tables()
-
-# Создаём таблицу private_access
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS private_access (
-    user_id INTEGER PRIMARY KEY,
-    purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-""")
-
-# Добавляем колонку is_private если её нет
-try:
-    cursor.execute("SELECT is_private FROM videos LIMIT 1")
-except:
-    try:
-        cursor.execute("ALTER TABLE videos ADD COLUMN is_private INTEGER DEFAULT 0")
-        print("✅ Добавлена колонка is_private")
-    except:
-        pass
-
-conn.commit()
-print("✅ База данных полностью готова!")
