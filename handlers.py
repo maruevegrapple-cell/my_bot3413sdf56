@@ -243,6 +243,7 @@ async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = 
             await call.answer()
     except Exception as e:
         logger.error(f"Error in safe_answer: {e}")
+        # Игнорируем ошибку, не выбрасываем исключение
 
 # ================= ФУНКЦИЯ ДЛЯ ПРОВЕРКИ ДОСТУПА =================
 async def check_access(bot, user_id: int, state: FSMContext, message: Message = None, call: CallbackQuery = None) -> bool:
@@ -1907,10 +1908,11 @@ async def admin_tasks_menu(call: CallbackQuery):
     user_id = call.from_user.id
     
     if not check_admin_access(user_id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        await call.answer("❌ Нет доступа", show_alert=True)
         return
     
-    await safe_answer(call)
+    await call.answer()
+    
     await call.message.answer(
         "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
         "Выберите действие:",
