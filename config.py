@@ -28,6 +28,9 @@ CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/+Dn7pNdHVYPM4ODgx")
 CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003707313473"))
 ANON_CHAT_LINK = os.environ.get("ANON_CHAT_LINK", "https://t.me/anonaskbot?start=f21rnoq")
 
+# ================= PRIVATE =================
+PRIVATE_PRICE_USD = float(os.environ.get("PRIVATE_PRICE_USD", "5"))
+
 # ================= SPAM PROTECTION =================
 SPAM_COOLDOWN = int(os.environ.get("SPAM_COOLDOWN", "3"))
 
