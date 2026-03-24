@@ -1904,7 +1904,9 @@ async def reject_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
 @router.callback_query(F.data == "admin_tasks")
 async def admin_tasks_menu(call: CallbackQuery):
     """Меню управления заданиями"""
-    if not check_admin_access(call.from_user.id)[0]:
+    user_id = call.from_user.id
+    
+    if not check_admin_access(user_id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
