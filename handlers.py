@@ -122,19 +122,14 @@ class OpStates(StatesGroup):
     waiting_for_channel_name = State()
     waiting_for_channel_link = State()
 
-class TaskStates(StatesGroup):
-    waiting_for_task_proof = State()
-
 class CreateTaskStates(StatesGroup):
     waiting_for_title = State()
     waiting_for_description = State()
     waiting_for_reward = State()
-    waiting_for_type = State()
-    waiting_for_link = State()
-    waiting_for_text = State()
-    waiting_for_photo = State()
-    waiting_for_video = State()
     waiting_for_max_completions = State()
+
+class TaskStates(StatesGroup):
+    waiting_for_task_photo = State()
 
 class AdminTaskStates(StatesGroup):
     waiting_for_task_id_to_delete = State()
@@ -1520,7 +1515,8 @@ async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     await call.message.answer(
         "📋 <b>ДОСТУПНЫЕ ЗАДАНИЯ</b>\n\n"
-        "Выполняйте задания и получайте награды!",
+        "Выполняйте задания и получайте награды!\n"
+        "📸 Для выполнения задания отправьте скриншот.",
         reply_markup=get_tasks_menu(user_tasks)
     )
 
@@ -1546,7 +1542,8 @@ async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"📋 <b>{task['title']}</b>\n\n"
         f"📝 {task['description']}\n\n"
         f"🎁 Награда: +{task['reward']} 🍬\n"
-        f"📊 Макс. выполнений: {task['max_completions']}\n"
+        f"📊 Макс. выполнений: {task['max_completions']}\n\n"
+        f"📸 Отправьте скриншот выполнения задания!"
     )
     
     if task_status == "pending":
@@ -1554,17 +1551,16 @@ async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
     elif task_status == "approved":
         text += "\n✅ Задание уже выполнено"
     
-    await call.message.answer(
-        text,
-        reply_markup=get_task_action_menu(
-            task_id, task["title"], task["reward"],
-            task["task_type"], task["task_data"], task_status
-        )
-    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📸 Отправить скриншот", callback_data=f"do_task_{task_id}")],
+        [InlineKeyboardButton(text="⬅️ Назад к заданиям", callback_data="tasks")]
+    ])
+    
+    await call.message.answer(text, reply_markup=keyboard)
 
 @router.callback_query(F.data.startswith("do_task_"))
 async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
-    """Выполнение задания"""
+    """Начало выполнения задания - запрос скриншота"""
     user_id = call.from_user.id
     
     if not await check_access(bot, user_id, state, call=call):
@@ -1586,135 +1582,21 @@ async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "⏳ Задание уже на проверке", show_alert=True)
         return
     
-    if task["task_type"] == "link":
-        await state.update_data(task_id=task_id)
-        await state.set_state(TaskStates.waiting_for_task_proof)
-        await call.message.answer(
-            f"🔗 <b>Задание: {task['title']}</b>\n\n"
-            f"1. Перейдите по ссылке: {task['task_data']}\n"
-            f"2. Нажмите кнопку \"Я выполнил\"\n\n"
-            f"После подтверждения вы получите награду!",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔗 Перейти по ссылке", url=task["task_data"])],
-                [InlineKeyboardButton(text="✅ Я выполнил", callback_data=f"submit_task_{task_id}")]
-            ])
-        )
-    else:
-        # Для текстовых, фото и видео заданий - пользователь отправляет доказательство
-        await state.update_data(task_id=task_id)
-        await state.set_state(TaskStates.waiting_for_task_proof)
-        await call.message.answer(
-            f"📝 <b>Задание: {task['title']}</b>\n\n"
-            f"{task['description']}\n\n"
-            f"Отправьте доказательство выполнения (текст, фото или видео):"
-        )
+    await state.update_data(task_id=task_id)
+    await state.set_state(TaskStates.waiting_for_task_photo)
+    await safe_answer(call)
+    await call.message.answer(
+        f"📸 <b>Задание: {task['title']}</b>\n\n"
+        f"{task['description']}\n\n"
+        f"Отправьте скриншот выполнения задания:"
+    )
 
-@router.callback_query(F.data.startswith("submit_task_"))
-async def submit_task_link(call: CallbackQuery, state: FSMContext, bot: Bot):
-    """Отправка задания со ссылкой"""
-    user_id = call.from_user.id
-    
-    if not await check_access(bot, user_id, state, call=call):
-        return
-    
-    task_id = int(call.data.split("_")[2])
-    task = get_task(task_id)
-    
-    if not task or not task["is_active"]:
-        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
-        return
-    
-    if not can_complete_task(user_id, task_id, task["max_completions"]):
-        await safe_answer(call, "❌ Вы уже выполнили это задание", show_alert=True)
-        return
-    
-    if submit_task(user_id, task_id, "Выполнено через ссылку"):
-        await safe_answer(call, "✅ Задание отправлено на проверку!")
-        
-        admins = get_all_admins()
-        for admin in admins:
-            try:
-                await bot.send_message(
-                    admin["user_id"],
-                    f"📋 <b>НОВОЕ ЗАДАНИЕ НА ПРОВЕРКУ</b>\n\n"
-                    f"👤 Пользователь: @{call.from_user.username or 'нет'}\n"
-                    f"🆔 ID: {user_id}\n"
-                    f"📝 Задание: {task['title']}\n"
-                    f"🎁 Награда: +{task['reward']} 🍬\n\n"
-                    f"Способ выполнения: переход по ссылке",
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_task_{task_id}_{user_id}"),
-                            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
-                        ]
-                    ])
-                )
-            except:
-                pass
-        
-        await call.message.edit_text(f"✅ Задание отправлено на проверку!")
-    else:
-        await safe_answer(call, "❌ Ошибка при отправке")
-
-@router.message(TaskStates.waiting_for_task_proof, F.text)
-async def submit_task_text(message: Message, state: FSMContext, bot: Bot):
-    """Отправка текстового доказательства задания"""
-    user_id = message.from_user.id
-    proof = message.text
-    
-    data = await state.get_data()
-    task_id = data.get("task_id")
-    
-    if not task_id:
-        await state.clear()
-        return
-    
-    task = get_task(task_id)
-    
-    if not task or not task["is_active"]:
-        await message.answer("❌ Задание не найдено")
-        await state.clear()
-        return
-    
-    if not can_complete_task(user_id, task_id, task["max_completions"]):
-        await message.answer("❌ Вы уже выполнили это задание")
-        await state.clear()
-        return
-    
-    if submit_task(user_id, task_id, proof):
-        await message.answer("✅ Задание отправлено на проверку!")
-        
-        admins = get_all_admins()
-        for admin in admins:
-            try:
-                await bot.send_message(
-                    admin["user_id"],
-                    f"📋 <b>НОВОЕ ЗАДАНИЕ НА ПРОВЕРКУ</b>\n\n"
-                    f"👤 Пользователь: @{message.from_user.username or 'нет'}\n"
-                    f"🆔 ID: {user_id}\n"
-                    f"📝 Задание: {task['title']}\n"
-                    f"🎁 Награда: +{task['reward']} 🍬\n\n"
-                    f"📄 Доказательство:\n{proof}",
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_task_{task_id}_{user_id}"),
-                            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
-                        ]
-                    ])
-                )
-            except:
-                pass
-    else:
-        await message.answer("❌ Ошибка при отправке")
-    
-    await state.clear()
-
-@router.message(TaskStates.waiting_for_task_proof, F.photo)
+@router.message(TaskStates.waiting_for_task_photo, F.photo)
 async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
-    """Отправка фото-доказательства задания"""
+    """Отправка скриншота задания"""
     user_id = message.from_user.id
     photo = message.photo[-1]
-    caption = message.caption or "Фото отправлено"
+    caption = message.caption or "Скриншот отправлен"
     
     data = await state.get_data()
     task_id = data.get("task_id")
@@ -1735,7 +1617,7 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     
-    if submit_task(user_id, task_id, f"Фото: {photo.file_id}\nОписание: {caption}"):
+    if submit_task(user_id, task_id, f"Скриншот: {photo.file_id}\nОписание: {caption}"):
         await message.answer("✅ Задание отправлено на проверку!")
         
         admins = get_all_admins()
@@ -1766,62 +1648,10 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
     
     await state.clear()
 
-@router.message(TaskStates.waiting_for_task_proof, F.video)
-async def submit_task_video(message: Message, state: FSMContext, bot: Bot):
-    """Отправка видео-доказательства задания"""
-    user_id = message.from_user.id
-    video = message.video
-    caption = message.caption or "Видео отправлено"
-    
-    data = await state.get_data()
-    task_id = data.get("task_id")
-    
-    if not task_id:
-        await state.clear()
-        return
-    
-    task = get_task(task_id)
-    
-    if not task or not task["is_active"]:
-        await message.answer("❌ Задание не найдено")
-        await state.clear()
-        return
-    
-    if not can_complete_task(user_id, task_id, task["max_completions"]):
-        await message.answer("❌ Вы уже выполнили это задание")
-        await state.clear()
-        return
-    
-    if submit_task(user_id, task_id, f"Видео: {video.file_id}\nОписание: {caption}"):
-        await message.answer("✅ Задание отправлено на проверку!")
-        
-        admins = get_all_admins()
-        for admin in admins:
-            try:
-                await bot.send_video(
-                    admin["user_id"],
-                    video=video.file_id,
-                    caption=(
-                        f"📋 <b>НОВОЕ ЗАДАНИЕ НА ПРОВЕРКУ</b>\n\n"
-                        f"👤 Пользователь: @{message.from_user.username or 'нет'}\n"
-                        f"🆔 ID: {user_id}\n"
-                        f"📝 Задание: {task['title']}\n"
-                        f"🎁 Награда: +{task['reward']} 🍬\n\n"
-                        f"📄 Описание: {caption}"
-                    ),
-                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_task_{task_id}_{user_id}"),
-                            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
-                        ]
-                    ])
-                )
-            except:
-                pass
-    else:
-        await message.answer("❌ Ошибка при отправке")
-    
-    await state.clear()
+@router.message(TaskStates.waiting_for_task_photo)
+async def task_photo_required(message: Message, state: FSMContext):
+    """Если пользователь прислал не фото"""
+    await message.answer("❌ Для выполнения задания нужно отправить СКРИНШОТ (фото)!")
 
 @router.callback_query(F.data.startswith("approve_task_"))
 async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1965,129 +1795,10 @@ async def admin_task_reward(message: Message, state: FSMContext):
     try:
         reward = int(message.text)
         await state.update_data(reward=reward)
-        await state.set_state(CreateTaskStates.waiting_for_type)
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔗 Ссылка", callback_data="create_task_type_link")],
-            [InlineKeyboardButton(text="📝 Текст", callback_data="create_task_type_text")],
-            [InlineKeyboardButton(text="📸 Фото", callback_data="create_task_type_photo")],
-            [InlineKeyboardButton(text="🎬 Видео", callback_data="create_task_type_video")]
-        ])
-        
-        await message.answer(
-            "📋 Выберите тип задания:",
-            reply_markup=keyboard
-        )
+        await state.set_state(CreateTaskStates.waiting_for_max_completions)
+        await message.answer("📊 Введите максимальное количество выполнений (1-999):")
     except ValueError:
         await message.answer("❌ Введите число")
-
-@router.callback_query(F.data == "create_task_type_link")
-async def create_task_type_link(call: CallbackQuery, state: FSMContext):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await state.update_data(task_type="link")
-    await safe_answer(call, "✅ Выбрано задание со ссылкой")
-    
-    try:
-        await call.message.delete()
-    except:
-        pass
-    
-    await state.set_state(CreateTaskStates.waiting_for_link)
-    await call.message.answer("🔗 Введите ссылку для задания:")
-
-@router.callback_query(F.data == "create_task_type_text")
-async def create_task_type_text(call: CallbackQuery, state: FSMContext):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await state.update_data(task_type="text")
-    await safe_answer(call, "✅ Выбрано текстовое задание")
-    
-    try:
-        await call.message.delete()
-    except:
-        pass
-    
-    await state.set_state(CreateTaskStates.waiting_for_text)
-    await call.message.answer("📝 Введите текст задания (что нужно сделать):")
-
-@router.callback_query(F.data == "create_task_type_photo")
-async def create_task_type_photo(call: CallbackQuery, state: FSMContext):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await state.update_data(task_type="photo")
-    await safe_answer(call, "✅ Выбрано фото-задание")
-    
-    try:
-        await call.message.delete()
-    except:
-        pass
-    
-    await state.set_state(CreateTaskStates.waiting_for_photo)
-    await call.message.answer("📸 Отправьте фото-задание (что нужно сделать):")
-
-@router.callback_query(F.data == "create_task_type_video")
-async def create_task_type_video(call: CallbackQuery, state: FSMContext):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await state.update_data(task_type="video")
-    await safe_answer(call, "✅ Выбрано видео-задание")
-    
-    try:
-        await call.message.delete()
-    except:
-        pass
-    
-    await state.set_state(CreateTaskStates.waiting_for_video)
-    await call.message.answer("🎬 Отправьте видео-задание (что нужно сделать):")
-
-@router.message(CreateTaskStates.waiting_for_link, F.text)
-async def admin_task_link(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    
-    await state.update_data(task_data=message.text.strip())
-    await state.set_state(CreateTaskStates.waiting_for_max_completions)
-    await message.answer("📊 Введите максимальное количество выполнений (1-999):")
-
-@router.message(CreateTaskStates.waiting_for_text, F.text)
-async def admin_task_text(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    
-    await state.update_data(task_data=message.text.strip())
-    await state.set_state(CreateTaskStates.waiting_for_max_completions)
-    await message.answer("📊 Введите максимальное количество выполнений (1-999):")
-
-@router.message(CreateTaskStates.waiting_for_photo, F.photo)
-async def admin_task_photo(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    
-    photo = message.photo[-1]
-    await state.update_data(task_data=f"photo_{photo.file_id}")
-    await state.update_data(task_caption=message.caption or "")
-    await state.set_state(CreateTaskStates.waiting_for_max_completions)
-    await message.answer("📊 Введите максимальное количество выполнений (1-999):")
-
-@router.message(CreateTaskStates.waiting_for_video, F.video)
-async def admin_task_video(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    
-    video = message.video
-    await state.update_data(task_data=f"video_{video.file_id}")
-    await state.update_data(task_caption=message.caption or "")
-    await state.set_state(CreateTaskStates.waiting_for_max_completions)
-    await message.answer("📊 Введите максимальное количество выполнений (1-999):")
 
 @router.message(CreateTaskStates.waiting_for_max_completions)
 async def admin_task_max_completions(message: Message, state: FSMContext):
@@ -2103,12 +1814,13 @@ async def admin_task_max_completions(message: Message, state: FSMContext):
         
         data = await state.get_data()
         
+        # Все задания типа "photo" - требуют фото для подтверждения
         task_id = add_task(
             title=data.get("title", "Без названия"),
             description=data.get("description", ""),
             reward=data.get("reward", 0),
-            task_type=data.get("task_type", "text"),
-            task_data=data.get("task_data", None),
+            task_type="photo",
+            task_data=None,
             max_completions=max_completions
         )
         
@@ -2116,27 +1828,12 @@ async def admin_task_max_completions(message: Message, state: FSMContext):
             await message.answer(
                 f"✅ <b>Задание создано!</b>\n\n"
                 f"📋 Название: {data.get('title')}\n"
+                f"📝 Описание: {data.get('description')}\n"
                 f"🎁 Награда: +{data.get('reward')} 🍬\n"
                 f"📊 Макс. выполнений: {max_completions}\n"
-                f"🆔 ID: {task_id}"
+                f"🆔 ID: {task_id}\n\n"
+                f"📸 Для выполнения задания пользователь должен отправить скриншот."
             )
-            
-            # Отправляем превью для фото/видео заданий
-            if data.get("task_type") in ["photo", "video"]:
-                task_data = data.get("task_data", "")
-                caption = data.get("task_caption", "")
-                if task_data.startswith("photo_"):
-                    file_id = task_data.replace("photo_", "")
-                    await message.answer_photo(
-                        photo=file_id,
-                        caption=f"📸 Превью задания:\n{caption}"
-                    )
-                elif task_data.startswith("video_"):
-                    file_id = task_data.replace("video_", "")
-                    await message.answer_video(
-                        video=file_id,
-                        caption=f"🎬 Превью задания:\n{caption}"
-                    )
         else:
             await message.answer("❌ Ошибка при создании задания")
         
@@ -2335,7 +2032,7 @@ async def support_reply_send(message: Message, state: FSMContext, bot: Bot):
     user_id = data.get('reply_to_user')
     reply_text = message.text
     
-    # Проверяем, это ответ на задание или на поддержку
+    # Проверяем, это ответ на отклоненное задание
     explain_user_id = data.get('explain_user_id')
     explain_task_id = data.get('explain_task_id')
     
