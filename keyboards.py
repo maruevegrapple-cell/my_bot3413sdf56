@@ -136,7 +136,7 @@ op_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
 ])
 
-# ================= МАГАЗИН (СТАРЫЙ С ДОБАВЛЕННОЙ ПРИВАТКОЙ) =================
+# ================= МАГАЗИН =================
 shop_menu = InlineKeyboardMarkup(inline_keyboard=[
     [
         InlineKeyboardButton(text="🍬 50 • 💵 0.2", callback_data="pay_50"),
@@ -152,13 +152,13 @@ shop_menu = InlineKeyboardMarkup(inline_keyboard=[
     ],
     [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25%", callback_data="pay_custom")],
     [InlineKeyboardButton(text="⭐️ Для оплаты звездами нажми на меня!", url=ANON_CHAT_LINK)],
-    [InlineKeyboardButton(text="🔐 ПРИВАТКА | 599 ⭐️ / $5", callback_data="buy_private")],
+    [InlineKeyboardButton(text="🔐 ПРИВАТКА | 499 ⭐️ / $5", callback_data="buy_private")],
     [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
 ])
 
 # ================= МЕНЮ ВЫБОРА ОПЛАТЫ ПРИВАТКИ =================
 private_pay_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="⭐️ 599 звезд", callback_data="private_stars")],
+    [InlineKeyboardButton(text="⭐️ 499 звезд", callback_data="private_stars")],
     [InlineKeyboardButton(text="💰 Криптовалюта ($5)", callback_data="private_crypto")],
     [InlineKeyboardButton(text="⬅️ Назад в магазин", callback_data="shop")]
 ])

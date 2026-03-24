@@ -30,6 +30,7 @@ ANON_CHAT_LINK = os.environ.get("ANON_CHAT_LINK", "https://t.me/anonaskbot?start
 
 # ================= PRIVATE =================
 PRIVATE_PRICE_USD = float(os.environ.get("PRIVATE_PRICE_USD", "5"))
+PRIVATE_PRICE_STARS = 499
 
 # ================= SPAM PROTECTION =================
 SPAM_COOLDOWN = int(os.environ.get("SPAM_COOLDOWN", "3"))

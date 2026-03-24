@@ -1039,13 +1039,15 @@ async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not await check_access(bot, user_id, state, call=call):
         return
     
-    await call.message.answer(
-        "🍬 <b>Магазин конфет</b>\n\n"
+    text = (
+        "🍬 <b>МАГАЗИН КОНФЕТ</b>\n\n"
         "💰 Выберите количество конфет для покупки:\n\n"
-        "⭐️ 1 звезда = 3 конфеты\n"
-        "⭐️ 15 звезд (минималка) = 45 конфет",
-        reply_markup=shop_menu
+        "⭐️ 1 звезда = 3 🍬\n"
+        "⭐️ 15 звезд (минималка) = 45 🍬\n"
+        "⭐️ 100 звезд = 300 🍬"
     )
+    
+    await call.message.answer(text, reply_markup=shop_menu)
 
 @router.callback_query(F.data == "buy_private")
 async def buy_private(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1058,7 +1060,7 @@ async def buy_private(call: CallbackQuery, state: FSMContext, bot: Bot):
     await safe_answer(call)
     await call.message.answer(
         f"🔐 <b>ПОКУПКА ПРИВАТКИ</b>\n\n"
-        f"💰 Цена: {PRIVATE_PRICE_USD}$ или 599⭐️\n\n"
+        f"💰 Цена: {PRIVATE_PRICE_USD}$ или 499⭐️\n\n"
         f"Выберите способ оплаты:",
         reply_markup=private_pay_menu
     )
@@ -1077,8 +1079,9 @@ async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
         f"Для получения доступа к приватке:\n\n"
         f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
-        f"2. Напишите о том, что хотите купить приватку за звезды ( 599 ⭐️ )\n"
-        f"3. Ожидайте доступа!\n\n"
+        f"2. Напишите о том, что хотите купить приватку за звезды ( 499 ⭐️ )\n"
+        f"3. Оплатите гифтами (подарками, самые обычные, без NFT!)\n"
+        f"4. Ожидайте доступа!\n\n"
         f"🔗 Ссылка для оплаты через анонимные сообщения:\n{ANON_CHAT_LINK}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
@@ -1988,10 +1991,8 @@ async def admin_task_type(call: CallbackQuery, state: FSMContext):
         await state.set_state(TaskStates.waiting_for_video)
         await call.message.answer("🎬 Отправьте видео-задание (что нужно сделать):")
     
-    # После этого переходим к max_completions
     await state.set_state(TaskStates.waiting_for_max_completions)
 
-# Исправляем порядок: сначала собираем данные, потом спрашиваем max_completions
 @router.message(TaskStates.waiting_for_link)
 async def admin_task_link(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
