@@ -1902,16 +1902,15 @@ async def reject_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
 
 # ================= АДМИН-ЗАДАНИЯ =================
 @router.callback_query(F.data == "admin_tasks")
-async def admin_tasks_menu(call: CallbackQuery):
-    """Меню управления заданиями"""
+async def admin_tasks_callback(call: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки управления заданиями"""
     user_id = call.from_user.id
     
     if not check_admin_access(user_id)[0]:
-        await call.answer("❌ Нет доступа", show_alert=True)
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
-    await call.answer()
-    
+    await safe_answer(call)
     await call.message.edit_text(
         "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
         "Выберите действие:",
