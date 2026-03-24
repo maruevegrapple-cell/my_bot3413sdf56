@@ -1980,6 +1980,7 @@ async def admin_task_type(call: CallbackQuery, state: FSMContext):
     admin_task_data[call.from_user.id]["task_type"] = task_type
     await safe_answer(call)
     
+    # Устанавливаем состояние в зависимости от типа
     if task_type == "link":
         await state.set_state(TaskStates.waiting_for_link)
         await call.message.answer("🔗 Введите ссылку для задания:")
@@ -1992,10 +1993,8 @@ async def admin_task_type(call: CallbackQuery, state: FSMContext):
     elif task_type == "video":
         await state.set_state(TaskStates.waiting_for_video)
         await call.message.answer("🎬 Отправьте видео-задание (что нужно сделать):")
-    
-    await state.set_state(TaskStates.waiting_for_max_completions)
 
-@router.message(TaskStates.waiting_for_link)
+@router.message(TaskStates.waiting_for_link, F.text)
 async def admin_task_link(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
@@ -2004,7 +2003,7 @@ async def admin_task_link(message: Message, state: FSMContext):
     await state.set_state(TaskStates.waiting_for_max_completions)
     await message.answer("📊 Введите максимальное количество выполнений (1-999):")
 
-@router.message(TaskStates.waiting_for_text)
+@router.message(TaskStates.waiting_for_text, F.text)
 async def admin_task_text(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
         return
