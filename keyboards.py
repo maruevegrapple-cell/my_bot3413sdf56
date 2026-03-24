@@ -44,7 +44,7 @@ def get_tasks_menu(user_tasks):
         elif task.get("status") == "pending":
             emoji = "⏳"
         else:
-            emoji = "❌"
+            emoji = "📋"
         
         keyboard.append([InlineKeyboardButton(
             text=f"{emoji} {task['title']} | +{task['reward']} 🍬",
@@ -59,11 +59,10 @@ def get_tasks_menu(user_tasks):
 def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_type: str, task_data: str, task_status: str = None):
     keyboard = []
     
-    # Если задание не выполнено и не на проверке
     if task_status != "approved" and task_status != "pending":
         if task_type == "link":
             keyboard.append([InlineKeyboardButton(text="🔗 Перейти по ссылке", url=task_data)])
-            keyboard.append([InlineKeyboardButton(text="✅ Выполнил", callback_data=f"do_task_{task_id}")])
+            keyboard.append([InlineKeyboardButton(text="✅ Я выполнил", callback_data=f"submit_task_{task_id}")])
         elif task_type == "text":
             keyboard.append([InlineKeyboardButton(text="📝 Выполнить задание", callback_data=f"do_task_{task_id}")])
         elif task_type == "photo" or task_type == "video":
@@ -137,38 +136,39 @@ op_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
 ])
 
-# ================= МАГАЗИН =================
+# ================= МАГАЗИН (СТАРЫЙ С ДОБАВЛЕННОЙ ПРИВАТКОЙ) =================
 shop_menu = InlineKeyboardMarkup(inline_keyboard=[
     [
-        InlineKeyboardButton(text="🍬 50 • 💵 0.2$", callback_data="pay_50"),
-        InlineKeyboardButton(text="🍬 100 • 💵 0.3$", callback_data="pay_100")
+        InlineKeyboardButton(text="🍬 50 • 💵 0.2", callback_data="pay_50"),
+        InlineKeyboardButton(text="🍬 100 • 💵 0.3", callback_data="pay_100")
     ],
     [
-        InlineKeyboardButton(text="🍬 140 • 💵 0.4$", callback_data="pay_140"),
-        InlineKeyboardButton(text="🍬 170 • 💵 0.5$", callback_data="pay_170")
+        InlineKeyboardButton(text="🍬 140 • 💵 0.4", callback_data="pay_140"),
+        InlineKeyboardButton(text="🍬 170 • 💵 0.5", callback_data="pay_170")
     ],
     [
-        InlineKeyboardButton(text="🍬 200 • 💵 0.6$", callback_data="pay_200"),
-        InlineKeyboardButton(text="🍬 333 • 💵 1.0$", callback_data="pay_333")
+        InlineKeyboardButton(text="🍬 200 • 💵 0.6", callback_data="pay_200"),
+        InlineKeyboardButton(text="🍬 333 • 💵 1.0", callback_data="pay_333")
     ],
     [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25%", callback_data="pay_custom")],
-    [InlineKeyboardButton(text="🔐 КУПИТЬ ПРИВАТКУ", callback_data="buy_private")],
+    [InlineKeyboardButton(text="⭐️ Для оплаты звездами нажми на меня!", url=ANON_CHAT_LINK)],
+    [InlineKeyboardButton(text="🔐 ПРИВАТКА | 599 ⭐️ / $5", callback_data="buy_private")],
     [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
 ])
 
 # ================= МЕНЮ ВЫБОРА ОПЛАТЫ ПРИВАТКИ =================
 private_pay_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="⭐️ 499 звезд", callback_data="private_stars")],
+    [InlineKeyboardButton(text="⭐️ 599 звезд", callback_data="private_stars")],
     [InlineKeyboardButton(text="💰 Криптовалюта ($5)", callback_data="private_crypto")],
     [InlineKeyboardButton(text="⬅️ Назад в магазин", callback_data="shop")]
 ])
 
 # ================= МЕНЮ ВЫБОРА ВАЛЮТЫ ДЛЯ ПРИВАТКИ =================
 def get_private_crypto_menu(assets):
+    from payments import get_asset_icon
     keyboard = []
     row = []
     for i, asset in enumerate(assets):
-        from payments import get_asset_icon
         icon = get_asset_icon(asset)
         row.append(InlineKeyboardButton(text=f"{icon} {asset}", callback_data=f"private_asset_{asset}"))
         if (i + 1) % 2 == 0:

@@ -1058,7 +1058,7 @@ async def buy_private(call: CallbackQuery, state: FSMContext, bot: Bot):
     await safe_answer(call)
     await call.message.answer(
         f"🔐 <b>ПОКУПКА ПРИВАТКИ</b>\n\n"
-        f"💰 Цена: {PRIVATE_PRICE_USD}$ или 499⭐️\n\n"
+        f"💰 Цена: {PRIVATE_PRICE_USD}$ или 599⭐️\n\n"
         f"Выберите способ оплаты:",
         reply_markup=private_pay_menu
     )
@@ -1073,17 +1073,15 @@ async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     await safe_answer(call)
     
-    # Отправляем ссылку на анонимный чат
     await call.message.answer(
         f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
         f"Для получения доступа к приватке:\n\n"
         f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
-        f"2. Отправьте <code>499</code> звезд\n"
-        f"3. Напишите <code>Купил приватку</code>\n\n"
-        f"После проверки администратор выдаст доступ вручную.\n\n"
-        f"🔗 <b>Ссылка для оплаты:</b>\n{ANON_CHAT_LINK}",
+        f"2. Напишите о том, что хотите купить приватку за звезды ( 599 ⭐️ )\n"
+        f"3. Ожидайте доступа!\n\n"
+        f"🔗 Ссылка для оплаты через анонимные сообщения:\n{ANON_CHAT_LINK}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⭐️ Оплатить звездами", url=ANON_CHAT_LINK)],
+            [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private")]
         ])
     )
@@ -1098,7 +1096,6 @@ async def private_pay_crypto(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     await safe_answer(call)
     
-    # Показываем меню выбора валюты
     sorted_assets = ["USDT", "TON"] + [a for a in AVAILABLE_ASSETS if a not in ["USDT", "TON"]]
     await call.message.answer(
         f"💳 <b>ОПЛАТА КРИПТОВАЛЮТОЙ</b>\n\n"
@@ -1587,7 +1584,6 @@ async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     if task["task_type"] == "link":
-        # Задание со ссылкой
         await state.update_data(task_id=task_id)
         await state.set_state(TaskStates.waiting_for_task_proof)
         await call.message.answer(
@@ -1601,7 +1597,6 @@ async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
             ])
         )
     elif task["task_type"] == "text":
-        # Текстовое задание
         await state.update_data(task_id=task_id)
         await state.set_state(TaskStates.waiting_for_task_proof)
         await call.message.answer(
@@ -1993,8 +1988,10 @@ async def admin_task_type(call: CallbackQuery, state: FSMContext):
         await state.set_state(TaskStates.waiting_for_video)
         await call.message.answer("🎬 Отправьте видео-задание (что нужно сделать):")
     
+    # После этого переходим к max_completions
     await state.set_state(TaskStates.waiting_for_max_completions)
 
+# Исправляем порядок: сначала собираем данные, потом спрашиваем max_completions
 @router.message(TaskStates.waiting_for_link)
 async def admin_task_link(message: Message, state: FSMContext):
     if not check_admin_access(message.from_user.id)[0]:
