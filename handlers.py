@@ -243,7 +243,6 @@ async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = 
             await call.answer()
     except Exception as e:
         logger.error(f"Error in safe_answer: {e}")
-        # Игнорируем ошибку, не выбрасываем исключение
 
 # ================= ФУНКЦИЯ ДЛЯ ПРОВЕРКИ ДОСТУПА =================
 async def check_access(bot, user_id: int, state: FSMContext, message: Message = None, call: CallbackQuery = None) -> bool:
@@ -1913,7 +1912,7 @@ async def admin_tasks_menu(call: CallbackQuery):
     
     await call.answer()
     
-    await call.message.answer(
+    await call.message.edit_text(
         "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
         "Выберите действие:",
         reply_markup=admin_tasks_menu
@@ -3043,7 +3042,7 @@ async def admin_panel(call: CallbackQuery):
         return
     
     await safe_answer(call)
-    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
+    await call.message.edit_text("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
 
 # ================= АДМИН - СТАТИСТИКА =================
 @router.callback_query(F.data == "admin_stats")
@@ -3473,13 +3472,13 @@ async def back_to_menu(call: CallbackQuery, state: FSMContext):
     has_access, _, is_main, can_manage = check_admin_access(user_id)
     
     if has_access:
-        await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
+        await call.message.edit_text("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
         return
     
     if not await check_access(call.bot, user_id, state, call=call):
         return
     
-    await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
+    await call.message.edit_text("🎥 Видео платформа", reply_markup=main_menu)
 
 # ================= ПРОФИЛЬ =================
 @router.callback_query(F.data == "profile")
