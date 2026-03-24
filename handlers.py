@@ -145,7 +145,6 @@ captcha_attempts = {}
 banned_users = {}
 broadcast_mode = set()
 custom_pay_wait = set()
-create_task_data = {}  # Временное хранилище для создания заданий
 
 # ================= КОМАНДА ДЛЯ НАЗНАЧЕНИЯ ГЛАВНОГО АДМИНА =================
 @router.message(Command("set_main_admin"))
@@ -1600,29 +1599,14 @@ async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
                 [InlineKeyboardButton(text="✅ Я выполнил", callback_data=f"submit_task_{task_id}")]
             ])
         )
-    elif task["task_type"] == "text":
+    else:
+        # Для текстовых, фото и видео заданий - пользователь отправляет доказательство
         await state.update_data(task_id=task_id)
         await state.set_state(TaskStates.waiting_for_task_proof)
         await call.message.answer(
             f"📝 <b>Задание: {task['title']}</b>\n\n"
             f"{task['description']}\n\n"
-            f"Отправьте текст для проверки:"
-        )
-    elif task["task_type"] == "photo":
-        await state.update_data(task_id=task_id)
-        await state.set_state(TaskStates.waiting_for_task_proof)
-        await call.message.answer(
-            f"📸 <b>Задание: {task['title']}</b>\n\n"
-            f"{task['description']}\n\n"
-            f"Отправьте фото для проверки:"
-        )
-    elif task["task_type"] == "video":
-        await state.update_data(task_id=task_id)
-        await state.set_state(TaskStates.waiting_for_task_proof)
-        await call.message.answer(
-            f"🎬 <b>Задание: {task['title']}</b>\n\n"
-            f"{task['description']}\n\n"
-            f"Отправьте видео для проверки:"
+            f"Отправьте доказательство выполнения (текст, фото или видео):"
         )
 
 @router.callback_query(F.data.startswith("submit_task_"))
@@ -1674,7 +1658,7 @@ async def submit_task_link(call: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.message(TaskStates.waiting_for_task_proof, F.text)
 async def submit_task_text(message: Message, state: FSMContext, bot: Bot):
-    """Отправка текстового задания"""
+    """Отправка текстового доказательства задания"""
     user_id = message.from_user.id
     proof = message.text
     
@@ -1727,7 +1711,7 @@ async def submit_task_text(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(TaskStates.waiting_for_task_proof, F.photo)
 async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
-    """Отправка фото-задания"""
+    """Отправка фото-доказательства задания"""
     user_id = message.from_user.id
     photo = message.photo[-1]
     caption = message.caption or "Фото отправлено"
@@ -1784,7 +1768,7 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
 
 @router.message(TaskStates.waiting_for_task_proof, F.video)
 async def submit_task_video(message: Message, state: FSMContext, bot: Bot):
-    """Отправка видео-задания"""
+    """Отправка видео-доказательства задания"""
     user_id = message.from_user.id
     video = message.video
     caption = message.caption or "Видео отправлено"
@@ -1889,17 +1873,43 @@ async def reject_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "❌ Задание отклонено")
         await call.message.edit_text(call.message.text + "\n\n❌ <b>ОТКЛОНЕНО</b>")
         
+        # Кнопка для ответа с пояснением
+        reply_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Написать пояснение", callback_data=f"explain_task_{task_id}_{user_id}")]
+        ])
+        
         try:
             await bot.send_message(
                 user_id,
                 f"❌ <b>Задание отклонено</b>\n\n"
                 f"📋 {task['title']}\n\n"
-                f"Попробуйте выполнить задание заново или обратитесь в поддержку."
+                f"Администратор может написать пояснение.",
+                reply_markup=reply_keyboard
             )
         except:
             pass
     else:
         await safe_answer(call, "❌ Ошибка", show_alert=True)
+
+@router.callback_query(F.data.startswith("explain_task_"))
+async def explain_task(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Админ пишет пояснение к отклоненному заданию"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    parts = call.data.split("_")
+    task_id = int(parts[2])
+    user_id = int(parts[3])
+    
+    await state.update_data(explain_user_id=user_id, explain_task_id=task_id)
+    await state.set_state(AdminStates.waiting_for_support_reply)
+    await call.message.answer(
+        f"✏️ <b>ПОЯСНЕНИЕ К ЗАДАНИЮ</b>\n\n"
+        f"Пользователь: {user_id}\n"
+        f"Задание: {task_id}\n\n"
+        f"Введите текст пояснения (почему задание отклонено):"
+    )
 
 # ================= АДМИН-ЗАДАНИЯ =================
 @router.callback_query(F.data == "admin_tasks")
@@ -1958,10 +1968,10 @@ async def admin_task_reward(message: Message, state: FSMContext):
         await state.set_state(CreateTaskStates.waiting_for_type)
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔗 Ссылка", callback_data="task_type_link")],
-            [InlineKeyboardButton(text="📝 Текст", callback_data="task_type_text")],
-            [InlineKeyboardButton(text="📸 Фото", callback_data="task_type_photo")],
-            [InlineKeyboardButton(text="🎬 Видео", callback_data="task_type_video")]
+            [InlineKeyboardButton(text="🔗 Ссылка", callback_data="create_task_type_link")],
+            [InlineKeyboardButton(text="📝 Текст", callback_data="create_task_type_text")],
+            [InlineKeyboardButton(text="📸 Фото", callback_data="create_task_type_photo")],
+            [InlineKeyboardButton(text="🎬 Видео", callback_data="create_task_type_video")]
         ])
         
         await message.answer(
@@ -1971,47 +1981,71 @@ async def admin_task_reward(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Введите число")
 
-@router.callback_query(F.data == "task_type_link")
-async def task_type_link(call: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "create_task_type_link")
+async def create_task_type_link(call: CallbackQuery, state: FSMContext):
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
     await state.update_data(task_type="link")
-    await safe_answer(call)
+    await safe_answer(call, "✅ Выбрано задание со ссылкой")
+    
+    try:
+        await call.message.delete()
+    except:
+        pass
+    
     await state.set_state(CreateTaskStates.waiting_for_link)
     await call.message.answer("🔗 Введите ссылку для задания:")
 
-@router.callback_query(F.data == "task_type_text")
-async def task_type_text(call: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "create_task_type_text")
+async def create_task_type_text(call: CallbackQuery, state: FSMContext):
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
     await state.update_data(task_type="text")
-    await safe_answer(call)
+    await safe_answer(call, "✅ Выбрано текстовое задание")
+    
+    try:
+        await call.message.delete()
+    except:
+        pass
+    
     await state.set_state(CreateTaskStates.waiting_for_text)
     await call.message.answer("📝 Введите текст задания (что нужно сделать):")
 
-@router.callback_query(F.data == "task_type_photo")
-async def task_type_photo(call: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "create_task_type_photo")
+async def create_task_type_photo(call: CallbackQuery, state: FSMContext):
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
     await state.update_data(task_type="photo")
-    await safe_answer(call)
+    await safe_answer(call, "✅ Выбрано фото-задание")
+    
+    try:
+        await call.message.delete()
+    except:
+        pass
+    
     await state.set_state(CreateTaskStates.waiting_for_photo)
     await call.message.answer("📸 Отправьте фото-задание (что нужно сделать):")
 
-@router.callback_query(F.data == "task_type_video")
-async def task_type_video(call: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "create_task_type_video")
+async def create_task_type_video(call: CallbackQuery, state: FSMContext):
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
     await state.update_data(task_type="video")
-    await safe_answer(call)
+    await safe_answer(call, "✅ Выбрано видео-задание")
+    
+    try:
+        await call.message.delete()
+    except:
+        pass
+    
     await state.set_state(CreateTaskStates.waiting_for_video)
     await call.message.answer("🎬 Отправьте видео-задание (что нужно сделать):")
 
@@ -2300,6 +2334,27 @@ async def support_reply_send(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     user_id = data.get('reply_to_user')
     reply_text = message.text
+    
+    # Проверяем, это ответ на задание или на поддержку
+    explain_user_id = data.get('explain_user_id')
+    explain_task_id = data.get('explain_task_id')
+    
+    if explain_user_id and explain_task_id:
+        # Это ответ на отклоненное задание
+        try:
+            await bot.send_message(
+                chat_id=explain_user_id,
+                text=f"📋 <b>ПОЯСНЕНИЕ К ЗАДАНИЮ</b>\n\n"
+                     f"Ваше задание было отклонено по следующей причине:\n\n{reply_text}\n\n"
+                     f"Попробуйте выполнить задание заново."
+            )
+            await message.answer(f"✅ Пояснение отправлено пользователю {explain_user_id}")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка отправки: {e}")
+        
+        await state.update_data(explain_user_id=None, explain_task_id=None)
+        await state.clear()
+        return
     
     if not user_id:
         await message.answer("❌ Ошибка: не указан получатель")
@@ -3456,7 +3511,6 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     try:
-        # Отправляем видео новым сообщением
         await call.message.answer_video(
             video["file_id"],
             caption=f"🎥 <b>Видео</b>",
