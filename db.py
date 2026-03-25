@@ -176,7 +176,7 @@ def init_db():
         except:
             pass
     
-    # Таблица заданий
+    # Таблица заданий - исправленная структура
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,7 +224,8 @@ def get_active_tasks():
     try:
         cursor.execute("SELECT * FROM tasks WHERE is_active = 1 ORDER BY id")
         return [dict(row) for row in cursor.fetchall()]
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка get_active_tasks: {e}")
         return []
 
 def get_task(task_id: int):
@@ -233,18 +234,21 @@ def get_task(task_id: int):
         cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка get_task: {e}")
         return None
 
-def add_task(title: str, description: str, reward: int, task_type: str = "text", task_data: str = None, max_completions: int = 1):
-    """Добавление нового задания"""
+def add_task(title: str, description: str, reward: int, task_type: str = "photo", task_data: str = None, max_completions: int = 1):
+    """Добавление нового задания - ИСПРАВЛЕНО!"""
     try:
         cursor.execute("""
-            INSERT INTO tasks (title, description, reward, task_type, task_data, max_completions)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (title, description, reward, task_type, task_data, max_completions, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))
         """, (title, description, reward, task_type, task_data, max_completions))
         conn.commit()
-        return cursor.lastrowid
+        task_id = cursor.lastrowid
+        print(f"✅ Задание добавлено: ID={task_id}, title={title}")
+        return task_id
     except Exception as e:
         print(f"❌ Ошибка добавления задания: {e}")
         return None
@@ -256,7 +260,8 @@ def remove_task(task_id: int):
         cursor.execute("DELETE FROM user_tasks WHERE task_id = ?", (task_id,))
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка удаления задания: {e}")
         return False
 
 def get_user_task_status(user_id: int, task_id: int):
@@ -265,7 +270,8 @@ def get_user_task_status(user_id: int, task_id: int):
         cursor.execute("SELECT status, completed_at FROM user_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
         row = cursor.fetchone()
         return dict(row) if row else None
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка get_user_task_status: {e}")
         return None
 
 def submit_task(user_id: int, task_id: int, proof: str = None):
@@ -277,7 +283,8 @@ def submit_task(user_id: int, task_id: int, proof: str = None):
         """, (user_id, task_id, proof))
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка submit_task: {e}")
         return False
 
 def approve_task(user_id: int, task_id: int, reward: int):
@@ -290,7 +297,8 @@ def approve_task(user_id: int, task_id: int, reward: int):
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка approve_task: {e}")
         return False
 
 def reject_task(user_id: int, task_id: int):
@@ -302,7 +310,8 @@ def reject_task(user_id: int, task_id: int):
         """, (user_id, task_id))
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка reject_task: {e}")
         return False
 
 def get_pending_tasks():
@@ -317,7 +326,8 @@ def get_pending_tasks():
             ORDER BY ut.completed_at
         """)
         return [dict(row) for row in cursor.fetchall()]
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка get_pending_tasks: {e}")
         return []
 
 def get_user_completed_tasks(user_id: int):
@@ -330,7 +340,8 @@ def get_user_completed_tasks(user_id: int):
             WHERE ut.user_id = ? AND ut.status = 'approved'
         """, (user_id,))
         return [dict(row) for row in cursor.fetchall()]
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка get_user_completed_tasks: {e}")
         return []
 
 def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
@@ -339,7 +350,8 @@ def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
         cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
         completed = cursor.fetchone()["count"]
         return completed < max_completions
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка can_complete_task: {e}")
         return False
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРИВАТКОЙ ==========
@@ -352,7 +364,8 @@ def add_private_purchase(user_id: int, invoice_id: str, amount: float):
         """, (user_id, invoice_id, amount))
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка add_private_purchase: {e}")
         return False
 
 def mark_private_paid(invoice_id: str):
@@ -365,7 +378,8 @@ def mark_private_paid(invoice_id: str):
         """, (invoice_id,))
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка mark_private_paid: {e}")
         return False
 
 def get_private_purchase(invoice_id: str):
@@ -374,7 +388,8 @@ def get_private_purchase(invoice_id: str):
         cursor.execute("SELECT * FROM private_purchases WHERE invoice_id = ?", (invoice_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка get_private_purchase: {e}")
         return None
 
 def has_private_access(user_id: int) -> bool:
@@ -383,7 +398,8 @@ def has_private_access(user_id: int) -> bool:
         cursor.execute("SELECT private_access FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
         return row and row["private_access"] == 1
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка has_private_access: {e}")
         return False
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========

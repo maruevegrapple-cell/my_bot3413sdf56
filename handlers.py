@@ -1794,6 +1794,9 @@ async def admin_task_reward(message: Message, state: FSMContext):
     
     try:
         reward = int(message.text)
+        if reward <= 0:
+            await message.answer("❌ Награда должна быть больше 0")
+            return
         await state.update_data(reward=reward)
         await state.set_state(CreateTaskStates.waiting_for_max_completions)
         await message.answer("📊 Введите максимальное количество выполнений (1-999):")
@@ -1814,11 +1817,33 @@ async def admin_task_max_completions(message: Message, state: FSMContext):
         
         data = await state.get_data()
         
+        title = data.get("title", "Без названия")
+        description = data.get("description", "")
+        reward = data.get("reward", 0)
+        
+        # Отладочный вывод
+        logger.info(f"📝 Создание задания:")
+        logger.info(f"   Название: {title}")
+        logger.info(f"   Описание: {description}")
+        logger.info(f"   Награда: {reward}")
+        logger.info(f"   Макс. выполнений: {max_completions}")
+        
+        # Проверка на пустые значения
+        if not title or title == "Без названия":
+            await message.answer("❌ Название задания не может быть пустым")
+            await state.clear()
+            return
+        
+        if reward <= 0:
+            await message.answer("❌ Награда должна быть больше 0")
+            await state.clear()
+            return
+        
         # Все задания типа "photo" - требуют фото для подтверждения
         task_id = add_task(
-            title=data.get("title", "Без названия"),
-            description=data.get("description", ""),
-            reward=data.get("reward", 0),
+            title=title,
+            description=description,
+            reward=reward,
             task_type="photo",
             task_data=None,
             max_completions=max_completions
@@ -1827,20 +1852,23 @@ async def admin_task_max_completions(message: Message, state: FSMContext):
         if task_id:
             await message.answer(
                 f"✅ <b>Задание создано!</b>\n\n"
-                f"📋 Название: {data.get('title')}\n"
-                f"📝 Описание: {data.get('description')}\n"
-                f"🎁 Награда: +{data.get('reward')} 🍬\n"
+                f"📋 Название: {title}\n"
+                f"📝 Описание: {description}\n"
+                f"🎁 Награда: +{reward} 🍬\n"
                 f"📊 Макс. выполнений: {max_completions}\n"
                 f"🆔 ID: {task_id}\n\n"
                 f"📸 Для выполнения задания пользователь должен отправить скриншот."
             )
         else:
-            await message.answer("❌ Ошибка при создании задания")
+            await message.answer("❌ Ошибка при создании задания. Проверьте базу данных.")
         
         await state.clear()
         
     except ValueError:
         await message.answer("❌ Введите корректное число")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при создании задания: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
 
 @router.callback_query(F.data == "admin_task_remove")
 async def admin_task_remove_start(call: CallbackQuery, state: FSMContext):
@@ -3265,18 +3293,21 @@ async def menu_back_handler(call: CallbackQuery, state: FSMContext):
     has_access, _, is_main, can_manage = check_admin_access(user_id)
     
     if has_access:
-        await call.message.edit_text("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
+        try:
+            await call.message.delete()
+        except:
+            pass
+        await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
         return
     
     if not await check_access(call.bot, user_id, state, call=call):
         return
     
     try:
-        # Удаляем сообщение с видео и показываем главное меню
         await call.message.delete()
         await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
-    except:
-        # Если не удалось удалить, просто отправляем новое сообщение
+    except Exception as e:
+        logger.error(f"Ошибка при возврате в меню: {e}")
         await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
 
 # ================= ПРОМОКОДЫ =================

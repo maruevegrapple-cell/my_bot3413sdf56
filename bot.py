@@ -40,8 +40,10 @@ print("="*50, file=sys.stderr)
 sys.stderr.flush()
 
 from config import BOT_TOKEN, MAIN_ADMIN_ID
+from db import init_db
+
+# ИМПОРТИРУЕМ ВСЕ ХЭНДЛЕРЫ ИЗ ФАЙЛА handlers.py
 from handlers import router
-from db import cursor, conn, init_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -68,8 +70,10 @@ async def run_web():
         sys.stderr.flush()
 
 # ================= ВОССТАНОВЛЕНИЕ БАЗЫ ИЗ JSON =================
-@router.message(Command("restore"))
-async def restore_db(message: Message):
+# Эти хэндлеры нужно добавить в router, но они сейчас в bot.py
+# Перенесем их в отдельные функции
+
+async def restore_db_handler(message: Message):
     user_id = message.from_user.id
     
     # Проверка на админа
@@ -79,8 +83,7 @@ async def restore_db(message: Message):
     
     await message.answer("📤 Отправь JSON файл с бэкапом")
 
-@router.message(F.document)
-async def restore_from_json(message: Message):
+async def restore_from_json_handler(message: Message):
     user_id = message.from_user.id
     
     # Проверка на админа
@@ -100,6 +103,7 @@ async def restore_from_json(message: Message):
         data = json.loads(file_bytes.read().decode('utf-8'))
         
         # Восстанавливаем базу
+        from db import cursor, conn
         restored_tables = []
         for table_name, table_data in data.items():
             if table_name == "sqlite_sequence":
@@ -144,9 +148,7 @@ async def restore_from_json(message: Message):
         await status_msg.edit_text(f"❌ Ошибка при восстановлении: {e}")
         traceback.print_exc(file=sys.stderr)
 
-# ================= ЭКСПОРТ БАЗЫ В JSON =================
-@router.message(Command("backup_db"))
-async def backup_db_command(message: Message):
+async def backup_db_command_handler(message: Message):
     user_id = message.from_user.id
     
     # Проверка на админа
@@ -157,6 +159,7 @@ async def backup_db_command(message: Message):
     status_msg = await message.answer("🔄 Создаю бэкап...")
     
     try:
+        from db import cursor
         # Получаем все таблицы
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = [row[0] for row in cursor.fetchall() if row[0] != 'sqlite_sequence']
@@ -202,9 +205,6 @@ async def backup_db_command(message: Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {e}")
 
-# ================= ОСТАЛЬНЫЕ ХЭНДЛЕРЫ =================
-# Здесь у тебя остальные хэндлеры из handlers.py
-
 async def main():
     try:
         print("🔵 Запускаем main()...", file=sys.stderr)
@@ -243,9 +243,16 @@ async def main():
         dp = Dispatcher(storage=storage)
         print("✅ Dispatcher created", file=sys.stderr)
         
+        # Добавляем роутер из handlers.py (там ВСЕ основные хэндлеры)
         dp.include_router(router)
-        print("✅ Router included", file=sys.stderr)
-
+        print("✅ Router from handlers.py included", file=sys.stderr)
+        
+        # Добавляем дополнительные хэндлеры для бэкапа
+        dp.message.register(restore_db_handler, Command("restore"))
+        dp.message.register(restore_from_json_handler, F.document)
+        dp.message.register(backup_db_command_handler, Command("backup_db"))
+        
+        # Блокировка пересылки
         @dp.message(F.forward_from | F.forward_from_chat)
         async def block_forward(message: Message):
             await message.delete()

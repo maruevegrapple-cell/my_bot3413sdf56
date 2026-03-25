@@ -179,10 +179,10 @@ def get_private_crypto_menu(assets):
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# ================= ВИДЕО МЕНЮ =================
+# ================= ВИДЕО МЕНЮ (ИСПРАВЛЕНО!) =================
 video_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
-    [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
+    [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]  # ИСПРАВЛЕНО!
 ])
 
 # ================= МЕНЮ ПОДТВЕРЖДЕНИЯ =================
