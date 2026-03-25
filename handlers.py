@@ -107,6 +107,7 @@ class AdminStates(StatesGroup):
     waiting_for_top_refs = State()
     waiting_for_user_search = State()
     waiting_for_user_info = State()
+    waiting_for_rework_message = State()
 
 class CaptchaStates(StatesGroup):
     waiting_for_captcha = State()
