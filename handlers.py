@@ -1857,11 +1857,42 @@ async def admin_task_remove_start(call: CallbackQuery, state: FSMContext):
         await call.message.answer("📭 Нет активных заданий")
         return
     
-    text = "📋 <b>Список заданий:</b>\n\n"
+    # Создаем клавиатуру с кнопками для каждого задания
+    keyboard = []
     for task in tasks:
-        text += f"🆔 {task['id']} | {task['title']} | +{task['reward']} 🍬\n"
+        keyboard.append([InlineKeyboardButton(
+            text=f"❌ {task['title']} (ID: {task['id']})",
+            callback_data=f"delete_task_{task['id']}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_tasks")])
     
-    await call.message.answer(text + "\n🗑 Введите ID задания для удаления:")
+    await call.message.answer(
+        "🗑 <b>Выберите задание для удаления:</b>\n\n"
+        "Или введите ID задания:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
+@router.callback_query(F.data.startswith("delete_task_"))
+async def admin_task_remove_by_button(call: CallbackQuery, state: FSMContext):
+    """Удаление задания по кнопке"""
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    task_id = int(call.data.replace("delete_task_", ""))
+    task = get_task(task_id)
+    
+    if not task:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    
+    if remove_task(task_id):
+        await safe_answer(call, f"✅ Задание \"{task['title']}\" удалено!")
+        await call.message.edit_text(f"✅ Задание ID {task_id} удалено")
+    else:
+        await safe_answer(call, "❌ Ошибка при удалении", show_alert=True)
+    
+    await state.clear()
 
 @router.message(AdminTaskStates.waiting_for_task_id_to_delete)
 async def admin_task_remove(message: Message, state: FSMContext):
@@ -3224,6 +3255,29 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
     except Exception as e:
         logger.error(f"❌ Error sending video: {e}")
         await safe_answer(call, "❌ Ошибка отправки видео", show_alert=True)
+
+# ================= ОБРАБОТЧИК КНОПКИ "В МЕНЮ" =================
+@router.callback_query(F.data == "menu_back")
+async def menu_back_handler(call: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'В меню' при просмотре видео"""
+    user_id = call.from_user.id
+    
+    has_access, _, is_main, can_manage = check_admin_access(user_id)
+    
+    if has_access:
+        await call.message.edit_text("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
+        return
+    
+    if not await check_access(call.bot, user_id, state, call=call):
+        return
+    
+    try:
+        # Удаляем сообщение с видео и показываем главное меню
+        await call.message.delete()
+        await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
+    except:
+        # Если не удалось удалить, просто отправляем новое сообщение
+        await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
 
 # ================= ПРОМОКОДЫ =================
 @router.callback_query(F.data == "promo")
