@@ -1703,7 +1703,6 @@ async def reject_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "❌ Задание отклонено")
         await call.message.edit_text(call.message.text + "\n\n❌ <b>ОТКЛОНЕНО</b>")
         
-        # Кнопка для ответа с пояснением
         reply_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✏️ Написать пояснение", callback_data=f"explain_task_{task_id}_{user_id}")]
         ])
@@ -1821,14 +1820,12 @@ async def admin_task_max_completions(message: Message, state: FSMContext):
         description = data.get("description", "")
         reward = data.get("reward", 0)
         
-        # Отладочный вывод
         logger.info(f"📝 Создание задания:")
         logger.info(f"   Название: {title}")
         logger.info(f"   Описание: {description}")
         logger.info(f"   Награда: {reward}")
         logger.info(f"   Макс. выполнений: {max_completions}")
         
-        # Проверка на пустые значения
         if not title or title == "Без названия":
             await message.answer("❌ Название задания не может быть пустым")
             await state.clear()
@@ -1839,7 +1836,6 @@ async def admin_task_max_completions(message: Message, state: FSMContext):
             await state.clear()
             return
         
-        # Все задания типа "photo" - требуют фото для подтверждения
         task_id = add_task(
             title=title,
             description=description,
@@ -1885,7 +1881,6 @@ async def admin_task_remove_start(call: CallbackQuery, state: FSMContext):
         await call.message.answer("📭 Нет активных заданий")
         return
     
-    # Создаем клавиатуру с кнопками для каждого задания
     keyboard = []
     for task in tasks:
         keyboard.append([InlineKeyboardButton(
@@ -2091,12 +2086,10 @@ async def support_reply_send(message: Message, state: FSMContext, bot: Bot):
     user_id = data.get('reply_to_user')
     reply_text = message.text
     
-    # Проверяем, это ответ на отклоненное задание
     explain_user_id = data.get('explain_user_id')
     explain_task_id = data.get('explain_task_id')
     
     if explain_user_id and explain_task_id:
-        # Это ответ на отклоненное задание
         try:
             await bot.send_message(
                 chat_id=explain_user_id,

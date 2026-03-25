@@ -176,7 +176,7 @@ def init_db():
         except:
             pass
     
-    # Таблица заданий - исправленная структура
+    # Таблица заданий
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,7 +239,7 @@ def get_task(task_id: int):
         return None
 
 def add_task(title: str, description: str, reward: int, task_type: str = "photo", task_data: str = None, max_completions: int = 1):
-    """Добавление нового задания - ИСПРАВЛЕНО!"""
+    """Добавление нового задания"""
     try:
         cursor.execute("""
             INSERT INTO tasks (title, description, reward, task_type, task_data, max_completions, is_active, created_at)
@@ -251,6 +251,8 @@ def add_task(title: str, description: str, reward: int, task_type: str = "photo"
         return task_id
     except Exception as e:
         print(f"❌ Ошибка добавления задания: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def remove_task(task_id: int):
@@ -352,54 +354,6 @@ def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
         return completed < max_completions
     except Exception as e:
         print(f"❌ Ошибка can_complete_task: {e}")
-        return False
-
-# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРИВАТКОЙ ==========
-def add_private_purchase(user_id: int, invoice_id: str, amount: float):
-    """Добавление покупки приватки"""
-    try:
-        cursor.execute("""
-            INSERT INTO private_purchases (user_id, invoice_id, amount)
-            VALUES (?, ?, ?)
-        """, (user_id, invoice_id, amount))
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка add_private_purchase: {e}")
-        return False
-
-def mark_private_paid(invoice_id: str):
-    """Отметка оплаты приватки"""
-    try:
-        cursor.execute("UPDATE private_purchases SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
-        cursor.execute("""
-            UPDATE users SET private_access = 1 
-            WHERE user_id = (SELECT user_id FROM private_purchases WHERE invoice_id = ?)
-        """, (invoice_id,))
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"❌ Ошибка mark_private_paid: {e}")
-        return False
-
-def get_private_purchase(invoice_id: str):
-    """Получение информации о покупке приватки"""
-    try:
-        cursor.execute("SELECT * FROM private_purchases WHERE invoice_id = ?", (invoice_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-    except Exception as e:
-        print(f"❌ Ошибка get_private_purchase: {e}")
-        return None
-
-def has_private_access(user_id: int) -> bool:
-    """Проверка наличия доступа к приватке"""
-    try:
-        cursor.execute("SELECT private_access FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        return row and row["private_access"] == 1
-    except Exception as e:
-        print(f"❌ Ошибка has_private_access: {e}")
         return False
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========
@@ -876,6 +830,54 @@ def get_referral_stats():
         return dict(cursor.fetchone())
     except:
         return {"total_refs": 0, "unique_referrers": 0}
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРИВАТКОЙ ==========
+def add_private_purchase(user_id: int, invoice_id: str, amount: float):
+    """Добавление покупки приватки"""
+    try:
+        cursor.execute("""
+            INSERT INTO private_purchases (user_id, invoice_id, amount)
+            VALUES (?, ?, ?)
+        """, (user_id, invoice_id, amount))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка add_private_purchase: {e}")
+        return False
+
+def mark_private_paid(invoice_id: str):
+    """Отметка оплаты приватки"""
+    try:
+        cursor.execute("UPDATE private_purchases SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
+        cursor.execute("""
+            UPDATE users SET private_access = 1 
+            WHERE user_id = (SELECT user_id FROM private_purchases WHERE invoice_id = ?)
+        """, (invoice_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка mark_private_paid: {e}")
+        return False
+
+def get_private_purchase(invoice_id: str):
+    """Получение информации о покупке приватки"""
+    try:
+        cursor.execute("SELECT * FROM private_purchases WHERE invoice_id = ?", (invoice_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"❌ Ошибка get_private_purchase: {e}")
+        return None
+
+def has_private_access(user_id: int) -> bool:
+    """Проверка наличия доступа к приватке"""
+    try:
+        cursor.execute("SELECT private_access FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row and row["private_access"] == 1
+    except Exception as e:
+        print(f"❌ Ошибка has_private_access: {e}")
+        return False
 
 # Инициализация при импорте
 init_db()
