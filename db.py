@@ -313,28 +313,67 @@ def get_user_task_status(user_id: int, task_id: int):
         return None
 
 def submit_task(user_id: int, task_id: int, proof: str = None):
-    """Отправка задания на проверку"""
+    """Отправка задания на проверку - ИСПРАВЛЕНО!"""
     try:
+        # Проверяем, есть ли уже запись
+        cursor.execute("SELECT status FROM user_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
+        existing = cursor.fetchone()
+        
+        if existing:
+            status = existing["status"]
+            print(f"📝 Существующая запись: user_id={user_id}, task_id={task_id}, status={status}")
+            
+            if status == "pending":
+                print(f"⚠️ Задание {task_id} для пользователя {user_id} уже на проверке")
+                return False
+            elif status == "approved":
+                print(f"⚠️ Задание {task_id} для пользователя {user_id} уже выполнено")
+                return False
+            elif status == "rejected":
+                # Если было отклонено, обновляем запись (переотправляем)
+                cursor.execute("""
+                    UPDATE user_tasks 
+                    SET status = 'pending', proof = ?, completed_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND task_id = ?
+                """, (proof, user_id, task_id))
+                conn.commit()
+                print(f"✅ Задание {task_id} для пользователя {user_id} переотправлено на проверку")
+                return True
+        
+        # Если нет записи, создаем новую
         cursor.execute("""
             INSERT INTO user_tasks (user_id, task_id, status, proof)
             VALUES (?, ?, 'pending', ?)
         """, (user_id, task_id, proof))
         conn.commit()
+        print(f"✅ Задание {task_id} для пользователя {user_id} отправлено на проверку")
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка submit_task: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def approve_task(user_id: int, task_id: int, reward: int):
     """Одобрение задания и начисление награды"""
     try:
+        # Проверяем, не одобрено ли уже
+        cursor.execute("SELECT status FROM user_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
+        existing = cursor.fetchone()
+        if existing and existing["status"] == "approved":
+            print(f"⚠️ Задание {task_id} для пользователя {user_id} уже одобрено")
+            return False
+        
         cursor.execute("""
             UPDATE user_tasks SET status = 'approved' 
             WHERE user_id = ? AND task_id = ?
         """, (user_id, task_id))
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
         conn.commit()
+        print(f"✅ Задание {task_id} для пользователя {user_id} одобрено, начислено {reward} 🍬")
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка approve_task: {e}")
         return False
 
 def reject_task(user_id: int, task_id: int):
@@ -345,8 +384,10 @@ def reject_task(user_id: int, task_id: int):
             WHERE user_id = ? AND task_id = ?
         """, (user_id, task_id))
         conn.commit()
+        print(f"✅ Задание {task_id} для пользователя {user_id} отклонено")
         return True
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка reject_task: {e}")
         return False
 
 def get_pending_tasks():
