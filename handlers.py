@@ -3360,7 +3360,7 @@ async def bonus(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     await safe_answer(call, f"🎁 +{BONUS_AMOUNT} 🍬", show_alert=True)
 
-# ================= ВИДЕО (ПРОСМОТР) - ИСПРАВЛЕНА! =================
+# ================= ВИДЕО (ПРОСМОТР) =================
 @router.callback_query(F.data == "videos")
 async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Просмотр видео"""
@@ -3430,24 +3430,14 @@ async def menu_back_handler(call: CallbackQuery, state: FSMContext):
     has_access, _, is_main, can_manage = check_admin_access(user_id)
     
     if has_access:
-        # Удаляем сообщение с видео
-        try:
-            await call.message.delete()
-        except:
-            pass
+        # Просто показываем админ-панель, НЕ УДАЛЯЯ видео
         await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
         return
     
     if not await check_access(call.bot, user_id, state, call=call):
         return
     
-    # Удаляем сообщение с видео
-    try:
-        await call.message.delete()
-    except:
-        pass
-    
-    # Показываем главное меню
+    # Просто показываем главное меню, НЕ УДАЛЯЯ видео
     await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
 
 # ================= ПРОМОКОДЫ =================
