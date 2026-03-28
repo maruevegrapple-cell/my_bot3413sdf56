@@ -53,20 +53,16 @@ def get_tasks_menu(user_tasks):
             emoji = "⏳"
         else:
             emoji = "📋"
-        
         keyboard.append([InlineKeyboardButton(
             text=f"{emoji} {task['title']} | +{task['reward']} 🍬",
             callback_data=f"task_{task['id']}"
         )])
-    
     keyboard.append([InlineKeyboardButton(text="🔄 Обновить список", callback_data="tasks_refresh")])
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="menu")])
-    
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_type: str, task_data: str, task_status: str = None):
     keyboard = []
-    
     if task_status != "approved" and task_status != "pending":
         if task_type == "link":
             keyboard.append([InlineKeyboardButton(text="🔗 Перейти по ссылке", url=task_data)])
@@ -79,7 +75,6 @@ def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_t
         keyboard.append([InlineKeyboardButton(text="⏳ На проверке", callback_data="nothing")])
     elif task_status == "approved":
         keyboard.append([InlineKeyboardButton(text="✅ Выполнено", callback_data="nothing")])
-    
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад к заданиям", callback_data="tasks")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -114,15 +109,14 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
             InlineKeyboardButton(text="📋 Управление заданиями", callback_data="admin_tasks")
         ]
     ]
-    
     if is_main_admin or can_manage_admins:
         buttons.append([InlineKeyboardButton(text="👥 Управление админами", callback_data="admin_manage")])
-    
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ================= АДМИН-МЕНЮ ЗАДАНИЙ =================
 admin_tasks_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="➕ Создать задание", callback_data="admin_task_add")],
+    [InlineKeyboardButton(text="✏️ Редактировать задание", callback_data="admin_task_edit")],
     [InlineKeyboardButton(text="🗑 Удалить задание", callback_data="admin_task_remove")],
     [InlineKeyboardButton(text="📋 Список заданий", callback_data="admin_task_list")],
     [InlineKeyboardButton(text="⏳ На проверке", callback_data="admin_task_pending")],
@@ -145,7 +139,7 @@ op_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
 ])
 
-# ================= НОВОЕ МЕНЮ МАГАЗИНА =================
+# ================= МЕНЮ МАГАЗИНА =================
 shop_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🍬 150 конфет • 2.0$ CryptoBot", callback_data="pay_150")],
     [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25% • CryptoBot", callback_data="pay_custom")],

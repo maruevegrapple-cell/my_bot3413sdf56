@@ -21,7 +21,6 @@ cursor.execute("PRAGMA synchronous=FULL")
 
 # ========== ФУНКЦИЯ ОБНОВЛЕНИЯ СХЕМЫ ==========
 def update_db_schema():
-    """Обновление схемы базы данных"""
     try:
         cursor.execute("PRAGMA table_info(tasks)")
         columns = [col[1] for col in cursor.fetchall()]
@@ -59,10 +58,8 @@ def update_db_schema():
         print(f"❌ Ошибка обновления схемы: {e}")
 
 def generate_ref_code(length=6):
-    """Генерация уникального реферального кода"""
     chars = string.ascii_uppercase + string.digits
     chars = chars.replace('O', '').replace('0', '').replace('I', '').replace('1', '')
-    
     while True:
         code = ''.join(random.choices(chars, k=length))
         cursor.execute("SELECT user_id FROM users WHERE ref_code = ?", (code,))
@@ -70,7 +67,6 @@ def generate_ref_code(length=6):
             return code
 
 def get_main_admin_id():
-    """Получение ID главного админа из базы"""
     try:
         cursor.execute("SELECT user_id FROM admins WHERE is_main_admin = 1 LIMIT 1")
         row = cursor.fetchone()
@@ -81,7 +77,6 @@ def get_main_admin_id():
     return None
 
 def set_main_admin(user_id: int, username: str = ""):
-    """Установка главного админа (при первом запуске)"""
     try:
         current_main = get_main_admin_id()
         if current_main:
@@ -104,7 +99,6 @@ def set_main_admin(user_id: int, username: str = ""):
         return None
 
 def init_db():
-    """Инициализация базы данных"""
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -239,7 +233,6 @@ def init_db():
     )
     """)
     
-    # Новые таблицы
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_subscriptions (
         user_id INTEGER PRIMARY KEY,
@@ -272,7 +265,6 @@ def init_db():
     
     conn.commit()
     print("✅ База данных инициализирована")
-    
     update_db_schema()
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЗАДАНИЯМИ ==========
@@ -307,6 +299,37 @@ def add_task(title: str, description: str, reward: int, task_type: str = "photo"
         print(f"❌ Ошибка добавления задания: {e}")
         return None
 
+def update_task(task_id: int, title: str = None, description: str = None, reward: int = None, max_completions: int = None):
+    """Обновление задания"""
+    try:
+        updates = []
+        values = []
+        
+        if title is not None:
+            updates.append("title = ?")
+            values.append(title)
+        if description is not None:
+            updates.append("description = ?")
+            values.append(description)
+        if reward is not None:
+            updates.append("reward = ?")
+            values.append(reward)
+        if max_completions is not None:
+            updates.append("max_completions = ?")
+            values.append(max_completions)
+        
+        if not updates:
+            return False
+        
+        values.append(task_id)
+        query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, values)
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка обновления задания: {e}")
+        return False
+
 def remove_task(task_id: int):
     try:
         cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
@@ -325,81 +348,51 @@ def get_user_task_status(user_id: int, task_id: int):
         return None
 
 def submit_task(user_id: int, task_id: int, proof: str = None):
-    """Отправка задания на проверку"""
     try:
-        # Получаем задание, чтобы проверить лимиты
         cursor.execute("SELECT max_completions FROM tasks WHERE id = ?", (task_id,))
         task = cursor.fetchone()
         if not task:
-            print(f"❌ Задание {task_id} не найдено")
             return False
         
         max_completions = task["max_completions"]
-        
-        # Проверяем, сколько раз пользователь уже выполнил задание
-        cursor.execute("""
-            SELECT COUNT(*) as count 
-            FROM user_tasks 
-            WHERE user_id = ? AND task_id = ? AND status = 'approved'
-        """, (user_id, task_id))
+        cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
         completed = cursor.fetchone()["count"]
-        
         if completed >= max_completions:
-            print(f"⚠️ Пользователь {user_id} уже выполнил задание {task_id} {completed} раз (макс {max_completions})")
             return False
         
-        # Проверяем, есть ли уже запись
         cursor.execute("SELECT status FROM user_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
         existing = cursor.fetchone()
         
         if existing:
             status = existing["status"]
-            print(f"📝 Существующая запись: user_id={user_id}, task_id={task_id}, status={status}")
-            
             if status == "pending":
-                print(f"⚠️ Задание {task_id} для пользователя {user_id} уже на проверке")
                 return False
             elif status == "approved":
-                print(f"⚠️ Задание {task_id} для пользователя {user_id} уже выполнено")
                 return False
             elif status == "rejected":
-                # Если было отклонено, обновляем запись
                 cursor.execute("""
                     UPDATE user_tasks 
                     SET status = 'pending', proof = ?, completed_at = CURRENT_TIMESTAMP
                     WHERE user_id = ? AND task_id = ?
                 """, (proof, user_id, task_id))
                 conn.commit()
-                print(f"✅ Задание {task_id} для пользователя {user_id} переотправлено на проверку")
                 return True
         
-        # Если нет записи, создаем новую
         cursor.execute("""
             INSERT INTO user_tasks (user_id, task_id, status, proof)
             VALUES (?, ?, 'pending', ?)
         """, (user_id, task_id, proof))
         conn.commit()
-        print(f"✅ Задание {task_id} для пользователя {user_id} отправлено на проверку")
         return True
     except Exception as e:
         print(f"❌ Ошибка submit_task: {e}")
-        import traceback
-        traceback.print_exc()
         return False
 
 def approve_task(user_id: int, task_id: int, reward: int):
-    """Одобрение задания и начисление награды"""
     try:
-        # Проверяем, не одобрено ли уже
         cursor.execute("SELECT status FROM user_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
         existing = cursor.fetchone()
-        
         if existing and existing["status"] == "approved":
-            print(f"⚠️ Задание {task_id} для пользователя {user_id} уже одобрено")
-            return False
-        
-        if existing and existing["status"] == "rejected":
-            print(f"⚠️ Задание {task_id} для пользователя {user_id} было отклонено, нельзя одобрить")
             return False
         
         cursor.execute("""
@@ -408,24 +401,19 @@ def approve_task(user_id: int, task_id: int, reward: int):
         """, (user_id, task_id))
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
         conn.commit()
-        print(f"✅ Задание {task_id} для пользователя {user_id} одобрено, начислено {reward} 🍬")
         return True
-    except Exception as e:
-        print(f"❌ Ошибка approve_task: {e}")
+    except:
         return False
 
 def reject_task(user_id: int, task_id: int):
-    """Отклонение задания"""
     try:
         cursor.execute("""
             UPDATE user_tasks SET status = 'rejected' 
             WHERE user_id = ? AND task_id = ?
         """, (user_id, task_id))
         conn.commit()
-        print(f"✅ Задание {task_id} для пользователя {user_id} отклонено")
         return True
-    except Exception as e:
-        print(f"❌ Ошибка reject_task: {e}")
+    except:
         return False
 
 def get_pending_tasks():
@@ -455,19 +443,11 @@ def get_user_completed_tasks(user_id: int):
         return []
 
 def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
-    """Проверка, может ли пользователь выполнить задание"""
     try:
-        # Считаем только одобренные выполнения
-        cursor.execute("""
-            SELECT COUNT(*) as count 
-            FROM user_tasks 
-            WHERE user_id = ? AND task_id = ? AND status = 'approved'
-        """, (user_id, task_id))
+        cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
         completed = cursor.fetchone()["count"]
-        print(f"📊 Проверка задания {task_id} для {user_id}: выполнено {completed} из {max_completions}")
         return completed < max_completions
-    except Exception as e:
-        print(f"❌ Ошибка can_complete_task: {e}")
+    except:
         return False
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========
@@ -954,15 +934,18 @@ def remove_subscription(user_id: int):
     except:
         return False
 
-def get_all_subscribed_users():
+def get_all_active_subscriptions():
+    """Получение всех активных подписок"""
     try:
         cursor.execute("""
             SELECT user_id, subscription_type, expires_at 
             FROM user_subscriptions 
             WHERE expires_at > datetime('now')
+            ORDER BY expires_at
         """)
         return [dict(row) for row in cursor.fetchall()]
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка get_all_active_subscriptions: {e}")
         return []
 
 def check_and_give_daily_bonus(user_id: int):
@@ -973,21 +956,15 @@ def check_and_give_daily_bonus(user_id: int):
             WHERE user_id = ? AND expires_at > datetime('now')
         """, (user_id,))
         sub = cursor.fetchone()
-        
         if not sub:
             return False
-        
         last_bonus = sub["last_daily_bonus"]
         today = datetime.now().date()
-        
         if last_bonus:
             last_date = datetime.fromisoformat(last_bonus).date()
             if last_date == today:
                 return False
-        
         sub_type = sub["subscription_type"]
-        
-        # Определяем бонус в зависимости от типа подписки
         bonus_amount = 0
         if sub_type == "base":
             bonus_amount = 70
@@ -995,13 +972,11 @@ def check_and_give_daily_bonus(user_id: int):
             bonus_amount = 50
         elif sub_type == "op":
             bonus_amount = 0
-        
         if bonus_amount > 0:
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (bonus_amount, user_id))
             cursor.execute("UPDATE user_subscriptions SET last_daily_bonus = datetime('now') WHERE user_id = ?", (user_id,))
             conn.commit()
             return bonus_amount
-        
         return False
     except Exception as e:
         print(f"❌ Ошибка check_and_give_daily_bonus: {e}")
@@ -1012,7 +987,6 @@ def rate_video(video_id: int, user_id: int, rating: int):
     try:
         cursor.execute("SELECT rating FROM video_ratings WHERE video_id = ? AND user_id = ?", (video_id, user_id))
         existing = cursor.fetchone()
-        
         if existing:
             old_rating = existing["rating"]
             if old_rating == rating:
@@ -1033,7 +1007,6 @@ def rate_video(video_id: int, user_id: int, rating: int):
                 cursor.execute("UPDATE video_stats SET likes = likes + 1 WHERE video_id = ?", (video_id,))
             else:
                 cursor.execute("UPDATE video_stats SET dislikes = dislikes + 1 WHERE video_id = ?", (video_id,))
-        
         cursor.execute("""
             UPDATE video_stats 
             SET total_ratings = likes + dislikes,
@@ -1043,9 +1016,7 @@ def rate_video(video_id: int, user_id: int, rating: int):
                 END
             WHERE video_id = ?
         """, (video_id,))
-        
         conn.commit()
-        
         cursor.execute("SELECT likes, dislikes, rating FROM video_stats WHERE video_id = ?", (video_id,))
         return dict(cursor.fetchone())
     except Exception as e:
@@ -1072,7 +1043,6 @@ def get_videos_sorted_by_rating(user_id: int, limit: int = 1):
     try:
         subscription = get_user_subscription(user_id)
         has_sub = subscription is not None
-        
         if has_sub:
             cursor.execute("""
                 SELECT v.id, v.file_id, 
@@ -1101,7 +1071,6 @@ def get_videos_sorted_by_rating(user_id: int, limit: int = 1):
                 ORDER BY v.id ASC
                 LIMIT ?
             """, (user_id, limit))
-        
         return [dict(row) for row in cursor.fetchall()]
     except Exception as e:
         print(f"❌ Ошибка get_videos_sorted_by_rating: {e}")
@@ -1115,5 +1084,4 @@ def get_video_count_for_user(user_id: int):
     except:
         return 0
 
-# Инициализация при импорте
 init_db()
