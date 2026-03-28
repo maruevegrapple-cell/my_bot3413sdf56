@@ -867,8 +867,8 @@ async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     text = (
         "🍬 <b>МАГАЗИН КОНФЕТ</b>\n\n"
         "💰 Выберите количество конфет для покупки:\n\n"
-        "⭐️ 15 звезд (минималка) = 45 🍬\n"
-        "⭐️ 100 звезд = 300 🍬"
+        "⭐️ 15 звезд (минималка) = 20 🍬\n"
+        "⭐️ 100 звезд = 180 🍬"
     )
     await call.message.answer(text, reply_markup=shop_menu)
 
@@ -2364,7 +2364,7 @@ async def support_reply_send(message: Message, state: FSMContext, bot: Bot):
     try:
         await bot.send_message(chat_id=user_id, text=f"📬 <b>ОТВЕТ ОТ ПОДДЕРЖКИ</b>\n\n{reply_text}")
         await message.answer(f"✅ Ответ отправлен пользователю {user_id}")
-    except:
+    except Exception as e:
         await message.answer(
             f"❌ <b>ОШИБКА ОТПРАВКИ</b>\n\n"
             f"👤 Пользователь: <code>{user_id}</code>\n"
@@ -3138,7 +3138,6 @@ async def admin_search_users_result(message: Message, state: FSMContext):
             text += f"<b>Бонус за подписку:</b> ✅\n"
         text += "\n"
     
-    # Добавляем кнопку для просмотра подписок пользователя
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📋 Подписки пользователя", callback_data=f"admin_user_subscriptions_{uid}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats")]
@@ -3235,7 +3234,7 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
         [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
     ])
     try:
-        await call.message.answer_video(video["file_id"], caption=f"🎥 <b>Видео #{video['id']}</b>\n\n{rating_text}", reply_markup=video_menu_with_rating)
+        await call.message.answer_video(video["file_id"], caption=f"🎥 <b>Видео</b>\n\n{rating_text}", reply_markup=video_menu_with_rating)
         if not has_op_subscription and not check_admin_access(user_id)[0]:
             cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (VIDEO_PRICE, user_id))
             await safe_answer(call, f"🍬 Видео отправлено! Списана {VIDEO_PRICE} конфета", show_alert=True)
@@ -3253,8 +3252,10 @@ async def like_video(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     if not await check_access(bot, user_id, state, call=call):
         return
+    
     video_id = int(call.data.replace("like_video_", ""))
     stats = rate_video(video_id, user_id, 1)
+    
     if stats:
         like_emoji = "👍"
         dislike_emoji = "👎"
@@ -3266,10 +3267,10 @@ async def like_video(call: CallbackQuery, state: FSMContext, bot: Bot):
         ])
         rating_text = f"⭐️ Рейтинг: {stats['rating']:.1f}% ({stats['likes']}👍 / {stats['dislikes']}👎)"
         try:
-            await call.message.edit_caption(caption=f"🎥 <b>Видео #{video_id}</b>\n\n{rating_text}", reply_markup=new_keyboard)
+            await call.message.edit_caption(caption=f"🎥 <b>Видео</b>\n\n{rating_text}", reply_markup=new_keyboard)
             await safe_answer(call, "✅ Ваш голос учтен!", show_alert=False)
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Error updating caption: {e}")
     else:
         await safe_answer(call, "❌ Ошибка при голосовании", show_alert=True)
 
@@ -3281,8 +3282,10 @@ async def dislike_video(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     if not await check_access(bot, user_id, state, call=call):
         return
+    
     video_id = int(call.data.replace("dislike_video_", ""))
     stats = rate_video(video_id, user_id, -1)
+    
     if stats:
         like_emoji = "👍"
         dislike_emoji = "👎"
@@ -3294,10 +3297,10 @@ async def dislike_video(call: CallbackQuery, state: FSMContext, bot: Bot):
         ])
         rating_text = f"⭐️ Рейтинг: {stats['rating']:.1f}% ({stats['likes']}👍 / {stats['dislikes']}👎)"
         try:
-            await call.message.edit_caption(caption=f"🎥 <b>Видео #{video_id}</b>\n\n{rating_text}", reply_markup=new_keyboard)
+            await call.message.edit_caption(caption=f"🎥 <b>Видео</b>\n\n{rating_text}", reply_markup=new_keyboard)
             await safe_answer(call, "✅ Ваш голос учтен!", show_alert=False)
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Error updating caption: {e}")
     else:
         await safe_answer(call, "❌ Ошибка при голосовании", show_alert=True)
 

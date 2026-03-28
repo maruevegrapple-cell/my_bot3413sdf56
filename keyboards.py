@@ -53,12 +53,19 @@ def get_tasks_menu(user_tasks):
             emoji = "⏳"
         else:
             emoji = "📋"
+        
+        # Добавляем 🔄 если задание можно выполнить несколько раз
+        max_completions = task.get("max_completions", 1)
+        multi_emoji = " 🔄" if max_completions > 1 else ""
+        
         keyboard.append([InlineKeyboardButton(
-            text=f"{emoji} {task['title']} | +{task['reward']} 🍬",
+            text=f"{emoji} {task['title']} | +{task['reward']} 🍬{multi_emoji}",
             callback_data=f"task_{task['id']}"
         )])
+    
     keyboard.append([InlineKeyboardButton(text="🔄 Обновить список", callback_data="tasks_refresh")])
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="menu")])
+    
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_type: str, task_data: str, task_status: str = None):
