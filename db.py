@@ -2,6 +2,8 @@ import sqlite3
 import random
 import string
 import os
+from datetime import datetime, timedelta
+from config import SUBSCRIPTIONS
 
 if os.environ.get('RAILWAY_ENVIRONMENT'):
     DB_PATH = "/data/database.db"
@@ -20,7 +22,7 @@ cursor.execute("PRAGMA synchronous=FULL")
 
 # ========== ФУНКЦИЯ ОБНОВЛЕНИЯ СХЕМЫ ==========
 def update_db_schema():
-    """Обновление схемы базы данных - добавляем недостающие колонки"""
+    """Обновление схемы базы данных"""
     try:
         # Проверяем наличие колонок в таблице tasks
         cursor.execute("PRAGMA table_info(tasks)")
@@ -250,10 +252,45 @@ def init_db():
     )
     """)
     
+    # ========== НОВЫЕ ТАБЛИЦЫ ==========
+    
+    # Таблица подписок пользователей
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_subscriptions (
+        user_id INTEGER PRIMARY KEY,
+        subscription_type TEXT,
+        expires_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_daily_bonus TIMESTAMP
+    )
+    """)
+    
+    # Таблица рейтинга видео
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS video_ratings (
+        video_id INTEGER,
+        user_id INTEGER,
+        rating INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (video_id, user_id)
+    )
+    """)
+    
+    # Таблица общей статистики видео
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS video_stats (
+        video_id INTEGER PRIMARY KEY,
+        likes INTEGER DEFAULT 0,
+        dislikes INTEGER DEFAULT 0,
+        rating REAL DEFAULT 0,
+        total_ratings INTEGER DEFAULT 0
+    )
+    """)
+    
     conn.commit()
     print("✅ База данных инициализирована")
     
-    # Обновляем схему - добавляем недостающие колонки
+    # Обновляем схему
     update_db_schema()
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЗАДАНИЯМИ ==========
@@ -313,55 +350,43 @@ def get_user_task_status(user_id: int, task_id: int):
         return None
 
 def submit_task(user_id: int, task_id: int, proof: str = None):
-    """Отправка задания на проверку - ИСПРАВЛЕНО!"""
+    """Отправка задания на проверку"""
     try:
-        # Проверяем, есть ли уже запись
         cursor.execute("SELECT status FROM user_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
         existing = cursor.fetchone()
         
         if existing:
             status = existing["status"]
-            print(f"📝 Существующая запись: user_id={user_id}, task_id={task_id}, status={status}")
             
             if status == "pending":
-                print(f"⚠️ Задание {task_id} для пользователя {user_id} уже на проверке")
                 return False
             elif status == "approved":
-                print(f"⚠️ Задание {task_id} для пользователя {user_id} уже выполнено")
                 return False
             elif status == "rejected":
-                # Если было отклонено, обновляем запись (переотправляем)
                 cursor.execute("""
                     UPDATE user_tasks 
                     SET status = 'pending', proof = ?, completed_at = CURRENT_TIMESTAMP
                     WHERE user_id = ? AND task_id = ?
                 """, (proof, user_id, task_id))
                 conn.commit()
-                print(f"✅ Задание {task_id} для пользователя {user_id} переотправлено на проверку")
                 return True
         
-        # Если нет записи, создаем новую
         cursor.execute("""
             INSERT INTO user_tasks (user_id, task_id, status, proof)
             VALUES (?, ?, 'pending', ?)
         """, (user_id, task_id, proof))
         conn.commit()
-        print(f"✅ Задание {task_id} для пользователя {user_id} отправлено на проверку")
         return True
     except Exception as e:
         print(f"❌ Ошибка submit_task: {e}")
-        import traceback
-        traceback.print_exc()
         return False
 
 def approve_task(user_id: int, task_id: int, reward: int):
     """Одобрение задания и начисление награды"""
     try:
-        # Проверяем, не одобрено ли уже
         cursor.execute("SELECT status FROM user_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
         existing = cursor.fetchone()
         if existing and existing["status"] == "approved":
-            print(f"⚠️ Задание {task_id} для пользователя {user_id} уже одобрено")
             return False
         
         cursor.execute("""
@@ -370,7 +395,6 @@ def approve_task(user_id: int, task_id: int, reward: int):
         """, (user_id, task_id))
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
         conn.commit()
-        print(f"✅ Задание {task_id} для пользователя {user_id} одобрено, начислено {reward} 🍬")
         return True
     except Exception as e:
         print(f"❌ Ошибка approve_task: {e}")
@@ -384,7 +408,6 @@ def reject_task(user_id: int, task_id: int):
             WHERE user_id = ? AND task_id = ?
         """, (user_id, task_id))
         conn.commit()
-        print(f"✅ Задание {task_id} для пользователя {user_id} отклонено")
         return True
     except Exception as e:
         print(f"❌ Ошибка reject_task: {e}")
@@ -939,6 +962,221 @@ def has_private_access(user_id: int) -> bool:
         return row and row["private_access"] == 1
     except:
         return False
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОДПИСКАМИ ==========
+def get_user_subscription(user_id: int):
+    """Получение активной подписки пользователя"""
+    try:
+        cursor.execute("""
+            SELECT subscription_type, expires_at, last_daily_bonus 
+            FROM user_subscriptions 
+            WHERE user_id = ? AND expires_at > datetime('now')
+        """, (user_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+def add_subscription(user_id: int, sub_type: str, days: int):
+    """Добавление подписки пользователю"""
+    try:
+        cursor.execute("""
+            INSERT OR REPLACE INTO user_subscriptions (user_id, subscription_type, expires_at)
+            VALUES (?, ?, datetime('now', '+' || ? || ' days'))
+        """, (user_id, sub_type, days))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка добавления подписки: {e}")
+        return False
+
+def remove_subscription(user_id: int):
+    """Удаление подписки пользователя"""
+    try:
+        cursor.execute("DELETE FROM user_subscriptions WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def get_all_subscribed_users():
+    """Получение всех пользователей с активной подпиской"""
+    try:
+        cursor.execute("""
+            SELECT user_id, subscription_type, expires_at 
+            FROM user_subscriptions 
+            WHERE expires_at > datetime('now')
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+def check_and_give_daily_bonus(user_id: int):
+    """Проверка и выдача ежедневного бонуса за подписку"""
+    try:
+        cursor.execute("""
+            SELECT subscription_type, last_daily_bonus 
+            FROM user_subscriptions 
+            WHERE user_id = ? AND expires_at > datetime('now')
+        """, (user_id,))
+        sub = cursor.fetchone()
+        
+        if not sub:
+            return False
+        
+        last_bonus = sub["last_daily_bonus"]
+        today = datetime.now().date()
+        
+        if last_bonus:
+            last_date = datetime.fromisoformat(last_bonus).date()
+            if last_date == today:
+                return False
+        
+        sub_type = sub["subscription_type"]
+        from config import SUBSCRIPTIONS
+        bonus_amount = SUBSCRIPTIONS.get(sub_type, {}).get("candies_daily", 0)
+        
+        if bonus_amount > 0:
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (bonus_amount, user_id))
+            cursor.execute("UPDATE user_subscriptions SET last_daily_bonus = datetime('now') WHERE user_id = ?", (user_id,))
+            conn.commit()
+            return bonus_amount
+        
+        return False
+    except Exception as e:
+        print(f"❌ Ошибка check_and_give_daily_bonus: {e}")
+        return False
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С РЕЙТИНГОМ ВИДЕО ==========
+def rate_video(video_id: int, user_id: int, rating: int):
+    """Оценка видео (1 = like, -1 = dislike)"""
+    try:
+        # Проверяем, есть ли уже оценка
+        cursor.execute("SELECT rating FROM video_ratings WHERE video_id = ? AND user_id = ?", (video_id, user_id))
+        existing = cursor.fetchone()
+        
+        if existing:
+            old_rating = existing["rating"]
+            if old_rating == rating:
+                # Если нажали ту же кнопку - отменяем оценку
+                cursor.execute("DELETE FROM video_ratings WHERE video_id = ? AND user_id = ?", (video_id, user_id))
+                # Обновляем статистику
+                if old_rating == 1:
+                    cursor.execute("UPDATE video_stats SET likes = likes - 1 WHERE video_id = ?", (video_id,))
+                else:
+                    cursor.execute("UPDATE video_stats SET dislikes = dislikes - 1 WHERE video_id = ?", (video_id,))
+            else:
+                # Меняем оценку
+                cursor.execute("UPDATE video_ratings SET rating = ? WHERE video_id = ? AND user_id = ?", (rating, video_id, user_id))
+                if old_rating == 1:
+                    cursor.execute("UPDATE video_stats SET likes = likes - 1, dislikes = dislikes + 1 WHERE video_id = ?", (video_id,))
+                else:
+                    cursor.execute("UPDATE video_stats SET dislikes = dislikes - 1, likes = likes + 1 WHERE video_id = ?", (video_id,))
+        else:
+            # Новая оценка
+            cursor.execute("INSERT INTO video_ratings (video_id, user_id, rating) VALUES (?, ?, ?)", (video_id, user_id, rating))
+            if rating == 1:
+                cursor.execute("UPDATE video_stats SET likes = likes + 1 WHERE video_id = ?", (video_id,))
+            else:
+                cursor.execute("UPDATE video_stats SET dislikes = dislikes + 1 WHERE video_id = ?", (video_id,))
+        
+        # Обновляем общий рейтинг
+        cursor.execute("""
+            UPDATE video_stats 
+            SET total_ratings = likes + dislikes,
+                rating = CASE 
+                    WHEN (likes + dislikes) > 0 THEN CAST(likes AS REAL) / (likes + dislikes) * 100
+                    ELSE 0
+                END
+            WHERE video_id = ?
+        """, (video_id,))
+        
+        conn.commit()
+        
+        # Возвращаем актуальную статистику
+        cursor.execute("SELECT likes, dislikes, rating FROM video_stats WHERE video_id = ?", (video_id,))
+        return dict(cursor.fetchone())
+    except Exception as e:
+        print(f"❌ Ошибка rate_video: {e}")
+        return None
+
+def get_video_rating(video_id: int):
+    """Получение рейтинга видео"""
+    try:
+        cursor.execute("SELECT likes, dislikes, rating FROM video_stats WHERE video_id = ?", (video_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else {"likes": 0, "dislikes": 0, "rating": 0}
+    except:
+        return {"likes": 0, "dislikes": 0, "rating": 0}
+
+def get_user_video_rating(video_id: int, user_id: int):
+    """Получение оценки пользователя для видео"""
+    try:
+        cursor.execute("SELECT rating FROM video_ratings WHERE video_id = ? AND user_id = ?", (video_id, user_id))
+        row = cursor.fetchone()
+        return row["rating"] if row else 0
+    except:
+        return 0
+
+def get_videos_sorted_by_rating(user_id: int, limit: int = 1):
+    """Получение видео, отсортированных по рейтингу (с учетом подписки)"""
+    try:
+        # Проверяем наличие подписки
+        subscription = get_user_subscription(user_id)
+        has_sub = subscription is not None
+        
+        if has_sub:
+            # С подпиской - показываем по рейтингу (хорошие в начало)
+            cursor.execute("""
+                SELECT v.id, v.file_id, 
+                       COALESCE(vs.rating, 0) as rating,
+                       COALESCE(vs.likes, 0) as likes,
+                       COALESCE(vs.dislikes, 0) as dislikes
+                FROM videos v
+                LEFT JOIN video_stats vs ON v.id = vs.video_id
+                WHERE v.id NOT IN (
+                    SELECT video_id FROM user_videos WHERE user_id = ?
+                )
+                ORDER BY COALESCE(vs.rating, 0) DESC, v.id ASC
+                LIMIT ?
+            """, (user_id, limit))
+        else:
+            # Без подписки - обычный порядок
+            cursor.execute("""
+                SELECT v.id, v.file_id, 
+                       COALESCE(vs.rating, 0) as rating,
+                       COALESCE(vs.likes, 0) as likes,
+                       COALESCE(vs.dislikes, 0) as dislikes
+                FROM videos v
+                LEFT JOIN video_stats vs ON v.id = vs.video_id
+                WHERE v.id NOT IN (
+                    SELECT video_id FROM user_videos WHERE user_id = ?
+                )
+                ORDER BY v.id ASC
+                LIMIT ?
+            """, (user_id, limit))
+        
+        return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        print(f"❌ Ошибка get_videos_sorted_by_rating: {e}")
+        return []
+
+def get_video_count_for_user(user_id: int):
+    """Получение количества непросмотренных видео для пользователя (с учетом подписки)"""
+    try:
+        subscription = get_user_subscription(user_id)
+        
+        if subscription and subscription["subscription_type"] == "op":
+            # OP статус - безлимит
+            cursor.execute("SELECT COUNT(*) as count FROM videos WHERE id NOT IN (SELECT video_id FROM user_videos WHERE user_id = ?)", (user_id,))
+        else:
+            # Обычные пользователи и другие подписки
+            cursor.execute("SELECT COUNT(*) as count FROM videos WHERE id NOT IN (SELECT video_id FROM user_videos WHERE user_id = ?)", (user_id,))
+        
+        row = cursor.fetchone()
+        return row["count"] if row else 0
+    except:
+        return 0
 
 # Инициализация при импорте
 init_db()

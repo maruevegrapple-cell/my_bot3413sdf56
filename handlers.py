@@ -30,6 +30,10 @@ from config import (
     SUBSCRIBE_BONUS,
     ANON_CHAT_LINK,
     PRIVATE_PRICE_USD,
+    PRIVATE_PRICE_STARS,
+    SUBSCRIPTIONS,
+    CANDY_PRICES,
+    SPAM_COOLDOWN
 )
 
 from db import (
@@ -48,13 +52,15 @@ from db import (
     get_active_tasks, get_task, add_task, remove_task,
     get_user_task_status, submit_task, approve_task, reject_task,
     get_pending_tasks, get_user_completed_tasks, can_complete_task,
-    has_private_access, add_private_purchase, mark_private_paid, get_private_purchase
+    has_private_access, add_private_purchase, mark_private_paid, get_private_purchase,
+    get_user_subscription, add_subscription, remove_subscription, check_and_give_daily_bonus,
+    rate_video, get_video_rating, get_user_video_rating, get_videos_sorted_by_rating, get_video_count_for_user
 )
 from keyboards import (
     fake_menu, main_menu, video_menu, shop_menu, get_admin_menu, 
     confirm_menu, subscribe_menu, op_menu, admin_manage_menu,
     get_tasks_menu, get_task_action_menu, admin_tasks_menu,
-    private_pay_menu, get_private_crypto_menu
+    private_pay_menu, get_private_crypto_menu, subscriptions_menu
 )
 from payments import (
     create_invoice, 
@@ -80,6 +86,8 @@ SUGGESTION_REWARD = 3
 suggested_videos = {}
 # Множество пользователей в режиме предложки
 suggestion_mode = set()
+# Хранилище для анти-спама
+user_last_action = {}
 
 # ================= FSM СОСТОЯНИЯ =================
 class PromoStates(StatesGroup):
@@ -106,6 +114,8 @@ class AdminStates(StatesGroup):
     waiting_for_user_search = State()
     waiting_for_user_info = State()
     waiting_for_rework_message = State()
+    waiting_for_subscription_user = State()
+    waiting_for_subscription_type = State()
 
 class CaptchaStates(StatesGroup):
     waiting_for_captcha = State()
@@ -141,31 +151,17 @@ captcha_attempts = {}
 banned_users = {}
 broadcast_mode = set()
 custom_pay_wait = set()
+current_video_id = {}  # Хранит текущее видео для каждого пользователя
 
-# ================= КОМАНДА ДЛЯ НАЗНАЧЕНИЯ ГЛАВНОГО АДМИНА =================
-@router.message(Command("set_main_admin"))
-async def set_main_admin_command(message: Message):
-    """Устанавливает главного админа (только если его еще нет)"""
-    user_id = message.from_user.id
-    username = message.from_user.username or "пользователь"
-    
-    current_main = get_main_admin_id()
-    
-    if current_main:
-        await message.answer(f"❌ Главный админ уже установлен: ID {current_main}")
-        return
-    
-    result = set_main_admin(user_id, username)
-    
-    if result:
-        await message.answer(
-            f"✅ <b>Вы назначены главным админом!</b>\n\n"
-            f"👑 Теперь у вас есть полный доступ ко всем функциям бота.\n"
-            f"🆔 Ваш ID: <code>{user_id}</code>"
-        )
-        logger.info(f"👑 Главный админ установлен: {user_id} (@{username})")
-    else:
-        await message.answer("❌ Ошибка при назначении главного админа")
+# ================= АНТИ-СПАМ =================
+async def check_spam(user_id: int) -> bool:
+    """Проверка на спам (3 секунды между действиями)"""
+    now = time.time()
+    last = user_last_action.get(user_id, 0)
+    if now - last < SPAM_COOLDOWN:
+        return True
+    user_last_action[user_id] = now
+    return False
 
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 def is_banned(user_id: int) -> tuple:
@@ -210,12 +206,8 @@ def generate_ref_code(length=6):
         if not cursor.fetchone():
             return code
 
-# ================= ФУНКЦИЯ ПРОВЕРКИ ПРАВ АДМИНА =================
 def check_admin_access(user_id: int, require_main: bool = False, require_manage: bool = False) -> tuple:
-    """
-    Проверка прав доступа админа
-    Возвращает (has_access, is_admin, is_main, can_manage)
-    """
+    """Проверка прав доступа админа"""
     if is_main_admin(user_id):
         return True, True, True, True
     
@@ -229,7 +221,6 @@ def check_admin_access(user_id: int, require_main: bool = False, require_manage:
     
     return False, False, False, False
 
-# ================= БЕЗОПАСНЫЕ ФУНКЦИИ ДЛЯ CALLBACK =================
 async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = False):
     """Безопасный ответ на callback query"""
     try:
@@ -240,9 +231,8 @@ async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = 
     except Exception as e:
         logger.error(f"Error in safe_answer: {e}")
 
-# ================= ФУНКЦИЯ ДЛЯ ПРОВЕРКИ ДОСТУПА =================
 async def check_access(bot, user_id: int, state: FSMContext, message: Message = None, call: CallbackQuery = None) -> bool:
-    """Проверяет доступ пользователя и показывает меню подписки если нужно"""
+    """Проверяет доступ пользователя"""
     if check_admin_access(user_id)[0]:
         return True
     
@@ -307,14 +297,12 @@ def generate_captcha_image() -> tuple:
         for path in font_paths:
             if os.path.exists(path):
                 font = ImageFont.truetype(path, 80)
-                print(f"✅ Загружен шрифт: {path}")
                 break
     except:
         font = None
     
     if font is None:
         font = ImageFont.load_default()
-        print("⚠️ Используется встроенный шрифт")
     
     colors = [(0, 0, 0), (0, 0, 150), (150, 0, 0), (0, 150, 0)]
     positions = [(120, 100), (270, 100), (420, 100), (570, 100)]
@@ -343,7 +331,6 @@ def generate_captcha_image() -> tuple:
     image.save(bio, 'PNG', quality=95)
     bio.seek(0)
     
-    print(f"✅ Капча сгенерирована: {code}")
     return bio.getvalue(), code
 
 # ================= БЛОКИРОВКА ПЕРЕСЫЛКИ =================
@@ -397,6 +384,10 @@ async def upload_video(message: Message):
         cursor.execute("SELECT COUNT(*) as count FROM videos")
         total_videos = cursor.fetchone()["count"]
         
+        # Инициализируем статистику видео
+        cursor.execute("INSERT OR IGNORE INTO video_stats (video_id) VALUES (?)", (video_id,))
+        conn.commit()
+        
         await message.answer(
             f"✅ <b>ВИДЕО УСПЕШНО ДОБАВЛЕНО!</b>\n\n"
             f"📹 <b>Название:</b> {file_name}\n"
@@ -416,6 +407,10 @@ async def upload_video(message: Message):
 async def suggestion_start(call: CallbackQuery, state: FSMContext):
     """Начало предложки"""
     user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
     
     if not await check_access(call.bot, user_id, state, call=call):
         return
@@ -534,6 +529,8 @@ async def suggest_approve(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     try:
         cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
+        video_id = cursor.lastrowid
+        cursor.execute("INSERT INTO video_stats (video_id) VALUES (?)", (video_id,))
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUGGESTION_REWARD, user_id))
         
         cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
@@ -674,6 +671,8 @@ async def process_video_url(message: Message, state: FSMContext, bot: Bot):
         file_id = sent_message.video.file_id
         
         cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
+        video_id = cursor.lastrowid
+        cursor.execute("INSERT INTO video_stats (video_id) VALUES (?)", (video_id,))
         conn.commit()
         
         cursor.execute("SELECT COUNT(*) as count FROM videos")
@@ -728,6 +727,8 @@ async def quick_download(message: Message, bot: Bot):
         
         file_id = sent.video.file_id
         cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
+        video_id = cursor.lastrowid
+        cursor.execute("INSERT INTO video_stats (video_id) VALUES (?)", (video_id,))
         conn.commit()
         
         os.remove(filename)
@@ -745,6 +746,11 @@ async def start(message: Message, state: FSMContext, bot: Bot):
     first_name = message.from_user.first_name or "Пользователь"
     
     logger.info(f"🟢 START from {user_id} (@{username})")
+    
+    # Проверяем ежедневный бонус подписки
+    bonus = check_and_give_daily_bonus(user_id)
+    if bonus:
+        await message.answer(f"🎁 Ежедневный бонус подписки: +{bonus} 🍬")
     
     banned, ban_until = is_banned(user_id)
     if banned:
@@ -836,7 +842,7 @@ async def start(message: Message, state: FSMContext, bot: Bot):
                     f"➕ Вам начислено +{REF_BONUS} 🍬"
                 )
             except:
-                    pass
+                pass
         
         if not is_verified(user_id):
             if user_id in captcha_attempts:
@@ -1032,6 +1038,10 @@ async def process_captcha(message: Message, state: FSMContext, bot: Bot):
 async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
     if not await check_access(bot, user_id, state, call=call):
         return
     
@@ -1040,26 +1050,233 @@ async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
         "💰 Выберите количество конфет для покупки:\n\n"
         "⭐️ 1 звезда = 3 🍬\n"
         "⭐️ 15 звезд (минималка) = 45 🍬\n"
-        "⭐️ 100 звезд = 300 🍬"
+        "⭐️ 100 звезд = 300 🍬\n\n"
+        "🔘 Кнопки:\n\n"
+        "🍬 150 конфет • 2.0$ CryptoBot\n\n"
+        "✏️ Свое количество, дешевле на 25% • CryptoBot\n\n"
+        "⭐️ Для оплаты звездами нажми на меня!\n\n"
+        "💎 Премиум Подписка\n"
+        "🔐 ПРИВАТКА | 999 ⭐️ / $15\n\n"
+        "⬅️ В меню"
     )
     
     await call.message.answer(text, reply_markup=shop_menu)
+
+@router.callback_query(F.data == "subscriptions_menu")
+async def subscriptions_menu_handler(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Меню подписок"""
+    user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    text = (
+        "💎 <b>ДОСТУПНЫЕ ПОДПИСКИ НА 9 ДНЕЙ</b>\n\n"
+        f"{SUBSCRIPTIONS['op']['name']} дает:\n{SUBSCRIPTIONS['op']['benefits']}\n\n"
+        f"{SUBSCRIPTIONS['base']['name']} дает:\n{SUBSCRIPTIONS['base']['benefits']}\n\n"
+        f"{SUBSCRIPTIONS['newbie']['name']} дает:\n{SUBSCRIPTIONS['newbie']['benefits']}\n\n"
+        "💰 Цены:\n"
+        f"{SUBSCRIPTIONS['op']['name']}: {SUBSCRIPTIONS['op']['stars']}⭐️ / {SUBSCRIPTIONS['op']['usd']}$\n"
+        f"{SUBSCRIPTIONS['base']['name']}: {SUBSCRIPTIONS['base']['stars']}⭐️ / {SUBSCRIPTIONS['base']['usd']}$\n"
+        f"{SUBSCRIPTIONS['newbie']['name']}: {SUBSCRIPTIONS['newbie']['stars']}⭐️ / {SUBSCRIPTIONS['newbie']['usd']}$"
+    )
+    
+    await call.message.answer(text, reply_markup=subscriptions_menu)
+
+@router.callback_query(F.data.startswith("buy_subscription_"))
+async def buy_subscription(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Покупка подписки"""
+    user_id = call.from_user.id
+    sub_type = call.data.replace("buy_subscription_", "")
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    sub = SUBSCRIPTIONS.get(sub_type)
+    if not sub:
+        await safe_answer(call, "❌ Подписка не найдена", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"⭐️ {sub['stars']} звезд", callback_data=f"pay_subscription_stars_{sub_type}")],
+        [InlineKeyboardButton(text=f"💰 Криптовалюта (${sub['usd']})", callback_data=f"pay_subscription_crypto_{sub_type}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscriptions_menu")]
+    ])
+    
+    await call.message.answer(
+        f"💎 <b>ПОКУПКА ПОДПИСКИ</b>\n\n"
+        f"{sub['name']}\n"
+        f"💰 Стоимость: {sub['stars']}⭐️ или ${sub['usd']}\n\n"
+        f"📅 Длительность: {sub['days']} дней\n\n"
+        f"Выберите способ оплаты:",
+        reply_markup=keyboard
+    )
+
+@router.callback_query(F.data.startswith("pay_subscription_stars_"))
+async def pay_subscription_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Оплата подписки звездами"""
+    user_id = call.from_user.id
+    sub_type = call.data.replace("pay_subscription_stars_", "")
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    sub = SUBSCRIPTIONS.get(sub_type)
+    if not sub:
+        await safe_answer(call, "❌ Подписка не найдена", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    await call.message.answer(
+        f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
+        f"Для покупки {sub['name']}:\n\n"
+        f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
+        f"2. Напишите: Хочу купить {sub['name']} за {sub['stars']} ⭐️\n"
+        f"3. Укажите ваш ID: <code>{user_id}</code>\n"
+        f"4. Оплатите гифтами (подарками)\n"
+        f"5. Ожидайте активации!\n\n"
+        f"🔗 Ссылка: {ANON_CHAT_LINK}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscriptions_menu")]
+        ])
+    )
+
+@router.callback_query(F.data.startswith("pay_subscription_crypto_"))
+async def pay_subscription_crypto(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Оплата подписки криптовалютой"""
+    user_id = call.from_user.id
+    sub_type = call.data.replace("pay_subscription_crypto_", "")
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    sub = SUBSCRIPTIONS.get(sub_type)
+    if not sub:
+        await safe_answer(call, "❌ Подписка не найдена", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    try:
+        invoice = create_invoice(sub["usd"], "USDT")
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания счета: {e}")
+        await call.message.answer("❌ Ошибка при создании платежа")
+        return
+    
+    crypto_amount = invoice.get("crypto_amount", sub["usd"])
+    rate = invoice.get("rate", "")
+    
+    # Сохраняем информацию о покупке подписки
+    cursor.execute("""
+        INSERT INTO payments (invoice_id, user_id, amount, paid)
+        VALUES (?, ?, ?, 0)
+    """, (invoice["invoice_id"], user_id, sub["usd"]))
+    conn.commit()
+    
+    # Сохраняем тип подписки
+    await state.update_data(pending_subscription=sub_type)
+    
+    rate_text = f"\n💰 К оплате: {crypto_amount} USDT"
+    if rate:
+        rate_text = f"\n1 USDT = ${rate}\n💰 К оплате: {crypto_amount} USDT"
+    
+    await call.message.answer(
+        f"💳 <b>Оплата подписки в USDT</b>\n\n"
+        f"{sub['name']}\n"
+        f"💰 Сумма: ${sub['usdt']}{rate_text}\n\n"
+        f"🔄 После оплаты подписка активируется автоматически",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} USDT", url=invoice["pay_url"])],
+            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_subscription_{invoice['invoice_id']}")]
+        ])
+    )
+
+@router.callback_query(F.data.startswith("check_subscription_"))
+async def check_subscription_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Проверка оплаты подписки"""
+    user_id = call.from_user.id
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    invoice_id = call.data.replace("check_subscription_", "")
+    
+    cursor.execute("SELECT user_id, amount, paid FROM payments WHERE invoice_id = ?", (invoice_id,))
+    row = cursor.fetchone()
+    
+    if not row:
+        await call.message.answer("❌ Платёж не найден")
+        return
+    
+    result = check_invoice(invoice_id)
+    
+    if result.get("paid", False):
+        if row["paid"] == 1:
+            await call.message.answer("✅ Этот платёж уже был обработан")
+            return
+        
+        cursor.execute("UPDATE payments SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
+        
+        # Получаем тип подписки из состояния
+        data = await state.get_data()
+        sub_type = data.get("pending_subscription", "base")
+        
+        sub = SUBSCRIPTIONS.get(sub_type, SUBSCRIPTIONS["base"])
+        
+        if add_subscription(user_id, sub_type, sub["days"]):
+            await call.message.answer(
+                f"✅ <b>Подписка активирована!</b>\n\n"
+                f"{sub['name']}\n"
+                f"📅 Действует {sub['days']} дней\n\n"
+                f"🎉 Поздравляем!"
+            )
+        else:
+            await call.message.answer("❌ Ошибка активации подписки")
+        
+        await state.update_data(pending_subscription=None)
+        conn.commit()
+    else:
+        await call.message.answer("⏳ Платёж ещё не оплачен")
 
 @router.callback_query(F.data == "buy_private")
 async def buy_private(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Покупка приватки"""
     user_id = call.from_user.id
     
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
     if not await check_access(bot, user_id, state, call=call):
         return
     
     await safe_answer(call)
-    await call.message.answer(
+    
+    text = (
         f"🔐 <b>ПОКУПКА ПРИВАТКИ</b>\n\n"
-        f"💰 Цена: {PRIVATE_PRICE_USD}$ или 499⭐️\n\n"
-        f"Выберите способ оплаты:",
-        reply_markup=private_pay_menu
+        f"💰 Стоимость: {PRIVATE_PRICE_STARS}⭐️ или ${PRIVATE_PRICE_USD}\n\n"
+        f"После покупки приватки вы получите:\n"
+        f"• Безлимитный баланс в боте\n"
+        f"• Доступ к новому контенту быстрее всех\n"
+        f"• Приоритетный рейтинг видео\n"
+        f"-- НАВСЕГДА --\n\n"
+        f"Выберите способ оплаты:"
     )
+    
+    await call.message.answer(text, reply_markup=private_pay_menu)
 
 @router.callback_query(F.data == "private_stars")
 async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1075,10 +1292,11 @@ async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
         f"Для получения доступа к приватке:\n\n"
         f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
-        f"2. Напишите о том, что хотите купить приватку за звезды ( 499 ⭐️ )\n"
-        f"3. Оплатите гифтами (подарками, самые обычные, без NFT!)\n"
-        f"4. Ожидайте доступа!\n\n"
-        f"🔗 Ссылка для оплаты через анонимные сообщения:\n{ANON_CHAT_LINK}",
+        f"2. Напишите: Хочу купить приватку за {PRIVATE_PRICE_STARS} ⭐️\n"
+        f"3. Укажите ваш ID: <code>{user_id}</code>\n"
+        f"4. Оплатите гифтами (подарками)\n"
+        f"5. Ожидайте доступа!\n\n"
+        f"🔗 Ссылка: {ANON_CHAT_LINK}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private")]
@@ -1118,7 +1336,6 @@ async def private_pay_with_asset(call: CallbackQuery, state: FSMContext, bot: Bo
     
     try:
         invoice = create_invoice(PRIVATE_PRICE_USD, asset)
-        logger.info(f"🧾 Счет создан: {invoice}")
     except Exception as e:
         logger.error(f"❌ Ошибка создания счета: {e}")
         await call.message.answer("❌ Ошибка при создании платежа")
@@ -1299,12 +1516,7 @@ async def pay(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     prices = {
-        "pay_50": (50, 0.2),
-        "pay_100": (100, 0.3),
-        "pay_140": (140, 0.4),
-        "pay_170": (170, 0.5),
-        "pay_200": (200, 0.6),
-        "pay_333": (333, 1.0),
+        "pay_150": (150, 2.0),
     }
     
     if call.data == "pay_custom":
@@ -1340,54 +1552,12 @@ async def pay(call: CallbackQuery, state: FSMContext, bot: Bot):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
 
-# ================= ПРОВЕРКА ПОДПИСКИ =================
-@router.callback_query(F.data == "check_subscribe")
-async def check_subscribe_callback(call: CallbackQuery, state: FSMContext, bot: Bot):
-    user_id = call.from_user.id
-    
-    await safe_answer(call)
-    
-    is_subscribed = await check_subscription(bot, user_id)
-    
-    if is_subscribed:
-        try:
-            bonus_received = has_received_subscribe_bonus(user_id)
-        except:
-            bonus_received = False
-        
-        if not bonus_received:
-            cursor.execute("""
-                UPDATE users 
-                SET balance = balance + ?, subscribe_bonus_received = 1 
-                WHERE user_id = ?
-            """, (SUBSCRIBE_BONUS, user_id))
-            conn.commit()
-            
-            bonus_text = f"\n\n🎁 Вам начислено +{SUBSCRIBE_BONUS} 🍬 за подписку!"
-        else:
-            bonus_text = ""
-        
-        await state.clear()
-        
-        try:
-            await call.message.delete()
-        except:
-            pass
-        
-        await call.message.answer(f"✅ <b>Доступ получен!</b>{bonus_text}")
-        await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
-    else:
-        try:
-            await call.message.answer("❌ Вы еще не подписались на канал!")
-        except:
-            pass
-
 # ================= ПРОВЕРКА ПЛАТЕЖА =================
 @router.callback_query(F.data.startswith("check_"))
 async def check_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    if call.data == "check_subscribe" or call.data.startswith("check_private_"):
+    if call.data == "check_subscribe" or call.data.startswith("check_private_") or call.data.startswith("check_subscription_"):
         return
     
     await safe_answer(call)
@@ -1497,6 +1667,10 @@ async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Меню заданий"""
     user_id = call.from_user.id
     
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
     if not await check_access(bot, user_id, state, call=call):
         return
     
@@ -1521,10 +1695,47 @@ async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
         reply_markup=get_tasks_menu(user_tasks)
     )
 
+@router.callback_query(F.data == "tasks_refresh")
+async def tasks_refresh(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Обновление списка заданий"""
+    user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    await safe_answer(call, "🔄 Обновляю список...")
+    
+    tasks = get_active_tasks()
+    
+    if not tasks:
+        await call.message.edit_text("📭 Нет активных заданий")
+        return
+    
+    user_tasks = []
+    for task in tasks:
+        status = get_user_task_status(user_id, task["id"])
+        task["status"] = status["status"] if status else None
+        user_tasks.append(task)
+    
+    await call.message.edit_text(
+        "📋 <b>ДОСТУПНЫЕ ЗАДАНИЯ</b>\n\n"
+        "Выполняйте задания и получайте награды!\n"
+        "📸 Для выполнения задания отправьте скриншот.",
+        reply_markup=get_tasks_menu(user_tasks)
+    )
+
 @router.callback_query(F.data.startswith("task_"))
 async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Детали задания"""
     user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
     
     if not await check_access(bot, user_id, state, call=call):
         return
@@ -1563,6 +1774,10 @@ async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
 async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Начало выполнения задания - запрос скриншота"""
     user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
     
     if not await check_access(bot, user_id, state, call=call):
         return
@@ -1672,11 +1887,9 @@ async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
     
-    # Проверяем, не одобрено ли уже задание
     status = get_user_task_status(user_id, task_id)
     if status and status["status"] == "approved":
         await safe_answer(call, "✅ Это задание уже было одобрено!", show_alert=True)
-        # Удаляем сообщение
         try:
             await call.message.delete()
         except:
@@ -1694,13 +1907,11 @@ async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
     if approve_task(user_id, task_id, task["reward"]):
         await safe_answer(call, "✅ Задание одобрено!")
         
-        # Удаляем сообщение с кнопками
         try:
             await call.message.delete()
         except:
             pass
         
-        # Уведомляем пользователя
         try:
             await bot.send_message(
                 user_id,
@@ -1727,7 +1938,6 @@ async def reject_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     task = get_task(task_id)
     
-    # Проверяем, не одобрено ли уже задание
     status = get_user_task_status(user_id, task_id)
     if status and status["status"] == "approved":
         await safe_answer(call, "✅ Это задание уже одобрено, нельзя отклонить!", show_alert=True)
@@ -1740,13 +1950,11 @@ async def reject_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
     if reject_task(user_id, task_id):
         await safe_answer(call, "❌ Задание отклонено")
         
-        # Удаляем сообщение с кнопками
         try:
             await call.message.delete()
         except:
             pass
         
-        # Уведомляем пользователя
         try:
             await bot.send_message(
                 user_id,
@@ -1777,23 +1985,19 @@ async def rework_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
     
-    # Проверяем статус
     status = get_user_task_status(user_id, task_id)
     if status and status["status"] == "approved":
         await safe_answer(call, "✅ Это задание уже одобрено!", show_alert=True)
         return
     
     if status and status["status"] == "pending":
-        # Обновляем статус на rejected, чтобы можно было переотправить
         reject_task(user_id, task_id)
     
-    # Удаляем сообщение админа с кнопками
     try:
         await call.message.delete()
     except Exception as e:
         logger.error(f"Ошибка удаления сообщения: {e}")
     
-    # Сохраняем данные для отправки сообщения
     await state.update_data(
         rework_user_id=user_id,
         rework_task_id=task_id,
@@ -1826,10 +2030,8 @@ async def send_rework_message(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     
-    # Обновляем статус задания на "rejected" (чтобы можно было отправить заново)
     reject_task(user_id, task_id)
     
-    # Создаем клавиатуру для пользователя
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Выполнить заново", callback_data=f"do_task_{task_id}")],
         [InlineKeyboardButton(text="❌ Отказаться от задания", callback_data=f"cancel_task_{task_id}")]
@@ -1862,7 +2064,6 @@ async def cancel_task_by_user(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
     
-    # Удаляем запись о задании
     reject_task(user_id, task_id)
     
     await safe_answer(call, "❌ Вы отказались от выполнения задания")
@@ -2129,10 +2330,122 @@ async def admin_task_pending(call: CallbackQuery):
     
     await call.message.answer(text)
 
+# ================= АДМИН - ВЫДАЧА ПОДПИСКИ =================
+@router.callback_query(F.data == "admin_give_subscription")
+async def admin_give_subscription_start(call: CallbackQuery, state: FSMContext):
+    """Начало выдачи подписки"""
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await state.set_state(AdminStates.waiting_for_subscription_user)
+    await call.message.answer("👤 Введите ID пользователя для выдачи подписки:")
+
+@router.message(AdminStates.waiting_for_subscription_user)
+async def admin_subscription_user(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        return
+    
+    try:
+        target_user_id = int(message.text)
+        await state.update_data(target_user_id=target_user_id)
+        await state.set_state(AdminStates.waiting_for_subscription_type)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💎 OP Статус (9 дней)", callback_data="sub_op")],
+            [InlineKeyboardButton(text="🚀 Base Статус (9 дней)", callback_data="sub_base")],
+            [InlineKeyboardButton(text="😊 Newbie Статус (9 дней)", callback_data="sub_newbie")],
+            [InlineKeyboardButton(text="❌ Удалить подписку", callback_data="sub_remove")]
+        ])
+        
+        await message.answer(
+            f"👤 Пользователь: {target_user_id}\n\n"
+            f"Выберите тип подписки:",
+            reply_markup=keyboard
+        )
+    except ValueError:
+        await message.answer("❌ Введите корректный ID пользователя (число)")
+
+@router.callback_query(F.data.startswith("sub_"))
+async def admin_subscription_type(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    
+    has_access, _, _, _ = check_admin_access(user_id)
+    
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    target_user_id = data.get("target_user_id")
+    
+    if not target_user_id:
+        await safe_answer(call, "❌ Ошибка: пользователь не найден", show_alert=True)
+        await state.clear()
+        return
+    
+    action = call.data.replace("sub_", "")
+    
+    if action == "remove":
+        if remove_subscription(target_user_id):
+            await call.message.answer(f"✅ Подписка пользователя {target_user_id} удалена!")
+        else:
+            await call.message.answer("❌ Ошибка при удалении подписки")
+        await state.clear()
+        return
+    
+    sub_types = {
+        "op": "op",
+        "base": "base", 
+        "newbie": "newbie"
+    }
+    
+    sub_type = sub_types.get(action)
+    if not sub_type:
+        await safe_answer(call, "❌ Неизвестный тип подписки", show_alert=True)
+        return
+    
+    sub = SUBSCRIPTIONS.get(sub_type)
+    if add_subscription(target_user_id, sub_type, sub["days"]):
+        await call.message.answer(
+            f"✅ Подписка выдана!\n\n"
+            f"👤 Пользователь: {target_user_id}\n"
+            f"📋 Тип: {sub['name']}\n"
+            f"📅 Дней: {sub['days']}"
+        )
+        
+        try:
+            await call.bot.send_message(
+                target_user_id,
+                f"🎉 <b>Вам выдана подписка!</b>\n\n"
+                f"{sub['name']}\n"
+                f"📅 Действует {sub['days']} дней\n\n"
+                f"Поздравляем!"
+            )
+        except:
+            pass
+    else:
+        await call.message.answer("❌ Ошибка при выдаче подписки")
+    
+    await state.clear()
+
 # ================= ПОДДЕРЖКА =================
 @router.callback_query(F.data == "support")
 async def support_start(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
     
     if not await check_access(bot, user_id, state, call=call):
         return
@@ -2226,12 +2539,10 @@ async def support_reply_send(message: Message, state: FSMContext, bot: Bot):
     user_id = data.get('reply_to_user')
     reply_text = message.text
     
-    # Проверяем, это ответ на отклоненное задание
     explain_user_id = data.get('explain_user_id')
     explain_task_id = data.get('explain_task_id')
     
     if explain_user_id and explain_task_id:
-        # Это ответ на отклоненное задание
         try:
             await bot.send_message(
                 chat_id=explain_user_id,
@@ -3332,6 +3643,10 @@ async def fake_menu_actions(call: CallbackQuery):
 async def bonus(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
     if not await check_access(bot, user_id, state, call=call):
         return
     
@@ -3366,52 +3681,84 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
     """Просмотр видео"""
     user_id = call.from_user.id
     
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
     if not await check_access(bot, user_id, state, call=call):
         return
     
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    result = cursor.fetchone()
-    if not result:
-        await safe_answer(call, "❌ Пользователь не найден", show_alert=True)
-        return
+    # Проверяем ежедневный бонус подписки
+    bonus = check_and_give_daily_bonus(user_id)
+    if bonus:
+        await call.message.answer(f"🎁 Ежедневный бонус подписки: +{bonus} 🍬")
     
-    balance = result["balance"]
+    # Получаем подписку пользователя
+    subscription = get_user_subscription(user_id)
+    has_op_subscription = subscription and subscription["subscription_type"] == "op"
     
-    if balance < VIDEO_PRICE and not check_admin_access(user_id)[0]:
-        await safe_answer(call, f"❌ Недостаточно конфет. Нужно: {VIDEO_PRICE} 🍬\nВаш баланс: {balance} 🍬", show_alert=True)
-        return
+    if has_op_subscription:
+        # OP статус - безлимитный просмотр, баланс не проверяем
+        pass
+    else:
+        # Обычные пользователи - проверяем баланс
+        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        if not result:
+            await safe_answer(call, "❌ Пользователь не найден", show_alert=True)
+            return
+        
+        balance = result["balance"]
+        
+        if balance < VIDEO_PRICE and not check_admin_access(user_id)[0]:
+            await safe_answer(call, f"❌ Недостаточно конфет. Нужно: {VIDEO_PRICE} 🍬\nВаш баланс: {balance} 🍬", show_alert=True)
+            return
     
-    cursor.execute("SELECT COUNT(*) as count FROM videos")
-    count = cursor.fetchone()["count"]
+    # Получаем количество непросмотренных видео
+    count = get_video_count_for_user(user_id)
     
     if count == 0:
-        await safe_answer(call, "❌ Видео еще не загружены", show_alert=True)
-        return
-    
-    cursor.execute("""
-        SELECT id, file_id FROM videos
-        WHERE id NOT IN (
-            SELECT video_id FROM user_videos WHERE user_id = ?
-        )
-        ORDER BY id ASC
-        LIMIT 1
-    """, (user_id,))
-    video = cursor.fetchone()
-    
-    if not video:
         await safe_answer(call, "🎉 Поздравляем! Вы посмотрели все видео!", show_alert=True)
         return
     
+    # Получаем следующее видео (сортировка с учетом подписки)
+    videos_list = get_videos_sorted_by_rating(user_id, 1)
+    
+    if not videos_list:
+        await safe_answer(call, "❌ Видео не найдены", show_alert=True)
+        return
+    
+    video = videos_list[0]
+    
+    # Сохраняем текущее видео для рейтинга
+    current_video_id[user_id] = video["id"]
+    
+    # Получаем текущий рейтинг пользователя для этого видео
+    user_rating = get_user_video_rating(video["id"], user_id)
+    rating_stats = get_video_rating(video["id"])
+    
+    # Формируем кнопки с рейтингом
+    like_emoji = "👍" if user_rating == 1 else "👍"
+    dislike_emoji = "👎" if user_rating == -1 else "👎"
+    
+    rating_text = f"⭐️ Рейтинг: {rating_stats['rating']:.1f}% ({rating_stats['likes']}👍 / {rating_stats['dislikes']}👎)"
+    
+    video_menu_with_rating = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{like_emoji} {rating_stats['likes']}", callback_data=f"like_video_{video['id']}"),
+         InlineKeyboardButton(text=f"{dislike_emoji} {rating_stats['dislikes']}", callback_data=f"dislike_video_{video['id']}")],
+        [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
+        [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
+    ])
+    
     try:
-        # Отправляем видео БЕЗ подписи
         await call.message.answer_video(
             video["file_id"],
-            reply_markup=video_menu
+            caption=f"🎥 <b>Видео #{video['id']}</b>\n\n{rating_text}",
+            reply_markup=video_menu_with_rating
         )
         
-        if not check_admin_access(user_id)[0]:
+        if not has_op_subscription and not check_admin_access(user_id)[0]:
             cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (VIDEO_PRICE, user_id))
-            # Показываем сообщение о списании
             await safe_answer(call, f"🍬 Видео отправлено! Списана {VIDEO_PRICE} конфета", show_alert=True)
         
         cursor.execute("INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)", (user_id, video["id"]))
@@ -3420,6 +3767,102 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
     except Exception as e:
         logger.error(f"❌ Error sending video: {e}")
         await safe_answer(call, "❌ Ошибка отправки видео. Попробуйте позже.", show_alert=True)
+
+# ================= ОБРАБОТЧИКИ ЛАЙКОВ/ДИЗЛАЙКОВ =================
+@router.callback_query(F.data.startswith("like_video_"))
+async def like_video(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Лайк видео"""
+    user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    # Проверяем наличие подписки (только для подписчиков)
+    subscription = get_user_subscription(user_id)
+    if not subscription:
+        await safe_answer(call, "❌ Голосовать могут только пользователи с активной подпиской!", show_alert=True)
+        return
+    
+    video_id = int(call.data.replace("like_video_", ""))
+    
+    # Ставим лайк
+    stats = rate_video(video_id, user_id, 1)
+    
+    if stats:
+        like_emoji = "👍"
+        dislike_emoji = "👎"
+        
+        # Обновляем клавиатуру
+        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"{like_emoji} {stats['likes']}", callback_data=f"like_video_{video_id}"),
+             InlineKeyboardButton(text=f"{dislike_emoji} {stats['dislikes']}", callback_data=f"dislike_video_{video_id}")],
+            [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
+        ])
+        
+        rating_text = f"⭐️ Рейтинг: {stats['rating']:.1f}% ({stats['likes']}👍 / {stats['dislikes']}👎)"
+        
+        try:
+            await call.message.edit_caption(
+                caption=f"🎥 <b>Видео #{video_id}</b>\n\n{rating_text}",
+                reply_markup=new_keyboard
+            )
+            await safe_answer(call, "✅ Ваш голос учтен!", show_alert=False)
+        except:
+            pass
+    else:
+        await safe_answer(call, "❌ Ошибка при голосовании", show_alert=True)
+
+@router.callback_query(F.data.startswith("dislike_video_"))
+async def dislike_video(call: CallbackQuery, state: FSMContext, bot: Bot):
+    """Дизлайк видео"""
+    user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    # Проверяем наличие подписки (только для подписчиков)
+    subscription = get_user_subscription(user_id)
+    if not subscription:
+        await safe_answer(call, "❌ Голосовать могут только пользователи с активной подпиской!", show_alert=True)
+        return
+    
+    video_id = int(call.data.replace("dislike_video_", ""))
+    
+    # Ставим дизлайк
+    stats = rate_video(video_id, user_id, -1)
+    
+    if stats:
+        like_emoji = "👍"
+        dislike_emoji = "👎"
+        
+        new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"{like_emoji} {stats['likes']}", callback_data=f"like_video_{video_id}"),
+             InlineKeyboardButton(text=f"{dislike_emoji} {stats['dislikes']}", callback_data=f"dislike_video_{video_id}")],
+            [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
+        ])
+        
+        rating_text = f"⭐️ Рейтинг: {stats['rating']:.1f}% ({stats['likes']}👍 / {stats['dislikes']}👎)"
+        
+        try:
+            await call.message.edit_caption(
+                caption=f"🎥 <b>Видео #{video_id}</b>\n\n{rating_text}",
+                reply_markup=new_keyboard
+            )
+            await safe_answer(call, "✅ Ваш голос учтен!", show_alert=False)
+        except:
+            pass
+    else:
+        await safe_answer(call, "❌ Ошибка при голосовании", show_alert=True)
 
 # ================= ОБРАБОТЧИК КНОПКИ "В МЕНЮ" =================
 @router.callback_query(F.data == "menu_back")
@@ -3430,20 +3873,22 @@ async def menu_back_handler(call: CallbackQuery, state: FSMContext):
     has_access, _, is_main, can_manage = check_admin_access(user_id)
     
     if has_access:
-        # Просто показываем админ-панель, НЕ УДАЛЯЯ видео
         await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
         return
     
     if not await check_access(call.bot, user_id, state, call=call):
         return
     
-    # Просто показываем главное меню, НЕ УДАЛЯЯ видео
     await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
 
 # ================= ПРОМОКОДЫ =================
 @router.callback_query(F.data == "promo")
 async def promo(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
     
     if not await check_access(bot, user_id, state, call=call):
         return
@@ -3472,6 +3917,10 @@ async def back_to_menu(call: CallbackQuery, state: FSMContext):
 async def profile(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    
     if not await check_access(bot, user_id, state, call=call):
         return
     
@@ -3495,21 +3944,31 @@ async def profile(call: CallbackQuery, state: FSMContext, bot: Bot):
     cursor.execute("SELECT COUNT(*) as count FROM users WHERE referrer = ?", (user_id,))
     ref_count = cursor.fetchone()["count"]
     
+    # Получаем информацию о подписке
+    subscription = get_user_subscription(user_id)
+    sub_text = "❌ Нет активной подписки"
+    if subscription:
+        sub_type = subscription["subscription_type"]
+        sub_name = SUBSCRIPTIONS.get(sub_type, {}).get("name", sub_type)
+        expires = subscription["expires_at"][:10]
+        sub_text = f"✅ {sub_name}\n📅 До: {expires}"
+    
     text = (
         f"👤 <b>ПРОФИЛЬ</b>\n\n"
         f"🍬 Баланс: <code>{balance}</code> конфет\n"
-        f"👥 Рефералов: <code>{ref_count}</code>\n\n"
+        f"👥 Рефералов: <code>{ref_count}</code>\n"
+        f"💎 Подписка: {sub_text}\n\n"
         f"🔗 <b>Твоя ссылка:</b>\n"
-        f"<code>{ref_link}</code>\n"
-        f"{ref_link} (Синяя ссылка, жми)\n\n"
+        f"<code>{ref_link}</code>\n\n"
         f"🎁 За друга: +{REF_BONUS} 🍬\n"
         f"💰 С покупок рефералов: {REF_PERCENT}%"
     )
     
-    try:
-        await call.message.edit_text(text, disable_web_page_preview=False)
-    except:
-        await call.message.answer(text, disable_web_page_preview=False)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu")]
+    ])
+    
+    await call.message.answer(text, disable_web_page_preview=False, reply_markup=keyboard)
 
 # ================= ДОБАВЛЯЕМ НОВЫЕ КОМАНДЫ УДАЛЕНИЯ =================
 @router.message(Command("delete_200"))
@@ -3588,6 +4047,9 @@ async def confirm_delete_200(call: CallbackQuery):
         cursor.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", video_ids)
         deleted_videos = cursor.rowcount
         
+        cursor.execute(f"DELETE FROM video_stats WHERE video_id IN ({placeholders})", video_ids)
+        cursor.execute(f"DELETE FROM video_ratings WHERE video_id IN ({placeholders})", video_ids)
+        
         cursor.execute("DELETE FROM sqlite_sequence WHERE name='videos'")
         conn.commit()
         
@@ -3627,6 +4089,9 @@ async def confirm_delete_58(call: CallbackQuery):
         
         cursor.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", video_ids)
         deleted_videos = cursor.rowcount
+        
+        cursor.execute(f"DELETE FROM video_stats WHERE video_id IN ({placeholders})", video_ids)
+        cursor.execute(f"DELETE FROM video_ratings WHERE video_id IN ({placeholders})", video_ids)
         
         cursor.execute("DELETE FROM sqlite_sequence WHERE name='videos'")
         conn.commit()

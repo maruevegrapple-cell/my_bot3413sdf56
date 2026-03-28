@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import CHANNEL_LINK, ANON_CHAT_LINK
+from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS
 
 # ================= ФЕЙК МЕНЮ =================
 fake_menu = InlineKeyboardMarkup(inline_keyboard=[
@@ -33,6 +33,14 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"),
         InlineKeyboardButton(text="📢 Наш канал", url=CHANNEL_LINK)
     ]
+])
+
+# ================= МЕНЮ ВИДЕО =================
+video_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="👍 Лайк", callback_data="like_video"),
+     InlineKeyboardButton(text="👎 Дизлайк", callback_data="dislike_video")],
+    [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
+    [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
 ])
 
 # ================= МЕНЮ ЗАДАНИЙ =================
@@ -98,10 +106,11 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
             InlineKeyboardButton(text="➖ Снять баланс", callback_data="admin_remove_balance")
         ],
         [
-            InlineKeyboardButton(text="🔐 Управление ОП", callback_data="admin_op"),
-            InlineKeyboardButton(text="📹 Загрузить видео", callback_data="admin_upload_url")
+            InlineKeyboardButton(text="💎 Выдать подписку", callback_data="admin_give_subscription"),
+            InlineKeyboardButton(text="🔐 Управление ОП", callback_data="admin_op")
         ],
         [
+            InlineKeyboardButton(text="📹 Загрузить видео", callback_data="admin_upload_url"),
             InlineKeyboardButton(text="📋 Управление заданиями", callback_data="admin_tasks")
         ]
     ]
@@ -136,30 +145,28 @@ op_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
 ])
 
-# ================= МАГАЗИН =================
+# ================= НОВОЕ МЕНЮ МАГАЗИНА =================
 shop_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="🍬 50 • 💵 0.2", callback_data="pay_50"),
-        InlineKeyboardButton(text="🍬 100 • 💵 0.3", callback_data="pay_100")
-    ],
-    [
-        InlineKeyboardButton(text="🍬 140 • 💵 0.4", callback_data="pay_140"),
-        InlineKeyboardButton(text="🍬 170 • 💵 0.5", callback_data="pay_170")
-    ],
-    [
-        InlineKeyboardButton(text="🍬 200 • 💵 0.6", callback_data="pay_200"),
-        InlineKeyboardButton(text="🍬 333 • 💵 1.0", callback_data="pay_333")
-    ],
-    [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25%", callback_data="pay_custom")],
+    [InlineKeyboardButton(text="🍬 150 конфет • 2.0$ CryptoBot", callback_data="pay_150")],
+    [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25% • CryptoBot", callback_data="pay_custom")],
     [InlineKeyboardButton(text="⭐️ Для оплаты звездами нажми на меня!", url=ANON_CHAT_LINK)],
-    [InlineKeyboardButton(text="🔐 ПРИВАТКА | 499 ⭐️ / $5", callback_data="buy_private")],
+    [InlineKeyboardButton(text="💎 Премиум Подписка", callback_data="subscriptions_menu")],
+    [InlineKeyboardButton(text="🔐 ПРИВАТКА | 999 ⭐️ / $15", callback_data="buy_private")],
     [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
 ])
 
-# ================= МЕНЮ ВЫБОРА ОПЛАТЫ ПРИВАТКИ =================
+# ================= МЕНЮ ПОДПИСОК =================
+subscriptions_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text=f"{SUBSCRIPTIONS['op']['name']} | {SUBSCRIPTIONS['op']['stars']}⭐️ / {SUBSCRIPTIONS['op']['usd']}$", callback_data="buy_subscription_op")],
+    [InlineKeyboardButton(text=f"{SUBSCRIPTIONS['base']['name']} | {SUBSCRIPTIONS['base']['stars']}⭐️ / {SUBSCRIPTIONS['base']['usd']}$", callback_data="buy_subscription_base")],
+    [InlineKeyboardButton(text=f"{SUBSCRIPTIONS['newbie']['name']} | {SUBSCRIPTIONS['newbie']['stars']}⭐️ / {SUBSCRIPTIONS['newbie']['usd']}$", callback_data="buy_subscription_newbie")],
+    [InlineKeyboardButton(text="⬅️ Назад в магазин", callback_data="shop")]
+])
+
+# ================= МЕНЮ ПРИВАТКИ =================
 private_pay_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="⭐️ 499 звезд", callback_data="private_stars")],
-    [InlineKeyboardButton(text="💰 Криптовалюта ($5)", callback_data="private_crypto")],
+    [InlineKeyboardButton(text=f"⭐️ {PRIVATE_PRICE_STARS} звезд", callback_data="private_stars")],
+    [InlineKeyboardButton(text=f"💰 Криптовалюта (${PRIVATE_PRICE_USD})", callback_data="private_crypto")],
     [InlineKeyboardButton(text="⬅️ Назад в магазин", callback_data="shop")]
 ])
 
@@ -178,12 +185,6 @@ def get_private_crypto_menu(assets):
         keyboard.append(row)
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-# ================= ВИДЕО МЕНЮ (ИСПРАВЛЕНО!) =================
-video_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
-    [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]  # ИСПРАВЛЕНО!
-])
 
 # ================= МЕНЮ ПОДТВЕРЖДЕНИЯ =================
 confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
