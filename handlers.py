@@ -867,8 +867,8 @@ async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     text = (
         "🍬 <b>МАГАЗИН КОНФЕТ</b>\n\n"
         "💰 Выберите количество конфет для покупки:\n\n"
-        "⭐️ 15 звезд (минималка) = 45 🍬\n"
-        "⭐️ 100 звезд = 300 🍬"
+        "⭐️ 15 звезд (минималка) = 20 🍬\n"
+        "⭐️ 100 звезд = 180 🍬"
     )
     await call.message.answer(text, reply_markup=shop_menu)
 
