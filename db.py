@@ -300,7 +300,6 @@ def add_task(title: str, description: str, reward: int, task_type: str = "photo"
         return None
 
 def update_task(task_id: int, title: str = None, description: str = None, reward: int = None, max_completions: int = None):
-    """Обновление задания"""
     try:
         updates = []
         values = []
@@ -623,6 +622,20 @@ def get_top_referrers(limit: int = 10):
     except:
         return []
 
+def get_top_balances(limit: int = 10):
+    """Получение топ пользователей по балансу"""
+    try:
+        cursor.execute("""
+            SELECT user_id, username, balance 
+            FROM users 
+            WHERE balance > 0
+            ORDER BY balance DESC 
+            LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
 def get_pending_referrer_bonus(user_id: int):
     try:
         cursor.execute("SELECT pending_referrer_bonus FROM users WHERE user_id = ?", (user_id,))
@@ -914,6 +927,19 @@ def get_user_subscription(user_id: int):
     except:
         return None
 
+def get_user_subscriptions(user_id: int):
+    """Получение всех подписок пользователя (активных и просроченных)"""
+    try:
+        cursor.execute("""
+            SELECT subscription_type, expires_at, created_at 
+            FROM user_subscriptions 
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+        """, (user_id,))
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
 def add_subscription(user_id: int, sub_type: str, days: int):
     try:
         cursor.execute("""
@@ -985,8 +1011,13 @@ def check_and_give_daily_bonus(user_id: int):
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С РЕЙТИНГОМ ВИДЕО ==========
 def rate_video(video_id: int, user_id: int, rating: int):
     try:
+        cursor.execute("SELECT id FROM videos WHERE id = ?", (video_id,))
+        if not cursor.fetchone():
+            return None
+        
         cursor.execute("SELECT rating FROM video_ratings WHERE video_id = ? AND user_id = ?", (video_id, user_id))
         existing = cursor.fetchone()
+        
         if existing:
             old_rating = existing["rating"]
             if old_rating == rating:
@@ -1007,6 +1038,7 @@ def rate_video(video_id: int, user_id: int, rating: int):
                 cursor.execute("UPDATE video_stats SET likes = likes + 1 WHERE video_id = ?", (video_id,))
             else:
                 cursor.execute("UPDATE video_stats SET dislikes = dislikes + 1 WHERE video_id = ?", (video_id,))
+        
         cursor.execute("""
             UPDATE video_stats 
             SET total_ratings = likes + dislikes,
@@ -1016,9 +1048,12 @@ def rate_video(video_id: int, user_id: int, rating: int):
                 END
             WHERE video_id = ?
         """, (video_id,))
+        
         conn.commit()
+        
         cursor.execute("SELECT likes, dislikes, rating FROM video_stats WHERE video_id = ?", (video_id,))
-        return dict(cursor.fetchone())
+        row = cursor.fetchone()
+        return dict(row) if row else {"likes": 0, "dislikes": 0, "rating": 0}
     except Exception as e:
         print(f"❌ Ошибка rate_video: {e}")
         return None

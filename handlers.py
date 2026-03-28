@@ -45,7 +45,7 @@ from db import (
     get_max_balance, get_avg_balance, get_video_count, get_watched_stats,
     get_payments_stats, get_promo_stats, get_bonus_stats, get_referral_stats,
     update_user_balance, get_user, get_user_payments, get_referrals_count,
-    get_top_referrers, add_payment, mark_payment_paid, get_payment,
+    get_top_referrers, get_top_balances, add_payment, mark_payment_paid, get_payment,
     add_promo_code, get_promo_code, use_promo_code, check_promo_used,
     update_last_bonus, add_video, mark_video_watched, get_user_watched_videos,
     get_pending_referrer_bonus, clear_pending_referrer_bonus,
@@ -53,9 +53,8 @@ from db import (
     get_user_task_status, submit_task, approve_task, reject_task,
     get_pending_tasks, get_user_completed_tasks, can_complete_task,
     has_private_access, add_private_purchase, mark_private_paid, get_private_purchase,
-    get_user_subscription, add_subscription, remove_subscription, check_and_give_daily_bonus,
-    rate_video, get_video_rating, get_user_video_rating, get_videos_sorted_by_rating, get_video_count_for_user,
-    get_all_active_subscriptions
+    get_user_subscription, get_user_subscriptions, add_subscription, remove_subscription, check_and_give_daily_bonus, get_all_active_subscriptions,
+    rate_video, get_video_rating, get_user_video_rating, get_videos_sorted_by_rating, get_video_count_for_user
 )
 from keyboards import (
     fake_menu, main_menu, video_menu, shop_menu, get_admin_menu, 
@@ -117,6 +116,7 @@ class AdminStates(StatesGroup):
     waiting_for_edit_task_description = State()
     waiting_for_edit_task_reward = State()
     waiting_for_edit_task_max_completions = State()
+    waiting_for_user_subscriptions = State()
 
 class CaptchaStates(StatesGroup):
     waiting_for_captcha = State()
@@ -867,8 +867,8 @@ async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     text = (
         "🍬 <b>МАГАЗИН КОНФЕТ</b>\n\n"
         "💰 Выберите количество конфет для покупки:\n\n"
-        "⭐️ 15 звезд (минималка) = 20 🍬\n"
-        "⭐️ 100 звезд = 180 🍬"
+        "⭐️ 15 звезд (минималка) = 45 🍬\n"
+        "⭐️ 100 звезд = 300 🍬"
     )
     await call.message.answer(text, reply_markup=shop_menu)
 
@@ -1693,18 +1693,17 @@ async def admin_active_subscriptions(call: CallbackQuery, state: FSMContext):
     text = "💎 <b>АКТИВНЫЕ ПОДПИСКИ</b>\n\n"
     
     for sub in subscriptions:
-        user_id = sub["user_id"]
+        uid = sub["user_id"]
         sub_type = sub["subscription_type"]
         expires = sub["expires_at"][:16]
         
         sub_name = SUBSCRIPTIONS.get(sub_type, {}).get("name", sub_type)
         
-        # Получаем username пользователя
-        cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT username FROM users WHERE user_id = ?", (uid,))
         user = cursor.fetchone()
         username = user["username"] if user and user["username"] else "нет username"
         
-        text += f"👤 @{username} (ID: {user_id})\n"
+        text += f"👤 @{username} (ID: {uid})\n"
         text += f"📋 {sub_name}\n"
         text += f"📅 До: {expires}\n\n"
     
@@ -1713,6 +1712,85 @@ async def admin_active_subscriptions(call: CallbackQuery, state: FSMContext):
     ])
     
     await call.message.answer(text, reply_markup=keyboard)
+
+# ================= АДМИН - ПОДПИСКИ ПОЛЬЗОВАТЕЛЯ =================
+@router.callback_query(F.data.startswith("admin_user_subscriptions_"))
+async def admin_user_subscriptions(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    target_user_id = int(call.data.replace("admin_user_subscriptions_", ""))
+    
+    subscriptions = get_user_subscriptions(target_user_id)
+    
+    if not subscriptions:
+        await call.message.answer(f"📭 У пользователя {target_user_id} нет подписок")
+        return
+    
+    cursor.execute("SELECT username FROM users WHERE user_id = ?", (target_user_id,))
+    user = cursor.fetchone()
+    username = user["username"] if user and user["username"] else "нет username"
+    
+    text = f"📋 <b>ПОДПИСКИ ПОЛЬЗОВАТЕЛЯ</b>\n\n"
+    text += f"👤 @{username} (ID: {target_user_id})\n\n"
+    
+    for sub in subscriptions:
+        sub_type = sub["subscription_type"]
+        expires = sub["expires_at"][:16] if sub["expires_at"] else "бессрочно"
+        created = sub["created_at"][:16]
+        
+        sub_name = SUBSCRIPTIONS.get(sub_type, {}).get("name", sub_type)
+        is_active = "✅ АКТИВНА" if sub["expires_at"] and datetime.fromisoformat(sub["expires_at"]) > datetime.now() else "❌ ИСТЕКЛА"
+        
+        text += f"{'🟢' if 'АКТИВНА' in is_active else '🔴'} {sub_name}\n"
+        text += f"   📅 До: {expires}\n"
+        text += f"   📆 Куплена: {created}\n"
+        text += f"   {is_active}\n\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats")]
+    ])
+    
+    await call.message.answer(text, reply_markup=keyboard)
+
+# ================= АДМИН - ТОП ПО БАЛАНСУ =================
+@router.callback_query(F.data == "admin_top_balance")
+async def admin_top_balance(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    has_access, _, _, _ = check_admin_access(user_id)
+    if not has_access:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    top_users = get_top_balances(20)
+    
+    if not top_users:
+        await call.message.answer("📭 Нет пользователей с балансом")
+        return
+    
+    text = "🏆 <b>ТОП 20 ПО БАЛАНСУ</b>\n\n"
+    
+    keyboard = []
+    for i, user in enumerate(top_users, 1):
+        uid = user["user_id"]
+        username = user["username"] or "нет username"
+        balance = user["balance"]
+        
+        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+        text += f"{medal} @{username} — {balance} 🍬\n"
+        
+        keyboard.append([InlineKeyboardButton(
+            text=f"👤 @{username}",
+            callback_data=f"admin_user_subscriptions_{uid}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats")])
+    
+    await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 # ================= АДМИН - РЕДАКТИРОВАНИЕ ЗАДАНИЙ =================
 @router.callback_query(F.data == "admin_task_edit")
@@ -2893,6 +2971,7 @@ async def admin_stats(call: CallbackQuery):
     )
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏆 Топ рефералов", callback_data="admin_top_refs")],
+        [InlineKeyboardButton(text="💰 Топ по балансу", callback_data="admin_top_balance")],
         [InlineKeyboardButton(text="🔍 Поиск платежей", callback_data="admin_search_payments")],
         [InlineKeyboardButton(text="👤 Поиск пользователей", callback_data="admin_search_users")],
         [InlineKeyboardButton(text="💎 Активные подписки", callback_data="admin_active_subscriptions")]
@@ -3058,8 +3137,13 @@ async def admin_search_users_result(message: Message, state: FSMContext):
         if user["subscribe_bonus_received"]:
             text += f"<b>Бонус за подписку:</b> ✅\n"
         text += "\n"
-    keyboard = [[InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats")]]
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+    
+    # Добавляем кнопку для просмотра подписок пользователя
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Подписки пользователя", callback_data=f"admin_user_subscriptions_{uid}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_stats")]
+    ])
+    await message.answer(text, reply_markup=keyboard)
     await state.clear()
 
 @router.callback_query(F.data.startswith("fake_"))
