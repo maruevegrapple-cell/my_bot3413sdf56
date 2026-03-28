@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS
+from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD
 
 # ================= ФЕЙК МЕНЮ =================
 fake_menu = InlineKeyboardMarkup(inline_keyboard=[
@@ -151,7 +151,7 @@ shop_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25% • CryptoBot", callback_data="pay_custom")],
     [InlineKeyboardButton(text="⭐️ Для оплаты звездами нажми на меня!", url=ANON_CHAT_LINK)],
     [InlineKeyboardButton(text="💎 Премиум Подписка", callback_data="subscriptions_menu")],
-    [InlineKeyboardButton(text="🔐 ПРИВАТКА | 999 ⭐️ / $15", callback_data="buy_private")],
+    [InlineKeyboardButton(text=f"🔐 ПРИВАТКА | {PRIVATE_PRICE_STARS} ⭐️ / ${PRIVATE_PRICE_USD}", callback_data="buy_private")],
     [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
 ])
 
