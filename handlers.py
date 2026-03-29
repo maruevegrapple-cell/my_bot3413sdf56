@@ -84,6 +84,12 @@ suggested_videos = {}
 suggestion_mode = set()
 user_last_action = {}
 
+# ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ЗАДАНИЙ ==========
+def get_user_completed_count(user_id: int, task_id: int) -> int:
+    cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
+    result = cursor.fetchone()
+    return result["count"] if result else 0
+
 class PromoStates(StatesGroup):
     waiting_for_promo = State()
 
@@ -1409,7 +1415,8 @@ async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"📋 <b>{task['title']}</b>\n\n"
         f"📝 {task['description']}\n\n"
         f"🎁 Награда: +{task['reward']} 🍬\n"
-        f"📊 Макс. выполнений: {task['max_completions']}\n\n"
+        f"📊 Макс. выполнений: {task['max_completions']}\n"
+        f"✅ Выполнено раз: {get_user_completed_count(user_id, task_id)} из {task['max_completions']}\n\n"
         f"📸 Отправьте скриншот выполнения задания!"
     )
     if task_status == "pending":
@@ -1436,7 +1443,7 @@ async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
     if not can_complete_task(user_id, task_id, task["max_completions"]):
-        await safe_answer(call, "❌ Вы уже выполнили это задание максимальное количество раз", show_alert=True)
+        await safe_answer(call, f"❌ Вы уже выполнили это задание максимальное количество раз ({task['max_completions']})", show_alert=True)
         return
     status = get_user_task_status(user_id, task_id)
     if status and status["status"] == "pending":
@@ -1466,12 +1473,26 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Задание не найдено")
         await state.clear()
         return
+    
+    # Проверяем можно ли выполнить
     if not can_complete_task(user_id, task_id, task["max_completions"]):
-        await message.answer("❌ Вы уже выполнили это задание максимальное количество раз")
+        await message.answer(f"❌ Вы уже выполнили это задание максимальное количество раз ({task['max_completions']})")
         await state.clear()
         return
-    if submit_task(user_id, task_id, f"Скриншот: {photo.file_id}\nОписание: {caption}"):
+    
+    # Проверяем нет ли уже на проверке
+    status = get_user_task_status(user_id, task_id)
+    if status and status["status"] == "pending":
+        await message.answer("⏳ Задание уже на проверке у администратора")
+        await state.clear()
+        return
+    
+    # Отправляем на проверку
+    proof_text = f"Скриншот: {photo.file_id}\nОписание: {caption}"
+    if submit_task(user_id, task_id, proof_text):
         await message.answer("✅ Задание отправлено на проверку!")
+        
+        # Уведомляем админов
         admins = get_all_admins()
         for admin in admins:
             try:
@@ -1483,7 +1504,8 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
                         f"👤 Пользователь: @{message.from_user.username or 'нет'}\n"
                         f"🆔 ID: {user_id}\n"
                         f"📝 Задание: {task['title']}\n"
-                        f"🎁 Награда: +{task['reward']} 🍬\n\n"
+                        f"🎁 Награда: +{task['reward']} 🍬\n"
+                        f"📊 Выполнено раз: {get_user_completed_count(user_id, task_id)} из {task['max_completions']}\n\n"
                         f"📄 Описание: {caption}"
                     ),
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1497,7 +1519,8 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
             except:
                 pass
     else:
-        await message.answer("❌ Ошибка при отправке задания")
+        await message.answer("❌ Ошибка при отправке задания. Возможно, вы уже выполнили его максимальное количество раз.")
+    
     await state.clear()
 
 @router.message(TaskStates.waiting_for_task_photo)
@@ -1542,7 +1565,8 @@ async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
                 user_id,
                 f"✅ <b>Задание одобрено!</b>\n\n"
                 f"📋 {task['title']}\n"
-                f"🎁 Начислено: +{task['reward']} 🍬\n\n"
+                f"🎁 Начислено: +{task['reward']} 🍬\n"
+                f"📊 Осталось выполнений: {task['max_completions'] - get_user_completed_count(user_id, task_id)} из {task['max_completions']}\n\n"
                 f"Спасибо за выполнение!"
             )
         except:

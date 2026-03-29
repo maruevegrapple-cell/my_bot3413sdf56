@@ -355,45 +355,52 @@ def get_user_task_status(user_id: int, task_id: int):
 
 def submit_task(user_id: int, task_id: int, proof: str = None):
     try:
+        # Получаем задание
         cursor.execute("SELECT max_completions FROM tasks WHERE id = ?", (task_id,))
         task = cursor.fetchone()
         if not task:
+            print(f"❌ submit_task: задание {task_id} не найдено")
             return False
         
         max_completions = task["max_completions"]
+        print(f"📝 submit_task: user={user_id}, task={task_id}, max_completions={max_completions}")
         
         # Проверяем сколько раз уже одобрено
         cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
         completed = cursor.fetchone()["count"]
+        print(f"📝 Уже выполнено: {completed} раз")
         
         if completed >= max_completions:
+            print(f"❌ Достигнут лимит: {completed} >= {max_completions}")
             return False
         
         # Проверяем есть ли уже отправленное на проверку
         cursor.execute("SELECT status FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending'", (user_id, task_id))
         pending = cursor.fetchone()
         if pending:
-            return False  # Уже на проверке
+            print(f"❌ Уже на проверке")
+            return False
         
         # Проверяем есть ли отклоненная заявка
         cursor.execute("SELECT status FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'rejected'", (user_id, task_id))
         rejected = cursor.fetchone()
         
         if rejected:
-            # Обновляем отклоненную заявку
+            print(f"📝 Обновляем отклоненную заявку")
             cursor.execute("""
                 UPDATE user_tasks 
                 SET status = 'pending', proof = ?, completed_at = CURRENT_TIMESTAMP
                 WHERE user_id = ? AND task_id = ?
             """, (proof, user_id, task_id))
         else:
-            # Создаем новую заявку
+            print(f"📝 Создаем новую заявку")
             cursor.execute("""
                 INSERT INTO user_tasks (user_id, task_id, status, proof)
                 VALUES (?, ?, 'pending', ?)
             """, (user_id, task_id, proof))
         
         conn.commit()
+        print(f"✅ Задание {task_id} отправлено на проверку")
         return True
     except Exception as e:
         print(f"❌ Ошибка submit_task: {e}")
