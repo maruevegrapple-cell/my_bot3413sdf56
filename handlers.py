@@ -3372,7 +3372,8 @@ async def profile(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"👥 Рефералов: <code>{ref_count}</code>\n"
         f"💎 Подписка: {sub_text}\n\n"
         f"🔗 <b>Твоя ссылка:</b>\n"
-        f"<code>{ref_link}</code>\n\n"
+        f"<code>{ref_link}</code>\n"
+        f"<a href='{ref_link}'>( Синяя ссылка, жми )</a>\n\n"
         f"🎁 За друга: +{REF_BONUS} 🍬\n"
         f"💰 С покупок рефералов: {REF_PERCENT}%"
     )
