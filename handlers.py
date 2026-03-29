@@ -51,7 +51,7 @@ from db import (
     get_pending_referrer_bonus, clear_pending_referrer_bonus,
     get_active_tasks, get_task, add_task, remove_task, update_task,
     get_user_task_status, submit_task, approve_task, reject_task,
-    get_pending_tasks, get_user_completed_tasks, can_complete_task,
+    get_pending_tasks, get_user_completed_tasks, can_complete_task, get_user_completed_count,
     has_private_access, add_private_purchase, mark_private_paid, get_private_purchase,
     get_user_subscription, get_user_subscriptions, add_subscription, remove_subscription, check_and_give_daily_bonus, get_all_active_subscriptions,
     rate_video, get_video_rating, get_user_video_rating, get_videos_sorted_by_rating, get_video_count_for_user
@@ -83,12 +83,6 @@ SUGGESTION_REWARD = 3
 suggested_videos = {}
 suggestion_mode = set()
 user_last_action = {}
-
-# ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ЗАДАНИЙ ==========
-def get_user_completed_count(user_id: int, task_id: int) -> int:
-    cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
-    result = cursor.fetchone()
-    return result["count"] if result else 0
 
 class PromoStates(StatesGroup):
     waiting_for_promo = State()
@@ -1443,7 +1437,8 @@ async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
     if not can_complete_task(user_id, task_id, task["max_completions"]):
-        await safe_answer(call, f"❌ Вы уже выполнили это задание максимальное количество раз ({task['max_completions']})", show_alert=True)
+        completed = get_user_completed_count(user_id, task_id)
+        await safe_answer(call, f"❌ Вы уже выполнили это задание {completed} раз из {task['max_completions']}", show_alert=True)
         return
     status = get_user_task_status(user_id, task_id)
     if status and status["status"] == "pending":
@@ -1476,7 +1471,8 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
     
     # Проверяем можно ли выполнить
     if not can_complete_task(user_id, task_id, task["max_completions"]):
-        await message.answer(f"❌ Вы уже выполнили это задание максимальное количество раз ({task['max_completions']})")
+        completed = get_user_completed_count(user_id, task_id)
+        await message.answer(f"❌ Вы уже выполнили это задание {completed} раз из {task['max_completions']}. Больше нельзя!")
         await state.clear()
         return
     
@@ -1489,7 +1485,9 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
     
     # Отправляем на проверку
     proof_text = f"Скриншот: {photo.file_id}\nОписание: {caption}"
-    if submit_task(user_id, task_id, proof_text):
+    result = submit_task(user_id, task_id, proof_text)
+    
+    if result:
         await message.answer("✅ Задание отправлено на проверку!")
         
         # Уведомляем админов
@@ -1516,10 +1514,10 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
                         [InlineKeyboardButton(text="📝 Отправить на доработку", callback_data=f"rework_task_{task_id}_{user_id}")]
                     ])
                 )
-            except:
-                pass
+            except Exception as e:
+                print(f"Ошибка отправки админу: {e}")
     else:
-        await message.answer("❌ Ошибка при отправке задания. Возможно, вы уже выполнили его максимальное количество раз.")
+        await message.answer("❌ Ошибка при отправке задания. Попробуйте позже.")
     
     await state.clear()
 
@@ -1539,21 +1537,7 @@ async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not task:
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
-    status = get_user_task_status(user_id, task_id)
-    if status and status["status"] == "approved":
-        await safe_answer(call, "✅ Это задание уже было одобрено!", show_alert=True)
-        try:
-            await call.message.delete()
-        except:
-            pass
-        return
-    if status and status["status"] == "rejected":
-        await safe_answer(call, "❌ Это задание было отклонено, нельзя одобрить повторно!", show_alert=True)
-        try:
-            await call.message.delete()
-        except:
-            pass
-        return
+    
     if approve_task(user_id, task_id, task["reward"]):
         await safe_answer(call, "✅ Задание одобрено!")
         try:
@@ -1561,12 +1545,13 @@ async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
         except:
             pass
         try:
+            completed = get_user_completed_count(user_id, task_id)
             await bot.send_message(
                 user_id,
                 f"✅ <b>Задание одобрено!</b>\n\n"
                 f"📋 {task['title']}\n"
                 f"🎁 Начислено: +{task['reward']} 🍬\n"
-                f"📊 Осталось выполнений: {task['max_completions'] - get_user_completed_count(user_id, task_id)} из {task['max_completions']}\n\n"
+                f"📊 Выполнено: {completed} из {task['max_completions']}\n\n"
                 f"Спасибо за выполнение!"
             )
         except:
@@ -1583,14 +1568,7 @@ async def reject_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
     task_id = int(parts[2])
     user_id = int(parts[3])
     task = get_task(task_id)
-    status = get_user_task_status(user_id, task_id)
-    if status and status["status"] == "approved":
-        await safe_answer(call, "✅ Это задание уже одобрено, нельзя отклонить!", show_alert=True)
-        try:
-            await call.message.delete()
-        except:
-            pass
-        return
+    
     if reject_task(user_id, task_id):
         await safe_answer(call, "❌ Задание отклонено")
         try:
@@ -1622,16 +1600,14 @@ async def rework_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not task:
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
-    status = get_user_task_status(user_id, task_id)
-    if status and status["status"] == "approved":
-        await safe_answer(call, "✅ Это задание уже одобрено!", show_alert=True)
-        return
-    if status and status["status"] == "pending":
-        reject_task(user_id, task_id)
+    
+    reject_task(user_id, task_id)
+    
     try:
         await call.message.delete()
     except:
         pass
+    
     await state.update_data(rework_user_id=user_id, rework_task_id=task_id, rework_task_title=task["title"])
     await state.set_state(AdminStates.waiting_for_rework_message)
     await safe_answer(call)
@@ -1655,7 +1631,7 @@ async def send_rework_message(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Ошибка: данные не найдены")
         await state.clear()
         return
-    reject_task(user_id, task_id)
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Выполнить заново", callback_data=f"do_task_{task_id}")],
         [InlineKeyboardButton(text="❌ Отказаться от задания", callback_data=f"cancel_task_{task_id}")]
@@ -1682,6 +1658,7 @@ async def cancel_task_by_user(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not task:
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
+    
     reject_task(user_id, task_id)
     await safe_answer(call, "❌ Вы отказались от выполнения задания")
     try:
