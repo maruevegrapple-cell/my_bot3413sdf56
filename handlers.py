@@ -1407,18 +1407,21 @@ async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     status = get_user_task_status(user_id, task_id)
     task_status = status["status"] if status else None
+    completed = get_user_completed_count(user_id, task_id)
     text = (
         f"📋 <b>{task['title']}</b>\n\n"
         f"📝 {task['description']}\n\n"
         f"🎁 Награда: +{task['reward']} 🍬\n"
         f"📊 Макс. выполнений: {task['max_completions']}\n"
-        f"✅ Выполнено раз: {get_user_completed_count(user_id, task_id)} из {task['max_completions']}\n\n"
+        f"✅ Выполнено раз: {completed} из {task['max_completions']}\n\n"
         f"📸 Отправьте скриншот выполнения задания!"
     )
     if task_status == "pending":
         text += "\n⏳ Задание на проверке у администратора"
-    elif task_status == "approved":
-        text += "\n✅ Задание уже выполнено"
+    elif task_status == "approved" and completed >= task['max_completions']:
+        text += "\n✅ Все выполнения завершены!"
+    elif task_status == "approved" and completed < task['max_completions']:
+        text += "\n✅ Выполнено! Можно отправить еще раз."
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📸 Отправить скриншот", callback_data=f"do_task_{task_id}")],
         [InlineKeyboardButton(text="⬅️ Назад к заданиям", callback_data="tasks")]
@@ -1657,14 +1660,12 @@ async def admin_delete_record(call: CallbackQuery, state: FSMContext, bot: Bot):
     task_id = int(parts[3])
     user_id = int(parts[4])
     
-    # Получаем все записи пользователя по этому заданию
     records = get_user_task_records(user_id, task_id)
     
     if not records:
         await safe_answer(call, "❌ Нет записей для удаления", show_alert=True)
         return
     
-    # Создаем клавиатуру с выбором записи для удаления
     keyboard = []
     for record in records:
         status_emoji = "⏳" if record["status"] == "pending" else "✅" if record["status"] == "approved" else "❌"
@@ -1675,10 +1676,11 @@ async def admin_delete_record(call: CallbackQuery, state: FSMContext, bot: Bot):
         )])
     keyboard.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_tasks")])
     
+    task_title = get_task(task_id)["title"] if get_task(task_id) else str(task_id)
     await call.message.answer(
         f"🗑 <b>Удаление заявок</b>\n\n"
-        f"Пользователь: {user_id}\n"
-        f"Задание: {get_task(task_id)['title'] if get_task(task_id) else task_id}\n\n"
+        f"👤 Пользователь: {user_id}\n"
+        f"📋 Задание: {task_title}\n\n"
         f"Выберите заявку для удаления:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
@@ -1727,11 +1729,13 @@ async def cancel_task_by_user(call: CallbackQuery, state: FSMContext, bot: Bot):
 async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
-    # Проверяем подписку
+    print(f"🔍 check_subscribe: user {user_id} нажал кнопку")
+    
     is_subscribed = await check_subscription(bot, user_id)
     
+    print(f"🔍 Подписка: {is_subscribed}")
+    
     if is_subscribed:
-        # Начисляем бонус, если еще не получал
         if not has_received_subscribe_bonus(user_id):
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUBSCRIBE_BONUS, user_id))
             mark_subscribe_bonus_received(user_id)
@@ -1740,16 +1744,13 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
         
         await safe_answer(call, "✅ Спасибо за подписку!", show_alert=True)
         
-        # Выходим из состояния подписки
         await state.set_state(None)
         
-        # Удаляем старое сообщение с кнопкой подписки
         try:
             await call.message.delete()
         except:
             pass
         
-        # Проверяем админ ли пользователь
         has_access, _, is_main, can_manage = check_admin_access(user_id)
         if has_access:
             await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
@@ -1757,6 +1758,10 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
             await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
         await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
+
+# ================= ВСЕ ОСТАЛЬНЫЕ ХЭНДЛЕРЫ (АДМИН, ПРОФИЛЬ, ВИДЕО И Т.Д.) =================
+# Остальные хэндлеры (админ, профиль, видео и т.д.) остаются без изменений из твоего исходного файла
+# ... (весь остальной код)
 
 # ================= АДМИН - ПРОСМОТР АКТИВНЫХ ПОДПИСОК =================
 @router.callback_query(F.data == "admin_active_subscriptions")

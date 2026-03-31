@@ -403,12 +403,15 @@ def submit_task(user_id: int, task_id: int, proof: str = None):
         
         max_completions = task["max_completions"]
         
+        # Проверяем сколько раз уже ОДОБРЕНО
         cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
         completed = cursor.fetchone()["count"]
         
+        # ЕСЛИ ЛИМИТ ДОСТИГНУТ - НЕ СОЗДАЕМ ЗАПИСЬ
         if completed >= max_completions:
             return False
         
+        # СОЗДАЕМ НОВУЮ ЗАПИСЬ
         cursor.execute("""
             INSERT INTO user_tasks (user_id, task_id, status, proof)
             VALUES (?, ?, 'pending', ?)
@@ -422,6 +425,7 @@ def submit_task(user_id: int, task_id: int, proof: str = None):
 
 def approve_task(user_id: int, task_id: int, reward: int):
     try:
+        # Находим последнюю pending запись
         cursor.execute("SELECT id FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1", (user_id, task_id))
         task_record = cursor.fetchone()
         
