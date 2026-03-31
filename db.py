@@ -403,15 +403,12 @@ def submit_task(user_id: int, task_id: int, proof: str = None):
         
         max_completions = task["max_completions"]
         
-        # Проверяем сколько раз уже ОДОБРЕНО
         cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
         completed = cursor.fetchone()["count"]
         
-        # ЕСЛИ ЛИМИТ ДОСТИГНУТ - НЕ СОЗДАЕМ ЗАПИСЬ
         if completed >= max_completions:
             return False
         
-        # СОЗДАЕМ НОВУЮ ЗАПИСЬ
         cursor.execute("""
             INSERT INTO user_tasks (user_id, task_id, status, proof)
             VALUES (?, ?, 'pending', ?)
@@ -425,7 +422,6 @@ def submit_task(user_id: int, task_id: int, proof: str = None):
 
 def approve_task(user_id: int, task_id: int, reward: int):
     try:
-        # Находим последнюю pending запись
         cursor.execute("SELECT id FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1", (user_id, task_id))
         task_record = cursor.fetchone()
         
@@ -496,6 +492,31 @@ def get_user_completed_count(user_id: int, task_id: int) -> int:
         return row["count"] if row else 0
     except:
         return 0
+
+# ========== ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ ЗАЯВКАМИ ==========
+def get_task_record_by_id(record_id: int):
+    """Получить запись по ID"""
+    try:
+        cursor.execute("""
+            SELECT ut.*, u.username, t.title, t.reward, t.max_completions
+            FROM user_tasks ut
+            JOIN users u ON ut.user_id = u.user_id
+            JOIN tasks t ON ut.task_id = t.id
+            WHERE ut.id = ?
+        """, (record_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+def delete_task_record_by_id(record_id: int):
+    """Удалить запись по ID"""
+    try:
+        cursor.execute("DELETE FROM user_tasks WHERE id = ?", (record_id,))
+        conn.commit()
+        return True
+    except:
+        return False
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========
 def get_mandatory_channels():

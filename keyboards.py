@@ -44,27 +44,38 @@ video_menu = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # ================= МЕНЮ ЗАДАНИЙ =================
-def get_tasks_menu(user_tasks):
+def get_tasks_menu(tasks):
     keyboard = []
-    for task in user_tasks:
-        if task.get("status") == "approved":
-            emoji = "✅"
-        elif task.get("status") == "pending":
-            emoji = "⏳"
-        else:
-            emoji = "📋"
-        
-        # Добавляем 🔄 если задание можно выполнить несколько раз
+    for task in tasks:
+        completed = task.get("completed", 0)
         max_completions = task.get("max_completions", 1)
-        multi_emoji = " 🔄" if max_completions > 1 else ""
+        
+        # Если задание выполнено полностью
+        if completed >= max_completions:
+            emoji = "✅"
+            status_text = " (выполнено)"
+        else:
+            # Если есть ожидающая заявка
+            if task.get("status") == "pending":
+                emoji = "⏳"
+                status_text = " (на проверке)"
+            else:
+                emoji = "🔄"
+                status_text = ""
+        
+        # Добавляем счетчик если max_completions > 1
+        if max_completions > 1:
+            counter = f" [{completed}/{max_completions}]"
+        else:
+            counter = ""
         
         keyboard.append([InlineKeyboardButton(
-            text=f"{emoji} {task['title']} | +{task['reward']} 🍬{multi_emoji}",
+            text=f"{emoji} {task['title']}{status_text}{counter} | +{task['reward']} 🍬",
             callback_data=f"task_{task['id']}"
         )])
     
-    keyboard.append([InlineKeyboardButton(text="🔄 Обновить список", callback_data="tasks_refresh")])
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="menu")])
+    keyboard.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="tasks_refresh")])
+    keyboard.append([InlineKeyboardButton(text="🏠 В меню", callback_data="menu")])
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -114,6 +125,9 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
         [
             InlineKeyboardButton(text="📹 Загрузить видео", callback_data="admin_upload_url"),
             InlineKeyboardButton(text="📋 Управление заданиями", callback_data="admin_tasks")
+        ],
+        [
+            InlineKeyboardButton(text="🗑 Управление заявками", callback_data="admin_manage_requests")
         ]
     ]
     if is_main_admin or can_manage_admins:
@@ -128,6 +142,37 @@ admin_tasks_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📋 Список заданий", callback_data="admin_task_list")],
     [InlineKeyboardButton(text="⏳ На проверке", callback_data="admin_task_pending")],
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
+])
+
+# ================= МЕНЮ УПРАВЛЕНИЯ ЗАЯВКАМИ =================
+def get_requests_menu(pending_tasks):
+    keyboard = []
+    for task in pending_tasks:
+        keyboard.append([InlineKeyboardButton(
+            text=f"⏳ {task['title']} | @{task['username']} | +{task['reward']}🍬",
+            callback_data=f"admin_view_request_{task['id']}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_request_action_menu(record_id: int, task_title: str, username: str, user_id: int, task_id: int, reward: int, proof: str):
+    keyboard = [
+        [
+            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"admin_approve_request_{record_id}_{user_id}_{task_id}_{reward}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_request_{record_id}_{user_id}_{task_id}")
+        ],
+        [InlineKeyboardButton(text="📝 Отправить на доработку", callback_data=f"admin_rework_request_{record_id}_{user_id}_{task_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить заявку", callback_data=f"admin_delete_request_{record_id}_{user_id}_{task_id}")],
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_manage_requests")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+# ================= МЕНЮ ПОДТВЕРЖДЕНИЯ ДОРАБОТКИ =================
+rework_confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [
+        InlineKeyboardButton(text="✅ Да, отправить", callback_data="confirm_rework"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_rework")
+    ]
 ])
 
 # ================= МЕНЮ УПРАВЛЕНИЯ АДМИНАМИ =================

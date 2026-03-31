@@ -52,7 +52,7 @@ from db import (
     get_active_tasks, get_task, add_task, remove_task, update_task,
     get_user_task_status, submit_task, approve_task, reject_task,
     get_pending_tasks, get_user_completed_tasks, can_complete_task, get_user_completed_count,
-    get_user_task_records, delete_user_task_record,
+    get_user_task_records, delete_user_task_record, get_task_record_by_id, delete_task_record_by_id,
     has_private_access, add_private_purchase, mark_private_paid, get_private_purchase,
     get_user_subscription, get_user_subscriptions, add_subscription, remove_subscription, check_and_give_daily_bonus, get_all_active_subscriptions,
     rate_video, get_video_rating, get_user_video_rating, get_videos_sorted_by_rating, get_video_count_for_user
@@ -61,7 +61,8 @@ from keyboards import (
     fake_menu, main_menu, video_menu, shop_menu, get_admin_menu, 
     confirm_menu, subscribe_menu, op_menu, admin_manage_menu,
     get_tasks_menu, get_task_action_menu, admin_tasks_menu,
-    private_pay_menu, get_private_crypto_menu, subscriptions_menu
+    private_pay_menu, get_private_crypto_menu, subscriptions_menu,
+    get_requests_menu, get_request_action_menu, rework_confirm_menu
 )
 from payments import (
     create_invoice, 
@@ -118,6 +119,7 @@ class AdminStates(StatesGroup):
     waiting_for_edit_task_reward = State()
     waiting_for_edit_task_max_completions = State()
     waiting_for_user_subscriptions = State()
+    waiting_for_rework_confirm = State()
 
 class CaptchaStates(StatesGroup):
     waiting_for_captcha = State()
@@ -146,6 +148,10 @@ class TaskStates(StatesGroup):
 
 class AdminTaskStates(StatesGroup):
     waiting_for_task_id_to_delete = State()
+
+class AdminRequestStates(StatesGroup):
+    waiting_for_rework_text = State()
+    waiting_for_rework_confirm = State()
 
 captcha_data = {}
 captcha_attempts = {}
@@ -1547,7 +1553,7 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
                             InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
                         ],
                         [InlineKeyboardButton(text="📝 Отправить на доработку", callback_data=f"rework_task_{task_id}_{user_id}")],
-                        [InlineKeyboardButton(text="🗑 Удалить заявку", callback_data=f"admin_delete_record_{task_id}_{user_id}")]
+                        [InlineKeyboardButton(text="🗑 Удалить заявку", callback_data=f"admin_delete_request_{task_id}_{user_id}")]
                     ])
                 )
             except Exception as e:
@@ -1637,13 +1643,6 @@ async def rework_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
     
-    reject_task(user_id, task_id)
-    
-    try:
-        await call.message.delete()
-    except:
-        pass
-    
     await state.update_data(rework_user_id=user_id, rework_task_id=task_id, rework_task_title=task["title"])
     await state.set_state(AdminStates.waiting_for_rework_message)
     await safe_answer(call)
@@ -1668,6 +1667,37 @@ async def send_rework_message(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     
+    # Сохраняем текст для доработки и показываем подтверждение
+    await state.update_data(rework_text=rework_text, rework_user_id=user_id, rework_task_id=task_id, rework_task_title=task_title)
+    await state.set_state(AdminStates.waiting_for_rework_confirm)
+    await message.answer(
+        f"📝 <b>ПОДТВЕРЖДЕНИЕ ОТПРАВКИ НА ДОРАБОТКУ</b>\n\n"
+        f"👤 Пользователь: {user_id}\n"
+        f"📋 Задание: {task_title}\n\n"
+        f"💬 Текст пояснения:\n{rework_text}\n\n"
+        f"✅ Отправить пользователю?",
+        reply_markup=rework_confirm_menu
+    )
+
+@router.callback_query(F.data == "confirm_rework")
+async def confirm_rework(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    user_id = data.get("rework_user_id")
+    task_id = data.get("rework_task_id")
+    task_title = data.get("rework_task_title")
+    rework_text = data.get("rework_text")
+    
+    if not user_id or not task_id:
+        await call.message.answer("❌ Ошибка: данные не найдены")
+        await state.clear()
+        return
+    
+    reject_task(user_id, task_id)
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Выполнить заново", callback_data=f"do_task_{task_id}")],
         [InlineKeyboardButton(text="❌ Отказаться от задания", callback_data=f"cancel_task_{task_id}")]
@@ -1681,21 +1711,177 @@ async def send_rework_message(message: Message, state: FSMContext, bot: Bot):
             f"⚠️ Пожалуйста, исправьте задание и отправьте заново.",
             reply_markup=keyboard
         )
-        await message.answer(f"✅ Сообщение отправлено пользователю {user_id}")
+        await call.message.edit_text(f"✅ Сообщение отправлено пользователю {user_id}")
     except:
         pass
     await state.clear()
 
-# ================= УДАЛЕНИЕ ЗАЯВКИ =================
-@router.callback_query(F.data.startswith("admin_delete_record_"))
-async def admin_delete_record(call: CallbackQuery, state: FSMContext, bot: Bot):
+@router.callback_query(F.data == "cancel_rework")
+async def cancel_rework(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    await state.clear()
+    await call.message.edit_text("❌ Отправка на доработку отменена")
+
+# ================= АДМИН - УПРАВЛЕНИЕ ЗАЯВКАМИ =================
+@router.callback_query(F.data == "admin_manage_requests")
+async def admin_manage_requests(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    pending_tasks = get_pending_tasks()
+    
+    if not pending_tasks:
+        await call.message.answer("📭 Нет заданий на проверке")
+        return
+    
+    await call.message.answer(
+        "🗑 <b>УПРАВЛЕНИЕ ЗАЯВКАМИ</b>\n\n"
+        "Выберите заявку для управления:",
+        reply_markup=get_requests_menu(pending_tasks)
+    )
+
+@router.callback_query(F.data.startswith("admin_view_request_"))
+async def admin_view_request(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    record_id = int(call.data.replace("admin_view_request_", ""))
+    record = get_task_record_by_id(record_id)
+    
+    if not record:
+        await safe_answer(call, "❌ Заявка не найдена", show_alert=True)
+        return
+    
+    text = (
+        f"📋 <b>ДЕТАЛИ ЗАЯВКИ</b>\n\n"
+        f"👤 Пользователь: @{record['username']} (ID: {record['user_id']})\n"
+        f"📝 Задание: {record['title']}\n"
+        f"🎁 Награда: +{record['reward']} 🍬\n"
+        f"📊 Макс. выполнений: {record['max_completions']}\n"
+        f"📅 Отправлено: {record['completed_at'][:19]}\n\n"
+        f"📄 Доказательство:\n{record['proof']}"
+    )
+    
+    # Если есть фото, отправляем его
+    if "Скриншот:" in record['proof']:
+        file_id = record['proof'].split("Скриншот: ")[1].split("\n")[0]
+        await bot.send_photo(
+            call.from_user.id,
+            photo=file_id,
+            caption=text,
+            reply_markup=get_request_action_menu(record_id, record['title'], record['username'], record['user_id'], record['task_id'], record['reward'], record['proof'])
+        )
+    else:
+        await call.message.answer(
+            text,
+            reply_markup=get_request_action_menu(record_id, record['title'], record['username'], record['user_id'], record['task_id'], record['reward'], record['proof'])
+        )
+
+@router.callback_query(F.data.startswith("admin_approve_request_"))
+async def admin_approve_request(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
     
     parts = call.data.split("_")
-    task_id = int(parts[3])
+    record_id = int(parts[3])
     user_id = int(parts[4])
+    task_id = int(parts[5])
+    reward = int(parts[6])
+    
+    task = get_task(task_id)
+    if not task:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    
+    if approve_task(user_id, task_id, reward):
+        await safe_answer(call, "✅ Задание одобрено!")
+        await call.message.delete()
+        try:
+            completed = get_user_completed_count(user_id, task_id)
+            await bot.send_message(
+                user_id,
+                f"✅ <b>Задание одобрено!</b>\n\n"
+                f"📋 {task['title']}\n"
+                f"🎁 Начислено: +{reward} 🍬\n"
+                f"📊 Выполнено: {completed} из {task.get('max_completions', 1)}\n\n"
+                f"Спасибо за выполнение!"
+            )
+        except:
+            pass
+    else:
+        await safe_answer(call, "❌ Ошибка при одобрении", show_alert=True)
+
+@router.callback_query(F.data.startswith("admin_reject_request_"))
+async def admin_reject_request(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    parts = call.data.split("_")
+    record_id = int(parts[3])
+    user_id = int(parts[4])
+    task_id = int(parts[5])
+    
+    task = get_task(task_id)
+    if reject_task(user_id, task_id):
+        await safe_answer(call, "❌ Задание отклонено")
+        await call.message.delete()
+        try:
+            await bot.send_message(
+                user_id,
+                f"❌ <b>Задание отклонено</b>\n\n"
+                f"📋 {task['title']}\n\n"
+                f"Ваше задание не прошло проверку.\n"
+                f"Попробуйте выполнить его заново, следуя инструкциям."
+            )
+        except:
+            pass
+    else:
+        await safe_answer(call, "❌ Ошибка при отклонении", show_alert=True)
+
+@router.callback_query(F.data.startswith("admin_rework_request_"))
+async def admin_rework_request(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    parts = call.data.split("_")
+    record_id = int(parts[3])
+    user_id = int(parts[4])
+    task_id = int(parts[5])
+    
+    task = get_task(task_id)
+    if not task:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    
+    await state.update_data(rework_user_id=user_id, rework_task_id=task_id, rework_task_title=task["title"])
+    await state.set_state(AdminStates.waiting_for_rework_message)
+    await safe_answer(call)
+    await call.message.answer(
+        f"✏️ <b>ОТПРАВКА НА ДОРАБОТКУ</b>\n\n"
+        f"👤 Пользователь: {user_id}\n"
+        f"📋 Задание: {task['title']}\n\n"
+        f"Введите текст пояснения (что нужно исправить):"
+    )
+
+@router.callback_query(F.data.startswith("admin_delete_request_"))
+async def admin_delete_request(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    parts = call.data.split("_")
+    record_id = int(parts[3])
+    user_id = int(parts[4])
+    task_id = int(parts[5])
     
     records = get_user_task_records(user_id, task_id)
     
@@ -1711,13 +1897,12 @@ async def admin_delete_record(call: CallbackQuery, state: FSMContext, bot: Bot):
             text=f"{status_emoji} {date_str} - {record['status']}",
             callback_data=f"delete_specific_record_{record['id']}"
         )])
-    keyboard.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_tasks")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_manage_requests")])
     
-    task_title = get_task(task_id)["title"] if get_task(task_id) else str(task_id)
     await call.message.answer(
         f"🗑 <b>Удаление заявок</b>\n\n"
         f"👤 Пользователь: {user_id}\n"
-        f"📋 Задание: {task_title}\n\n"
+        f"📋 Задание: {get_task(task_id)['title'] if get_task(task_id) else task_id}\n\n"
         f"Выберите заявку для удаления:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
@@ -1731,7 +1916,7 @@ async def delete_specific_record(call: CallbackQuery, state: FSMContext, bot: Bo
     
     record_id = int(call.data.replace("delete_specific_record_", ""))
     
-    if delete_user_task_record(record_id):
+    if delete_task_record_by_id(record_id):
         await safe_answer(call, "✅ Заявка удалена!", show_alert=True)
         await call.message.edit_text("✅ Заявка успешно удалена")
     else:
@@ -1771,7 +1956,7 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     # Проверяем подписку
     is_subscribed = await check_subscription(bot, user_id)
     
-    print(f"🔍 Подписка: {is_subscribed}")
+    print(f"🔍 Результат проверки подписки: {is_subscribed}")
     
     if is_subscribed:
         # Начисляем бонус, если еще не получал
@@ -1789,15 +1974,13 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
         # Удаляем сообщение с кнопкой подписки
         try:
             await call.message.delete()
-        except:
-            pass
+        except Exception as e:
+            print(f"❌ Ошибка удаления сообщения: {e}")
         
         has_access, _, is_main, can_manage = check_admin_access(user_id)
         if has_access:
-            # Отправляем новое сообщение с админ-панелью
             await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
         else:
-            # Отправляем новое сообщение с главным меню
             await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
         await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
