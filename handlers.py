@@ -1476,12 +1476,7 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     
-    # Проверяем нет ли уже на проверке
-    status = get_user_task_status(user_id, task_id)
-    if status and status["status"] == "pending":
-        await message.answer("⏳ Задание уже на проверке у администратора")
-        await state.clear()
-        return
+    # НЕТ ПРОВЕРКИ НА PENDING - можно отправлять несколько заданий подряд!
     
     # Отправляем на проверку
     proof_text = f"Скриншот: {photo.file_id}\nОписание: {caption}"
@@ -1673,6 +1668,43 @@ async def cancel_task_by_user(call: CallbackQuery, state: FSMContext, bot: Bot):
             f"📋 {task['title']}\n\n"
             f"Вы можете выбрать другое задание в меню."
         )
+
+# ================= ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ПОДПИСКИ =================
+@router.callback_query(F.data == "check_subscribe")
+async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    
+    # Проверяем подписку
+    is_subscribed = await check_subscription(bot, user_id)
+    
+    if is_subscribed:
+        # Проверяем, не получал ли уже бонус
+        if not has_received_subscribe_bonus(user_id):
+            # Начисляем бонус
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUBSCRIBE_BONUS, user_id))
+            mark_subscribe_bonus_received(user_id)
+            conn.commit()
+            await safe_answer(call, f"🎁 +{SUBSCRIBE_BONUS} 🍬 за подписку!", show_alert=True)
+        
+        await safe_answer(call, "✅ Спасибо за подписку!", show_alert=True)
+        
+        # Выходим из состояния подписки
+        await state.set_state(None)
+        
+        # Удаляем старое сообщение с кнопкой подписки
+        try:
+            await call.message.delete()
+        except:
+            pass
+        
+        # Проверяем админ ли пользователь и показываем меню
+        has_access, _, is_main, can_manage = check_admin_access(user_id)
+        if has_access:
+            await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
+        else:
+            await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
+    else:
+        await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
 
 # ================= АДМИН - ПРОСМОТР АКТИВНЫХ ПОДПИСОК =================
 @router.callback_query(F.data == "admin_active_subscriptions")

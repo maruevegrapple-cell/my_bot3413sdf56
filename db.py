@@ -20,51 +20,6 @@ cursor = conn.cursor()
 cursor.execute("PRAGMA journal_mode=WAL")
 cursor.execute("PRAGMA synchronous=FULL")
 
-# ========== УДАЛЕНИЕ UNIQUE ИЗ user_tasks ==========
-def fix_user_tasks_table():
-    try:
-        # Проверяем есть ли ограничение UNIQUE
-        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='user_tasks'")
-        row = cursor.fetchone()
-        if row:
-            sql = row["sql"]
-            if "UNIQUE" in sql.upper():
-                print("⚠️ Обнаружено UNIQUE ограничение в user_tasks, создаем новую таблицу...")
-                
-                # Создаем новую таблицу без UNIQUE
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS user_tasks_new (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER,
-                        task_id INTEGER,
-                        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        status TEXT DEFAULT 'pending',
-                        proof TEXT
-                    )
-                """)
-                
-                # Копируем данные
-                cursor.execute("SELECT user_id, task_id, completed_at, status, proof FROM user_tasks")
-                rows = cursor.fetchall()
-                for r in rows:
-                    cursor.execute("""
-                        INSERT INTO user_tasks_new (user_id, task_id, completed_at, status, proof)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (r["user_id"], r["task_id"], r["completed_at"], r["status"], r["proof"]))
-                
-                # Удаляем старую и переименовываем новую
-                cursor.execute("DROP TABLE user_tasks")
-                cursor.execute("ALTER TABLE user_tasks_new RENAME TO user_tasks")
-                
-                # Создаем индекс для быстрого поиска
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_tasks_user_task ON user_tasks(user_id, task_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_tasks_status ON user_tasks(status)")
-                
-                conn.commit()
-                print("✅ Таблица user_tasks исправлена (UNIQUE удален)")
-    except Exception as e:
-        print(f"❌ Ошибка исправления user_tasks: {e}")
-
 # ========== ФУНКЦИЯ ОБНОВЛЕНИЯ СХЕМЫ ==========
 def update_db_schema():
     try:
@@ -97,11 +52,6 @@ def update_db_schema():
         if 'proof' not in columns:
             cursor.execute("ALTER TABLE user_tasks ADD COLUMN proof TEXT")
             print("✅ Добавлена колонка proof в user_tasks")
-        
-        # Добавляем колонку id если ее нет
-        if 'id' not in columns:
-            cursor.execute("ALTER TABLE user_tasks ADD COLUMN id INTEGER PRIMARY KEY AUTOINCREMENT")
-            print("✅ Добавлена колонка id в user_tasks")
         
         conn.commit()
         print("✅ Схема базы данных обновлена")
@@ -268,7 +218,6 @@ def init_db():
     )
     """)
     
-    # Новая таблица user_tasks БЕЗ UNIQUE
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,10 +272,6 @@ def init_db():
     
     conn.commit()
     print("✅ База данных инициализирована")
-    
-    # Удаляем UNIQUE из существующей таблицы если она была создана раньше
-    fix_user_tasks_table()
-    
     update_db_schema()
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЗАДАНИЯМИ ==========
@@ -402,7 +347,6 @@ def remove_task(task_id: int):
 
 def get_user_task_status(user_id: int, task_id: int):
     try:
-        # Возвращаем последний статус (по id)
         cursor.execute("SELECT status, completed_at FROM user_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC LIMIT 1", (user_id, task_id))
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -413,7 +357,7 @@ def submit_task(user_id: int, task_id: int, proof: str = None):
     try:
         print(f"📝 submit_task: user={user_id}, task={task_id}")
         
-        cursor.execute("SELECT max_completions, title FROM tasks WHERE id = ?", (task_id,))
+        cursor.execute("SELECT max_completions FROM tasks WHERE id = ?", (task_id,))
         task = cursor.fetchone()
         if not task:
             print(f"❌ Задание {task_id} не найдено")
@@ -431,12 +375,7 @@ def submit_task(user_id: int, task_id: int, proof: str = None):
             print(f"❌ Лимит достигнут: {completed} >= {max_completions}")
             return False
         
-        # Проверяем есть ли уже НА ПРОВЕРКЕ (неодобренная и неотклоненная)
-        cursor.execute("SELECT id FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending'", (user_id, task_id))
-        pending = cursor.fetchone()
-        if pending:
-            print(f"❌ Уже на проверке")
-            return False
+        # НЕТ ПРОВЕРКИ НА PENDING - можно отправлять несколько заданий подряд!
         
         # Создаем новую запись
         print(f"📝 Создаем новую заявку")
@@ -533,7 +472,7 @@ def get_user_completed_count(user_id: int, task_id: int) -> int:
     except:
         return 0
 
-# ========== ОСТАЛЬНЫЕ ФУНКЦИИ (без изменений) ==========
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========
 def get_mandatory_channels():
     try:
         cursor.execute("SELECT channel_id, channel_name, channel_link FROM mandatory_channels")
@@ -560,6 +499,7 @@ def remove_mandatory_channel(channel_id):
     except:
         return False
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С АДМИНАМИ ==========
 def is_admin(user_id: int) -> bool:
     try:
         cursor.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
@@ -624,6 +564,7 @@ def remove_admin(admin_id: int):
     except:
         return False
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С БОНУСАМИ ==========
 def has_received_subscribe_bonus(user_id: int) -> bool:
     try:
         cursor.execute("SELECT subscribe_bonus_received FROM users WHERE user_id = ?", (user_id,))
@@ -656,6 +597,7 @@ def get_bonus_stats():
     except:
         return {"users_took_bonus": 0}
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ ==========
 def get_user(user_id: int):
     try:
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -732,6 +674,7 @@ def clear_pending_referrer_bonus(user_id: int):
     except:
         return False
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПЛАТЕЖАМИ ==========
 def add_payment(invoice_id: str, user_id: int, amount: int):
     try:
         cursor.execute(
@@ -785,6 +728,7 @@ def get_payments_stats():
     except:
         return {"total_attempts": 0, "successful": 0, "pending": 0, "total_candies": 0}
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ВИДЕО ==========
 def get_all_videos():
     try:
         cursor.execute("SELECT id, file_id FROM videos ORDER BY id")
@@ -838,6 +782,7 @@ def get_watched_stats():
     except:
         return {"unique_viewers": 0, "total_views": 0}
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРОМОКОДАМИ ==========
 def add_promo_code(code: str, reward: int, activations: int):
     try:
         cursor.execute(
@@ -889,6 +834,7 @@ def get_promo_stats():
     except:
         return {"total_codes": 0, "total_left": 0, "total_used": 0}
 
+# ========== ФУНКЦИИ ДЛЯ ПОЛУЧЕНИЯ ОБЩЕЙ СТАТИСТИКИ ==========
 def get_total_users() -> int:
     try:
         cursor.execute("SELECT COUNT(*) as count FROM users")
@@ -950,6 +896,7 @@ def get_referral_stats():
     except:
         return {"total_refs": 0, "unique_referrers": 0}
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРИВАТКОЙ ==========
 def add_private_purchase(user_id: int, invoice_id: str, amount: float):
     try:
         cursor.execute("""
@@ -989,6 +936,7 @@ def has_private_access(user_id: int) -> bool:
     except:
         return False
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОДПИСКАМИ ==========
 def get_user_subscription(user_id: int):
     try:
         cursor.execute("""
@@ -1080,6 +1028,7 @@ def check_and_give_daily_bonus(user_id: int):
         print(f"❌ Ошибка check_and_give_daily_bonus: {e}")
         return False
 
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С РЕЙТИНГОМ ВИДЕО ==========
 def rate_video(video_id: int, user_id: int, rating: int):
     try:
         cursor.execute("SELECT id FROM videos WHERE id = ?", (video_id,))
