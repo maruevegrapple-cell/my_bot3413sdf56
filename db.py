@@ -20,43 +20,48 @@ cursor = conn.cursor()
 cursor.execute("PRAGMA journal_mode=WAL")
 cursor.execute("PRAGMA synchronous=FULL")
 
-# ========== ФУНКЦИЯ ОБНОВЛЕНИЯ СХЕМЫ ==========
-def update_db_schema():
+# ========== УДАЛЕНИЕ UNIQUE ИЗ user_tasks ==========
+def fix_user_tasks_table():
     try:
-        cursor.execute("PRAGMA table_info(tasks)")
-        columns = [col[1] for col in cursor.fetchall()]
+        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='user_tasks'")
+        row = cursor.fetchone()
         
-        if 'task_type' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'text'")
-            print("✅ Добавлена колонка task_type")
-        
-        if 'task_data' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN task_data TEXT")
-            print("✅ Добавлена колонка task_data")
-        
-        if 'max_completions' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN max_completions INTEGER DEFAULT 1")
-            print("✅ Добавлена колонка max_completions")
-        
-        if 'is_active' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN is_active INTEGER DEFAULT 1")
-            print("✅ Добавлена колонка is_active")
-        
-        if 'created_at' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-            print("✅ Добавлена колонка created_at")
-        
-        cursor.execute("PRAGMA table_info(user_tasks)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'proof' not in columns:
-            cursor.execute("ALTER TABLE user_tasks ADD COLUMN proof TEXT")
-            print("✅ Добавлена колонка proof в user_tasks")
-        
-        conn.commit()
-        print("✅ Схема базы данных обновлена")
+        if row:
+            sql = row["sql"]
+            if "UNIQUE" in sql.upper():
+                print("⚠️ Обнаружено UNIQUE ограничение в user_tasks, исправляем...")
+                
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS user_tasks_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER,
+                        task_id INTEGER,
+                        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        status TEXT DEFAULT 'pending',
+                        proof TEXT
+                    )
+                """)
+                
+                cursor.execute("SELECT user_id, task_id, completed_at, status, proof FROM user_tasks")
+                rows = cursor.fetchall()
+                for r in rows:
+                    cursor.execute("""
+                        INSERT INTO user_tasks_new (user_id, task_id, completed_at, status, proof)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (r["user_id"], r["task_id"], r["completed_at"], r["status"], r["proof"]))
+                
+                cursor.execute("DROP TABLE user_tasks")
+                cursor.execute("ALTER TABLE user_tasks_new RENAME TO user_tasks")
+                
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_tasks_user_task ON user_tasks(user_id, task_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_tasks_status ON user_tasks(status)")
+                
+                conn.commit()
+                print("✅ UNIQUE ограничение удалено!")
+            else:
+                print("✅ Таблица user_tasks уже без UNIQUE")
     except Exception as e:
-        print(f"❌ Ошибка обновления схемы: {e}")
+        print(f"❌ Ошибка исправления user_tasks: {e}")
 
 def generate_ref_code(length=6):
     chars = string.ascii_uppercase + string.digits
@@ -272,7 +277,28 @@ def init_db():
     
     conn.commit()
     print("✅ База данных инициализирована")
-    update_db_schema()
+    
+    fix_user_tasks_table()
+    
+    try:
+        cursor.execute("PRAGMA table_info(tasks)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'task_type' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'text'")
+        if 'task_data' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN task_data TEXT")
+        if 'max_completions' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN max_completions INTEGER DEFAULT 1")
+        if 'is_active' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN is_active INTEGER DEFAULT 1")
+        if 'created_at' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        
+        conn.commit()
+        print("✅ Схема обновлена")
+    except Exception as e:
+        print(f"❌ Ошибка обновления схемы: {e}")
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЗАДАНИЯМИ ==========
 def get_active_tasks():
@@ -353,60 +379,58 @@ def get_user_task_status(user_id: int, task_id: int):
     except:
         return None
 
+def get_user_task_records(user_id: int, task_id: int):
+    try:
+        cursor.execute("SELECT * FROM user_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC", (user_id, task_id))
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+def delete_user_task_record(record_id: int):
+    try:
+        cursor.execute("DELETE FROM user_tasks WHERE id = ?", (record_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
 def submit_task(user_id: int, task_id: int, proof: str = None):
     try:
-        print(f"📝 submit_task: user={user_id}, task={task_id}")
-        
         cursor.execute("SELECT max_completions FROM tasks WHERE id = ?", (task_id,))
         task = cursor.fetchone()
         if not task:
-            print(f"❌ Задание {task_id} не найдено")
             return False
         
         max_completions = task["max_completions"]
-        print(f"📝 max_completions={max_completions}")
         
-        # Проверяем сколько раз уже ОДОБРЕНО
         cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
         completed = cursor.fetchone()["count"]
-        print(f"📝 Уже одобрено: {completed}")
         
         if completed >= max_completions:
-            print(f"❌ Лимит достигнут: {completed} >= {max_completions}")
             return False
         
-        # НЕТ ПРОВЕРКИ НА PENDING - можно отправлять несколько заданий подряд!
-        
-        # Создаем новую запись
-        print(f"📝 Создаем новую заявку")
         cursor.execute("""
             INSERT INTO user_tasks (user_id, task_id, status, proof)
             VALUES (?, ?, 'pending', ?)
         """, (user_id, task_id, proof))
         
         conn.commit()
-        print(f"✅ Задание {task_id} отправлено на проверку")
         return True
     except Exception as e:
         print(f"❌ Ошибка submit_task: {e}")
-        traceback.print_exc()
         return False
 
 def approve_task(user_id: int, task_id: int, reward: int):
     try:
-        # Находим последнюю pending запись
         cursor.execute("SELECT id FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1", (user_id, task_id))
         task_record = cursor.fetchone()
         
         if not task_record:
-            print(f"❌ Нет pending записи для одобрения")
             return False
         
         cursor.execute("UPDATE user_tasks SET status = 'approved' WHERE id = ?", (task_record["id"],))
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
         conn.commit()
-        
-        print(f"✅ Задание {task_id} одобрено, начислено {reward}")
         return True
     except Exception as e:
         print(f"❌ Ошибка approve_task: {e}")
@@ -429,7 +453,7 @@ def reject_task(user_id: int, task_id: int):
 def get_pending_tasks():
     try:
         cursor.execute("""
-            SELECT ut.*, u.username, t.title, t.reward 
+            SELECT ut.*, u.username, t.title, t.reward, t.max_completions
             FROM user_tasks ut
             JOIN users u ON ut.user_id = u.user_id
             JOIN tasks t ON ut.task_id = t.id
@@ -443,7 +467,7 @@ def get_pending_tasks():
 def get_user_completed_tasks(user_id: int):
     try:
         cursor.execute("""
-            SELECT t.*, ut.status, ut.completed_at 
+            SELECT t.*, ut.status, ut.completed_at, ut.id as record_id
             FROM user_tasks ut
             JOIN tasks t ON ut.task_id = t.id
             WHERE ut.user_id = ? AND ut.status = 'approved'
@@ -457,11 +481,8 @@ def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
     try:
         cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
         completed = cursor.fetchone()["count"]
-        result = completed < max_completions
-        print(f"📝 can_complete_task: completed={completed}, max={max_completions}, result={result}")
-        return result
-    except Exception as e:
-        print(f"❌ Ошибка can_complete_task: {e}")
+        return completed < max_completions
+    except:
         return False
 
 def get_user_completed_count(user_id: int, task_id: int) -> int:
