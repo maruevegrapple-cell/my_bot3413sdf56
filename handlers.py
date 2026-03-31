@@ -1454,15 +1454,20 @@ async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     max_completions = task.get("max_completions", 1)
+    
+    # Проверяем можно ли выполнить (считаем только approved)
     if not can_complete_task(user_id, task_id, max_completions):
         completed = get_user_completed_count(user_id, task_id)
         await safe_answer(call, f"❌ Вы уже выполнили это задание {completed} раз из {max_completions}", show_alert=True)
         return
     
-    existing_pending = get_user_task_status(user_id, task_id)
-    if existing_pending and existing_pending.get("status") == "pending":
-        await safe_answer(call, "⏳ У вас уже есть задание на проверке! Дождитесь результата.", show_alert=True)
-        return
+    # Для заданий с max_completions = 1 - проверяем нет ли уже pending заявки
+    if max_completions == 1:
+        existing_pending = get_user_task_status(user_id, task_id)
+        if existing_pending and existing_pending.get("status") == "pending":
+            await safe_answer(call, "⏳ У вас уже есть задание на проверке! Дождитесь результата.", show_alert=True)
+            return
+    # Для заданий с max_completions > 1 - разрешаем отправлять несколько заявок подряд
     
     await state.update_data(task_id=task_id)
     await state.set_state(TaskStates.waiting_for_task_photo)
@@ -1492,18 +1497,23 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
     
     max_completions = task.get("max_completions", 1)
     
+    # Проверяем можно ли выполнить (считаем только approved)
     if not can_complete_task(user_id, task_id, max_completions):
         completed = get_user_completed_count(user_id, task_id)
         await message.answer(f"❌ Вы уже выполнили это задание {completed} раз из {max_completions}. Больше нельзя!")
         await state.clear()
         return
     
-    existing_pending = get_user_task_status(user_id, task_id)
-    if existing_pending and existing_pending.get("status") == "pending":
-        await message.answer("⏳ У вас уже есть задание на проверке! Дождитесь результата.")
-        await state.clear()
-        return
+    # Для заданий с max_completions = 1 - проверяем нет ли уже pending заявки
+    if max_completions == 1:
+        existing_pending = get_user_task_status(user_id, task_id)
+        if existing_pending and existing_pending.get("status") == "pending":
+            await message.answer("⏳ У вас уже есть задание на проверке! Дождитесь результата.")
+            await state.clear()
+            return
+    # Для заданий с max_completions > 1 - разрешаем отправлять несколько заявок подряд
     
+    # Отправляем на проверку
     proof_text = f"Скриншот: {photo.file_id}\nОписание: {caption}"
     result = submit_task(user_id, task_id, proof_text)
     
@@ -1514,6 +1524,7 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
             f"📊 Выполнено: {completed_count} из {max_completions}"
         )
         
+        # Уведомляем админов
         admins = get_all_admins()
         for admin in admins:
             try:
@@ -1757,11 +1768,13 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     print(f"🔍 check_subscribe: user {user_id} нажал кнопку")
     
+    # Проверяем подписку
     is_subscribed = await check_subscription(bot, user_id)
     
     print(f"🔍 Подписка: {is_subscribed}")
     
     if is_subscribed:
+        # Начисляем бонус, если еще не получал
         if not has_received_subscribe_bonus(user_id):
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUBSCRIBE_BONUS, user_id))
             mark_subscribe_bonus_received(user_id)
@@ -1770,8 +1783,10 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
         
         await safe_answer(call, "✅ Спасибо за подписку!", show_alert=True)
         
+        # Выходим из состояния подписки
         await state.set_state(None)
         
+        # Удаляем сообщение с кнопкой подписки
         try:
             await call.message.delete()
         except:
@@ -1779,14 +1794,15 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
         
         has_access, _, is_main, can_manage = check_admin_access(user_id)
         if has_access:
+            # Отправляем новое сообщение с админ-панелью
             await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
         else:
+            # Отправляем новое сообщение с главным меню
             await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
         await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
 
-# ================= ВСЕ ОСТАЛЬНЫЕ ХЭНДЛЕРЫ =================
-# АДМИН - ПРОСМОТР АКТИВНЫХ ПОДПИСОК
+# ================= АДМИН - ПРОСМОТР АКТИВНЫХ ПОДПИСОК =================
 @router.callback_query(F.data == "admin_active_subscriptions")
 async def admin_active_subscriptions(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -1826,7 +1842,7 @@ async def admin_active_subscriptions(call: CallbackQuery, state: FSMContext):
     
     await call.message.answer(text, reply_markup=keyboard)
 
-# АДМИН - ПОДПИСКИ ПОЛЬЗОВАТЕЛЯ
+# ================= АДМИН - ПОДПИСКИ ПОЛЬЗОВАТЕЛЯ =================
 @router.callback_query(F.data.startswith("admin_user_subscriptions_"))
 async def admin_user_subscriptions(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -1868,7 +1884,7 @@ async def admin_user_subscriptions(call: CallbackQuery, state: FSMContext):
     
     await call.message.answer(text, reply_markup=keyboard)
 
-# АДМИН - ТОП ПО БАЛАНСУ
+# ================= АДМИН - ТОП ПО БАЛАНСУ =================
 @router.callback_query(F.data == "admin_top_balance")
 async def admin_top_balance(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -1905,7 +1921,7 @@ async def admin_top_balance(call: CallbackQuery, state: FSMContext):
     
     await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
-# АДМИН - РЕДАКТИРОВАНИЕ ЗАДАНИЙ
+# ================= АДМИН - РЕДАКТИРОВАНИЕ ЗАДАНИЙ =================
 @router.callback_query(F.data == "admin_task_edit")
 async def admin_task_edit_start(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -2097,7 +2113,7 @@ async def edit_task_max_completions_save(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Введите число")
 
-# АДМИН-ЗАДАНИЯ
+# ================= АДМИН-ЗАДАНИЯ =================
 @router.callback_query(F.data == "admin_tasks")
 async def admin_tasks_callback(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
