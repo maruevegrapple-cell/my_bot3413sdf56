@@ -52,6 +52,7 @@ from db import (
     get_active_tasks, get_task, add_task, remove_task, update_task,
     get_user_task_status, submit_task, approve_task, reject_task,
     get_pending_tasks, get_user_completed_tasks, can_complete_task, get_user_completed_count,
+    get_user_task_records, delete_user_task_record,
     has_private_access, add_private_purchase, mark_private_paid, get_private_purchase,
     get_user_subscription, get_user_subscriptions, add_subscription, remove_subscription, check_and_give_daily_bonus, get_all_active_subscriptions,
     rate_video, get_video_rating, get_user_video_rating, get_videos_sorted_by_rating, get_video_count_for_user
@@ -1340,6 +1341,7 @@ async def process_promo_input(message: Message, state: FSMContext, bot: Bot):
     )
     await state.clear()
 
+# ================= ЗАДАНИЯ =================
 @router.callback_query(F.data == "tasks")
 async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1440,10 +1442,6 @@ async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
         completed = get_user_completed_count(user_id, task_id)
         await safe_answer(call, f"❌ Вы уже выполнили это задание {completed} раз из {task['max_completions']}", show_alert=True)
         return
-    status = get_user_task_status(user_id, task_id)
-    if status and status["status"] == "pending":
-        await safe_answer(call, "⏳ Задание уже на проверке", show_alert=True)
-        return
     await state.update_data(task_id=task_id)
     await state.set_state(TaskStates.waiting_for_task_photo)
     await safe_answer(call)
@@ -1504,7 +1502,8 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
                             InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_task_{task_id}_{user_id}"),
                             InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
                         ],
-                        [InlineKeyboardButton(text="📝 Отправить на доработку", callback_data=f"rework_task_{task_id}_{user_id}")]
+                        [InlineKeyboardButton(text="📝 Отправить на доработку", callback_data=f"rework_task_{task_id}_{user_id}")],
+                        [InlineKeyboardButton(text="🗑 Удалить заявку", callback_data=f"delete_task_record_{task_id}_{user_id}")]
                     ])
                 )
             except Exception as e:
@@ -1643,6 +1642,57 @@ async def send_rework_message(message: Message, state: FSMContext, bot: Bot):
         pass
     await state.clear()
 
+# ================= УДАЛЕНИЕ ЗАЯВКИ =================
+@router.callback_query(F.data.startswith("delete_task_record_"))
+async def delete_task_record(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    parts = call.data.split("_")
+    task_id = int(parts[3])
+    user_id = int(parts[4])
+    
+    # Получаем все записи пользователя по этому заданию
+    records = get_user_task_records(user_id, task_id)
+    
+    if not records:
+        await safe_answer(call, "❌ Нет записей для удаления", show_alert=True)
+        return
+    
+    # Создаем клавиатуру с выбором записи для удаления
+    keyboard = []
+    for record in records:
+        status_emoji = "⏳" if record["status"] == "pending" else "✅" if record["status"] == "approved" else "❌"
+        keyboard.append([InlineKeyboardButton(
+            text=f"{status_emoji} {record['completed_at'][:16]} - {record['status']}",
+            callback_data=f"delete_specific_record_{record['id']}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_tasks")])
+    
+    await call.message.answer(
+        f"🗑 <b>Удаление заявок</b>\n\n"
+        f"Пользователь: {user_id}\n"
+        f"Задание ID: {task_id}\n\n"
+        f"Выберите заявку для удаления:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+    await call.message.delete()
+
+@router.callback_query(F.data.startswith("delete_specific_record_"))
+async def delete_specific_record(call: CallbackQuery, state: FSMContext, bot: Bot):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    record_id = int(call.data.replace("delete_specific_record_", ""))
+    
+    if delete_user_task_record(record_id):
+        await safe_answer(call, "✅ Заявка удалена!", show_alert=True)
+        await call.message.edit_text("✅ Заявка успешно удалена")
+    else:
+        await safe_answer(call, "❌ Ошибка при удалении", show_alert=True)
+
 @router.callback_query(F.data.startswith("cancel_task_"))
 async def cancel_task_by_user(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1702,7 +1752,6 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
             await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
         await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
-
 
 # ================= АДМИН - ПРОСМОТР АКТИВНЫХ ПОДПИСОК =================
 @router.callback_query(F.data == "admin_active_subscriptions")
