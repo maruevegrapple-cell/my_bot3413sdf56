@@ -1476,9 +1476,7 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     
-    # НЕТ ПРОВЕРКИ НА PENDING - можно отправлять несколько заданий подряд!
-    
-    # Отправляем на проверку
+    # Отправляем на проверку (НЕТ ПРОВЕРКИ НА PENDING!)
     proof_text = f"Скриншот: {photo.file_id}\nОписание: {caption}"
     result = submit_task(user_id, task_id, proof_text)
     
@@ -1678,9 +1676,8 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     is_subscribed = await check_subscription(bot, user_id)
     
     if is_subscribed:
-        # Проверяем, не получал ли уже бонус
+        # Начисляем бонус, если еще не получал
         if not has_received_subscribe_bonus(user_id):
-            # Начисляем бонус
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUBSCRIBE_BONUS, user_id))
             mark_subscribe_bonus_received(user_id)
             conn.commit()
@@ -1697,7 +1694,7 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
         except:
             pass
         
-        # Проверяем админ ли пользователь и показываем меню
+        # Проверяем админ ли пользователь
         has_access, _, is_main, can_manage = check_admin_access(user_id)
         if has_access:
             await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
@@ -1705,6 +1702,7 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
             await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
     else:
         await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
+
 
 # ================= АДМИН - ПРОСМОТР АКТИВНЫХ ПОДПИСОК =================
 @router.callback_query(F.data == "admin_active_subscriptions")
