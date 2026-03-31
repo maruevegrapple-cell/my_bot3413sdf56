@@ -1438,10 +1438,13 @@ async def do_task(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not task or not task["is_active"]:
         await safe_answer(call, "❌ Задание не найдено", show_alert=True)
         return
+    
+    # ПРОВЕРЯЕМ МОЖНО ЛИ ВЫПОЛНИТЬ (считаем только approved)
     if not can_complete_task(user_id, task_id, task["max_completions"]):
         completed = get_user_completed_count(user_id, task_id)
         await safe_answer(call, f"❌ Вы уже выполнили это задание {completed} раз из {task['max_completions']}", show_alert=True)
         return
+    
     await state.update_data(task_id=task_id)
     await state.set_state(TaskStates.waiting_for_task_photo)
     await safe_answer(call)
@@ -1467,14 +1470,14 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     
-    # Проверяем можно ли выполнить
+    # ПРОВЕРЯЕМ МОЖНО ЛИ ВЫПОЛНИТЬ (считаем только approved)
     if not can_complete_task(user_id, task_id, task["max_completions"]):
         completed = get_user_completed_count(user_id, task_id)
         await message.answer(f"❌ Вы уже выполнили это задание {completed} раз из {task['max_completions']}. Больше нельзя!")
         await state.clear()
         return
     
-    # Отправляем на проверку (НЕТ ПРОВЕРКИ НА PENDING!)
+    # Отправляем на проверку
     proof_text = f"Скриншот: {photo.file_id}\nОписание: {caption}"
     result = submit_task(user_id, task_id, proof_text)
     
@@ -1494,6 +1497,7 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
                         f"🆔 ID: {user_id}\n"
                         f"📝 Задание: {task['title']}\n"
                         f"🎁 Награда: +{task['reward']} 🍬\n"
+                        f"📊 Макс. выполнений: {task['max_completions']}\n"
                         f"📊 Выполнено раз: {get_user_completed_count(user_id, task_id)} из {task['max_completions']}\n\n"
                         f"📄 Описание: {caption}"
                     ),
@@ -1503,7 +1507,7 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
                             InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_task_{task_id}_{user_id}")
                         ],
                         [InlineKeyboardButton(text="📝 Отправить на доработку", callback_data=f"rework_task_{task_id}_{user_id}")],
-                        [InlineKeyboardButton(text="🗑 Удалить заявку", callback_data=f"delete_task_record_{task_id}_{user_id}")]
+                        [InlineKeyboardButton(text="🗑 Удалить заявку", callback_data=f"admin_delete_record_{task_id}_{user_id}")]
                     ])
                 )
             except Exception as e:
@@ -1643,8 +1647,8 @@ async def send_rework_message(message: Message, state: FSMContext, bot: Bot):
     await state.clear()
 
 # ================= УДАЛЕНИЕ ЗАЯВКИ =================
-@router.callback_query(F.data.startswith("delete_task_record_"))
-async def delete_task_record(call: CallbackQuery, state: FSMContext, bot: Bot):
+@router.callback_query(F.data.startswith("admin_delete_record_"))
+async def admin_delete_record(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not check_admin_access(call.from_user.id)[0]:
         await safe_answer(call, "❌ Нет доступа", show_alert=True)
         return
@@ -1664,8 +1668,9 @@ async def delete_task_record(call: CallbackQuery, state: FSMContext, bot: Bot):
     keyboard = []
     for record in records:
         status_emoji = "⏳" if record["status"] == "pending" else "✅" if record["status"] == "approved" else "❌"
+        date_str = record["completed_at"][:16] if record["completed_at"] else "без даты"
         keyboard.append([InlineKeyboardButton(
-            text=f"{status_emoji} {record['completed_at'][:16]} - {record['status']}",
+            text=f"{status_emoji} {date_str} - {record['status']}",
             callback_data=f"delete_specific_record_{record['id']}"
         )])
     keyboard.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_tasks")])
@@ -1673,7 +1678,7 @@ async def delete_task_record(call: CallbackQuery, state: FSMContext, bot: Bot):
     await call.message.answer(
         f"🗑 <b>Удаление заявок</b>\n\n"
         f"Пользователь: {user_id}\n"
-        f"Задание ID: {task_id}\n\n"
+        f"Задание: {get_task(task_id)['title'] if get_task(task_id) else task_id}\n\n"
         f"Выберите заявку для удаления:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
