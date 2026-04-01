@@ -45,23 +45,32 @@ video_menu = InlineKeyboardMarkup(inline_keyboard=[
 
 # ================= МЕНЮ ЗАДАНИЙ =================
 def get_tasks_menu(tasks):
+    """
+    Создает клавиатуру со списком заданий.
+    Эмодзи статуса:
+    - 🔄 - задание на проверке (pending)
+    - ✅ - задание полностью выполнено (все возможные разы)
+    - 📋 - задание еще не начато
+    """
     keyboard = []
     for task in tasks:
         completed = task.get("completed", 0)
         max_completions = task.get("max_completions", 1)
+        status = task.get("status")
         
-        # Если задание выполнено полностью
+        # Определяем эмодзи статуса
         if completed >= max_completions:
+            # Задание полностью выполнено (все возможные разы)
             emoji = "✅"
             status_text = " (выполнено)"
+        elif status == "pending":
+            # Задание начато и ждет проверки
+            emoji = "🔄"
+            status_text = " (на проверке)"
         else:
-            # Если есть ожидающая заявка
-            if task.get("status") == "pending":
-                emoji = "⏳"
-                status_text = " (на проверке)"
-            else:
-                emoji = "🔄"
-                status_text = ""
+            # Задание еще не начато
+            emoji = "📋"
+            status_text = ""
         
         # Добавляем счетчик если max_completions > 1
         if max_completions > 1:
