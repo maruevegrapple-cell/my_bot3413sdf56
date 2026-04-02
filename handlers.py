@@ -3995,3 +3995,54 @@ async def check_balance_command(message: Message):
         await message.answer("❌ Пользователь не найден")
         return
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
+
+@router.callback_query(F.data.startswith("task_category_"))
+async def admin_task_category(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    category = call.data.replace("task_category_", "")
+    await safe_answer(call)
+    
+    data = await state.get_data()
+    title = data.get("title")
+    description = data.get("description")
+    reward = data.get("reward")
+    max_completions = data.get("max_completions", 1)
+    
+    if not title or not description or not reward:
+        await call.message.answer("❌ Ошибка: не все данные заполнены. Начните создание заново.")
+        await state.clear()
+        return
+    
+    task_id = add_task(
+        title=title,
+        description=description,
+        reward=reward,
+        category=category,
+        task_type="photo",
+        task_data=None,
+        max_completions=max_completions
+    )
+    
+    if task_id:
+        category_name = {
+            "easy": "🥉 ЛЕГКИЕ ЗАДАЧИ",
+            "medium": "🥈 СРЕДНИЕ ЗАДАЧИ",
+            "hard": "🥇 ЛУЧШИЕ ЗАДАЧИ"
+        }.get(category, category)
+        
+        await call.message.answer(
+            f"✅ <b>Задание создано!</b>\n\n"
+            f"📋 Название: {title}\n"
+            f"📝 Описание: {description}\n"
+            f"🎁 Награда: +{reward} 🍬\n"
+            f"📊 Макс. выполнений: {max_completions}\n"
+            f"📂 Категория: {category_name}\n"
+            f"🆔 ID: {task_id}"
+        )
+    else:
+        await call.message.answer("❌ Ошибка при создании задания")
+    
+    await state.clear()
