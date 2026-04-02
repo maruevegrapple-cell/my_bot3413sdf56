@@ -61,7 +61,7 @@ from db import (
 from keyboards import (
     fake_menu, main_menu, video_menu, shop_menu, get_admin_menu, 
     confirm_menu, subscribe_menu, op_menu, admin_manage_menu,
-     get_task_action_menu, admin_tasks_keyboard,
+    get_task_action_menu, admin_tasks_keyboard,
     private_pay_menu, get_private_crypto_menu, subscriptions_menu,
     get_requests_menu, get_request_action_menu, rework_confirm_menu,
     get_categories_menu, get_tasks_menu_by_category, get_category_management_menu,
@@ -1452,8 +1452,69 @@ async def tasks_refresh(call: CallbackQuery, state: FSMContext, bot: Bot):
         reply_markup=get_tasks_menu_by_category(user_tasks, category)
     )
 
+# ================= АДМИН - СОЗДАНИЕ ЗАДАНИЯ (ВЫБОР КАТЕГОРИИ) =================
+# ЭТОТ ОБРАБОТЧИК ДОЛЖЕН БЫТЬ ВЫШЕ обработчика task_
+@router.callback_query(F.data.startswith("task_category_"))
+async def admin_task_category(call: CallbackQuery, state: FSMContext):
+    print(f"🔵🔵🔵 ВЫЗВАН обработчик task_category_ с data: {call.data}")
+    
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    category = call.data.replace("task_category_", "")
+    await safe_answer(call)
+    
+    data = await state.get_data()
+    title = data.get("title")
+    description = data.get("description")
+    reward = data.get("reward")
+    max_completions = data.get("max_completions", 1)
+    
+    if not title or not description or not reward:
+        await call.message.answer("❌ Ошибка: не все данные заполнены. Начните создание заново.")
+        await state.clear()
+        return
+    
+    task_id = add_task(
+        title=title,
+        description=description,
+        reward=reward,
+        category=category,
+        task_type="photo",
+        task_data=None,
+        max_completions=max_completions
+    )
+    
+    if task_id:
+        category_name = {
+            "easy": "🥉 ЛЕГКИЕ ЗАДАЧИ",
+            "medium": "🥈 СРЕДНИЕ ЗАДАЧИ",
+            "hard": "🥇 ЛУЧШИЕ ЗАДАЧИ"
+        }.get(category, category)
+        
+        await call.message.answer(
+            f"✅ <b>Задание создано!</b>\n\n"
+            f"📋 Название: {title}\n"
+            f"📝 Описание: {description}\n"
+            f"🎁 Награда: +{reward} 🍬\n"
+            f"📊 Макс. выполнений: {max_completions}\n"
+            f"📂 Категория: {category_name}\n"
+            f"🆔 ID: {task_id}"
+        )
+    else:
+        await call.message.answer("❌ Ошибка при создании задания")
+    
+    await state.clear()
+
+
+# ================= ЗАДАНИЯ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ =================
 @router.callback_query(F.data.startswith("task_"))
 async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
+    # Пропускаем если это task_category_
+    if call.data.startswith("task_category_"):
+        return
+    
     user_id = call.from_user.id
     if await check_spam(user_id):
         await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
@@ -2141,57 +2202,9 @@ async def admin_task_max_completions(message: Message, state: FSMContext):
         await state.update_data(max_completions=max_completions)
         await state.set_state(CreateTaskStates.waiting_for_category)
         
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="task_category_easy")],
-            [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="task_category_medium")],
-            [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="task_category_hard")]
-        ])
-        await message.answer("📂 Выберите категорию задания:", reply_markup=keyboard)
+        await message.answer("📂 Выберите категорию задания:", reply_markup=task_category_keyboard)
     except ValueError:
         await message.answer("❌ Введите корректное число")
-
-@router.callback_query(F.data.startswith("task_category_"))
-async def admin_task_category(call: CallbackQuery, state: FSMContext):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    category = call.data.replace("task_category_", "")
-    await safe_answer(call)
-    
-    data = await state.get_data()
-    title = data.get("title", "Без названия")
-    description = data.get("description", "")
-    reward = data.get("reward", 0)
-    max_completions = data.get("max_completions", 1)
-    
-    if not title or title == "Без названия":
-        await call.message.answer("❌ Название задания не может быть пустым")
-        await state.clear()
-        return
-    if reward <= 0:
-        await call.message.answer("❌ Награда должна быть больше 0")
-        await state.clear()
-        return
-    
-    task_id = add_task(title=title, description=description, reward=reward, 
-                       category=category, task_type="photo", task_data=None, 
-                       max_completions=max_completions)
-    if task_id:
-        category_name = TASK_CATEGORIES.get(category, {}).get('name', category)
-        await call.message.answer(
-            f"✅ <b>Задание создано!</b>\n\n"
-            f"📋 Название: {title}\n"
-            f"📝 Описание: {description}\n"
-            f"🎁 Награда: +{reward} 🍬\n"
-            f"📊 Макс. выполнений: {max_completions}\n"
-            f"📂 Категория: {category_name}\n"
-            f"🆔 ID: {task_id}\n\n"
-            f"📸 Для выполнения задания пользователь должен отправить скриншот."
-        )
-    else:
-        await call.message.answer("❌ Ошибка при создании задания. Проверьте базу данных.")
-    await state.clear()
 
 # ================= АДМИН - РЕДАКТИРОВАНИЕ ЗАДАНИЯ =================
 @router.callback_query(F.data == "admin_task_edit")
@@ -3996,54 +4009,3 @@ async def check_balance_command(message: Message):
         await message.answer("❌ Пользователь не найден")
         return
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
-
-@router.callback_query(F.data.startswith("task_category_"))
-async def admin_task_category(call: CallbackQuery, state: FSMContext):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    category = call.data.replace("task_category_", "")
-    await safe_answer(call)
-    
-    data = await state.get_data()
-    title = data.get("title")
-    description = data.get("description")
-    reward = data.get("reward")
-    max_completions = data.get("max_completions", 1)
-    
-    if not title or not description or not reward:
-        await call.message.answer("❌ Ошибка: не все данные заполнены. Начните создание заново.")
-        await state.clear()
-        return
-    
-    task_id = add_task(
-        title=title,
-        description=description,
-        reward=reward,
-        category=category,
-        task_type="photo",
-        task_data=None,
-        max_completions=max_completions
-    )
-    
-    if task_id:
-        category_name = {
-            "easy": "🥉 ЛЕГКИЕ ЗАДАЧИ",
-            "medium": "🥈 СРЕДНИЕ ЗАДАЧИ",
-            "hard": "🥇 ЛУЧШИЕ ЗАДАЧИ"
-        }.get(category, category)
-        
-        await call.message.answer(
-            f"✅ <b>Задание создано!</b>\n\n"
-            f"📋 Название: {title}\n"
-            f"📝 Описание: {description}\n"
-            f"🎁 Награда: +{reward} 🍬\n"
-            f"📊 Макс. выполнений: {max_completions}\n"
-            f"📂 Категория: {category_name}\n"
-            f"🆔 ID: {task_id}"
-        )
-    else:
-        await call.message.answer("❌ Ошибка при создании задания")
-    
-    await state.clear()
