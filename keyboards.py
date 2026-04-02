@@ -113,6 +113,13 @@ def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_t
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад к заданиям", callback_data="tasks")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+# ================= КЛАВИАТУРА ВЫБОРА КАТЕГОРИИ ПРИ СОЗДАНИИ ЗАДАНИЯ =================
+task_category_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="task_category_easy")],
+    [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="task_category_medium")],
+    [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="task_category_hard")]
+])
+
 # ================= АДМИН-МЕНЮ =================
 def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False):
     buttons = [

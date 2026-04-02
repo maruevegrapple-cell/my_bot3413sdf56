@@ -65,7 +65,8 @@ from keyboards import (
     private_pay_menu, get_private_crypto_menu, subscriptions_menu,
     get_requests_menu, get_request_action_menu, rework_confirm_menu,
     get_categories_menu, get_tasks_menu_by_category, get_category_management_menu,
-    get_tasks_by_category_menu, get_move_category_menu
+    get_tasks_by_category_menu, get_move_category_menu,
+    task_category_keyboard
 )
 from payments import (
     create_invoice, 
