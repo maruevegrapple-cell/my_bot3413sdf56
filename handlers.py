@@ -1997,7 +1997,8 @@ async def admin_tasks_menu(call: CallbackQuery, state: FSMContext):
     
     await safe_answer(call)
     
-    await call.message.edit_text(
+    # Отправляем НОВОЕ сообщение, а не редактируем
+    await call.message.answer(
         "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
         "Выберите действие:",
         reply_markup=admin_tasks_menu
@@ -2086,6 +2087,7 @@ async def admin_move_task(call: CallbackQuery, state: FSMContext):
     else:
         await safe_answer(call, "❌ Ошибка при переносе задания", show_alert=True)
 
+# ================= АДМИН - СОЗДАНИЕ ЗАДАНИЯ =================
 @router.callback_query(F.data == "admin_task_add")
 async def admin_task_add_start(call: CallbackQuery, state: FSMContext):
     if not check_admin_access(call.from_user.id)[0]:
@@ -2191,6 +2193,7 @@ async def admin_task_category(call: CallbackQuery, state: FSMContext):
         await call.message.answer("❌ Ошибка при создании задания. Проверьте базу данных.")
     await state.clear()
 
+# ================= АДМИН - РЕДАКТИРОВАНИЕ ЗАДАНИЯ =================
 @router.callback_query(F.data == "admin_task_edit")
 async def admin_task_edit_start(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
