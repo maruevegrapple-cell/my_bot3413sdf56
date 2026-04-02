@@ -152,7 +152,7 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ================= АДМИН-МЕНЮ ЗАДАНИЙ (С КАТЕГОРИЯМИ) =================
-admin_tasks_menu = InlineKeyboardMarkup(inline_keyboard=[
+admin_tasks_keyboard = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="➕ Создать задание", callback_data="admin_task_add")],
     [InlineKeyboardButton(text="✏️ Редактировать задание", callback_data="admin_task_edit")],
     [InlineKeyboardButton(text="🗑 Удалить задание", callback_data="admin_task_remove")],

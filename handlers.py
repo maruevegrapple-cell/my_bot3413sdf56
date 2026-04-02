@@ -1988,7 +1988,7 @@ async def delete_specific_record(call: CallbackQuery, state: FSMContext, bot: Bo
 
 # ================= АДМИН - УПРАВЛЕНИЕ ЗАДАНИЯМИ (ОСНОВНОЕ МЕНЮ) =================
 @router.callback_query(F.data == "admin_tasks")
-async def admin_tasks_menu(call: CallbackQuery, state: FSMContext):
+async def admin_tasks_menu_handler(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     has_access, _, is_main, can_manage = check_admin_access(user_id)
     if not has_access:
@@ -1997,7 +1997,6 @@ async def admin_tasks_menu(call: CallbackQuery, state: FSMContext):
     
     await safe_answer(call)
     
-    # Отправляем НОВОЕ сообщение, а не редактируем
     await call.message.answer(
         "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
         "Выберите действие:",
@@ -3996,20 +3995,3 @@ async def check_balance_command(message: Message):
         await message.answer("❌ Пользователь не найден")
         return
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
-
-@router.callback_query(F.data == "admin_tasks")
-async def admin_tasks_menu_handler(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    has_access, _, is_main, can_manage = check_admin_access(user_id)
-    if not has_access:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    
-    # ВАЖНО: используем переменную admin_tasks_menu из keyboards, а не функцию
-    await call.message.answer(
-        "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
-        "Выберите действие:",
-        reply_markup=admin_tasks_menu  # ← это переменная, а не функция!
-    )
