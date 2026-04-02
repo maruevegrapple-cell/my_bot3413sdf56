@@ -3998,7 +3998,7 @@ async def check_balance_command(message: Message):
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
 
 @router.callback_query(F.data == "admin_tasks")
-async def admin_tasks_menu(call: CallbackQuery, state: FSMContext):
+async def admin_tasks_menu_handler(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     has_access, _, is_main, can_manage = check_admin_access(user_id)
     if not has_access:
@@ -4007,8 +4007,9 @@ async def admin_tasks_menu(call: CallbackQuery, state: FSMContext):
     
     await safe_answer(call)
     
+    # ВАЖНО: используем переменную admin_tasks_menu из keyboards, а не функцию
     await call.message.answer(
         "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
         "Выберите действие:",
-        reply_markup=admin_tasks_menu
+        reply_markup=admin_tasks_menu  # ← это переменная, а не функция!
     )
