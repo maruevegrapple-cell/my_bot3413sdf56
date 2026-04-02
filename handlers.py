@@ -2000,7 +2000,7 @@ async def admin_tasks_menu_handler(call: CallbackQuery, state: FSMContext):
     await call.message.answer(
         "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
         "Выберите действие:",
-        reply_markup=admin_tasks_menu
+        reply_markup=admin_tasks_keyboard
     )
 
 # ================= АДМИН - УПРАВЛЕНИЕ КАТЕГОРИЯМИ ЗАДАНИЙ =================
