@@ -64,12 +64,6 @@ def get_tasks_menu_by_category(tasks, category: str):
     """
     keyboard = []
     
-    category_names = {
-        'easy': '🥉 ЛЕГКИЕ ЗАДАЧИ',
-        'medium': '🥈 СРЕДНИЕ ЗАДАЧИ',
-        'hard': '🥇 ЛУЧШИЕ ЗАДАЧИ'
-    }
-    
     for task in tasks:
         completed = task.get("completed", 0)
         max_completions = task.get("max_completions", 1)

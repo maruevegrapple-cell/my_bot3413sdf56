@@ -869,6 +869,7 @@ async def process_captcha(message: Message, state: FSMContext, bot: Bot):
                     f"📊 Осталось попыток: {remaining_attempts}/3"
         )
 
+# ================= ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ПОДПИСКИ =================
 @router.callback_query(F.data == "check_subscribe")
 async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -921,6 +922,7 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     else:
         await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
 
+# ================= МАГАЗИН =================
 @router.callback_query(F.data == "shop")
 async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1371,6 +1373,7 @@ async def check_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
     else:
         await call.message.answer("⏳ Платёж ещё не оплачен")
 
+# ================= ЗАДАНИЯ С КАТЕГОРИЯМИ =================
 @router.callback_query(F.data == "tasks")
 async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1382,8 +1385,8 @@ async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     await safe_answer(call)
     await call.message.answer(
         "📋 <b>ВЫБЕРИТЕ КАТЕГОРИЮ ЗАДАНИЙ</b>\n\n"
-        "Выполняйте задания и получайте награды!\n"
-        "📸 Для выполнения задания отправьте скриншот.",
+        "Выполняйте задания и получайте КОНФЕТКИ! 🍬\n"
+        "Снизу выбирай категорию, от сложности зависит лучше твоя награда, или хуже! 👇",
         reply_markup=get_categories_menu()
     )
 
@@ -1606,6 +1609,7 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
 async def task_photo_required(message: Message, state: FSMContext):
     await message.answer("❌ Для выполнения задания нужно отправить СКРИНШОТ (фото)!")
 
+# ================= ИСПРАВЛЕННЫЙ ТЕКСТ ПРИ ОДОБРЕНИИ =================
 @router.callback_query(F.data.startswith("approve_task_"))
 async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not check_admin_access(call.from_user.id)[0]:
@@ -1788,6 +1792,7 @@ async def cancel_task_by_user(call: CallbackQuery, state: FSMContext, bot: Bot):
             f"Вы можете выбрать другое задание в меню."
         )
 
+# ================= АДМИН - УПРАВЛЕНИЕ ЗАЯВКАМИ =================
 @router.callback_query(F.data == "admin_manage_requests")
 async def admin_manage_requests(call: CallbackQuery, state: FSMContext):
     if not check_admin_access(call.from_user.id)[0]:
@@ -1986,6 +1991,7 @@ async def delete_specific_record(call: CallbackQuery, state: FSMContext, bot: Bo
     else:
         await safe_answer(call, "❌ Ошибка при удалении", show_alert=True)
 
+# ================= АДМИН - УПРАВЛЕНИЕ КАТЕГОРИЯМИ ЗАДАНИЙ =================
 @router.callback_query(F.data == "admin_task_categories")
 async def admin_task_categories(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -2068,6 +2074,7 @@ async def admin_move_task(call: CallbackQuery, state: FSMContext):
     else:
         await safe_answer(call, "❌ Ошибка при переносе задания", show_alert=True)
 
+# ================= АДМИН - СОЗДАНИЕ ЗАДАНИЯ С КАТЕГОРИЕЙ =================
 @router.callback_query(F.data == "admin_task_add")
 async def admin_task_add_start(call: CallbackQuery, state: FSMContext):
     if not check_admin_access(call.from_user.id)[0]:
@@ -2173,6 +2180,7 @@ async def admin_task_category(call: CallbackQuery, state: FSMContext):
         await call.message.answer("❌ Ошибка при создании задания. Проверьте базу данных.")
     await state.clear()
 
+# ================= АДМИН - РЕДАКТИРОВАНИЕ ЗАДАНИЯ =================
 @router.callback_query(F.data == "admin_task_edit")
 async def admin_task_edit_start(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
@@ -3867,8 +3875,6 @@ async def admin_delete(call: CallbackQuery, state: FSMContext):
         await safe_answer(call, "❌ Ошибка при удалении")
         await call.message.edit_text("❌ Ошибка при удалении админа")
     await admin_remove_menu(call, state)
-
-# ================= АДМИН - ЗАДАНИЯ (уже добавлены выше) =================
 
 # ================= КОМАНДЫ ДЛЯ УДАЛЕНИЯ ВИДЕО =================
 @router.message(Command("delete_200"))
