@@ -20,6 +20,13 @@ cursor = conn.cursor()
 cursor.execute("PRAGMA journal_mode=WAL")
 cursor.execute("PRAGMA synchronous=FULL")
 
+# ========== КАТЕГОРИИ ЗАДАНИЙ ==========
+TASK_CATEGORIES = {
+    'easy': {'name': '🥉 ЛЕГКИЕ ЗАДАЧИ', 'emoji': '🥉', 'order': 1},
+    'medium': {'name': '🥈 СРЕДНИЕ ЗАДАЧИ', 'emoji': '🥈', 'order': 2},
+    'hard': {'name': '🥇 ЛУЧШИЕ ЗАДАЧИ', 'emoji': '🥇', 'order': 3}
+}
+
 # ========== УДАЛЕНИЕ UNIQUE ИЗ user_tasks ==========
 def fix_user_tasks_table():
     try:
@@ -219,7 +226,8 @@ def init_db():
         task_data TEXT,
         max_completions INTEGER DEFAULT 1,
         is_active INTEGER DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        category TEXT DEFAULT 'easy'
     )
     """)
     
@@ -278,11 +286,14 @@ def init_db():
     conn.commit()
     print("✅ База данных инициализирована")
     
-    fix_user_tasks_table()
-    
+    # Добавляем колонку category если её нет
     try:
         cursor.execute("PRAGMA table_info(tasks)")
         columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'category' not in columns:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN category TEXT DEFAULT 'easy'")
+            print("✅ Добавлена колонка category в таблицу tasks")
         
         if 'task_type' not in columns:
             cursor.execute("ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'text'")
@@ -299,8 +310,10 @@ def init_db():
         print("✅ Схема обновлена")
     except Exception as e:
         print(f"❌ Ошибка обновления схемы: {e}")
+    
+    fix_user_tasks_table()
 
-# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЗАДАНИЯМИ ==========
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЗАДАНИЯМИ (С КАТЕГОРИЯМИ) ==========
 def get_active_tasks():
     try:
         cursor.execute("SELECT * FROM tasks WHERE is_active = 1 ORDER BY id")
@@ -312,6 +325,24 @@ def get_active_tasks():
         except:
             return []
 
+def get_active_tasks_by_category(category: str = None):
+    """Получить активные задания по категории"""
+    try:
+        if category:
+            cursor.execute("SELECT * FROM tasks WHERE is_active = 1 AND category = ? ORDER BY id", (category,))
+        else:
+            cursor.execute("SELECT * FROM tasks WHERE is_active = 1 ORDER BY id")
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+def get_all_tasks_by_category():
+    """Получить все задания сгруппированные по категориям"""
+    result = {}
+    for cat_key in TASK_CATEGORIES.keys():
+        result[cat_key] = get_active_tasks_by_category(cat_key)
+    return result
+
 def get_task(task_id: int):
     try:
         cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -320,19 +351,19 @@ def get_task(task_id: int):
     except:
         return None
 
-def add_task(title: str, description: str, reward: int, task_type: str = "photo", task_data: str = None, max_completions: int = 1):
+def add_task(title: str, description: str, reward: int, category: str = 'easy', task_type: str = "photo", task_data: str = None, max_completions: int = 1):
     try:
         cursor.execute("""
-            INSERT INTO tasks (title, description, reward, task_type, task_data, max_completions, is_active, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))
-        """, (title, description, reward, task_type, task_data, max_completions))
+            INSERT INTO tasks (title, description, reward, task_type, task_data, max_completions, category, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
+        """, (title, description, reward, task_type, task_data, max_completions, category))
         conn.commit()
         return cursor.lastrowid
     except Exception as e:
         print(f"❌ Ошибка добавления задания: {e}")
         return None
 
-def update_task(task_id: int, title: str = None, description: str = None, reward: int = None, max_completions: int = None):
+def update_task(task_id: int, title: str = None, description: str = None, reward: int = None, max_completions: int = None, category: str = None):
     try:
         updates = []
         values = []
@@ -349,6 +380,9 @@ def update_task(task_id: int, title: str = None, description: str = None, reward
         if max_completions is not None:
             updates.append("max_completions = ?")
             values.append(max_completions)
+        if category is not None:
+            updates.append("category = ?")
+            values.append(category)
         
         if not updates:
             return False
@@ -493,7 +527,6 @@ def get_user_completed_count(user_id: int, task_id: int) -> int:
     except:
         return 0
 
-# ========== ФУНКЦИИ ДЛЯ УПРАВЛЕНИЯ ЗАЯВКАМИ ==========
 def get_task_record_by_id(record_id: int):
     """Получить запись по ID"""
     try:

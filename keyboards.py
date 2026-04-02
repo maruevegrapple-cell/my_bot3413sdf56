@@ -43,16 +43,33 @@ video_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
 ])
 
-# ================= МЕНЮ ЗАДАНИЙ =================
-def get_tasks_menu(tasks):
+# ================= МЕНЮ ЗАДАНИЙ С КАТЕГОРИЯМИ =================
+def get_categories_menu():
+    """Меню выбора категории заданий"""
+    keyboard = [
+        [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="tasks_category_easy")],
+        [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="tasks_category_medium")],
+        [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="tasks_category_hard")],
+        [InlineKeyboardButton(text="🏠 В меню", callback_data="menu")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_tasks_menu_by_category(tasks, category: str):
     """
-    Создает клавиатуру со списком заданий.
+    Создает клавиатуру со списком заданий для конкретной категории.
     Эмодзи статуса:
     - 🔄 - задание на проверке (pending)
     - ✅ - задание полностью выполнено (все возможные разы)
     - 📋 - задание еще не начато
     """
     keyboard = []
+    
+    category_names = {
+        'easy': '🥉 ЛЕГКИЕ ЗАДАЧИ',
+        'medium': '🥈 СРЕДНИЕ ЗАДАЧИ',
+        'hard': '🥇 ЛУЧШИЕ ЗАДАЧИ'
+    }
+    
     for task in tasks:
         completed = task.get("completed", 0)
         max_completions = task.get("max_completions", 1)
@@ -60,19 +77,15 @@ def get_tasks_menu(tasks):
         
         # Определяем эмодзи статуса
         if completed >= max_completions:
-            # Задание полностью выполнено (все возможные разы)
             emoji = "✅"
             status_text = " (выполнено)"
         elif status == "pending":
-            # Задание начато и ждет проверки
             emoji = "🔄"
             status_text = " (на проверке)"
         else:
-            # Задание еще не начато
             emoji = "📋"
             status_text = ""
         
-        # Добавляем счетчик если max_completions > 1
         if max_completions > 1:
             counter = f" [{completed}/{max_completions}]"
         else:
@@ -83,7 +96,8 @@ def get_tasks_menu(tasks):
             callback_data=f"task_{task['id']}"
         )])
     
-    keyboard.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="tasks_refresh")])
+    keyboard.append([InlineKeyboardButton(text="🔄 Обновить", callback_data=f"tasks_refresh_{category}")])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад к категориям", callback_data="tasks")])
     keyboard.append([InlineKeyboardButton(text="🏠 В меню", callback_data="menu")])
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -143,15 +157,47 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
         buttons.append([InlineKeyboardButton(text="👥 Управление админами", callback_data="admin_manage")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ================= АДМИН-МЕНЮ ЗАДАНИЙ =================
+# ================= АДМИН-МЕНЮ ЗАДАНИЙ (С КАТЕГОРИЯМИ) =================
 admin_tasks_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="➕ Создать задание", callback_data="admin_task_add")],
     [InlineKeyboardButton(text="✏️ Редактировать задание", callback_data="admin_task_edit")],
     [InlineKeyboardButton(text="🗑 Удалить задание", callback_data="admin_task_remove")],
     [InlineKeyboardButton(text="📋 Список заданий", callback_data="admin_task_list")],
+    [InlineKeyboardButton(text="📂 Управление категориями", callback_data="admin_task_categories")],
     [InlineKeyboardButton(text="⏳ На проверке", callback_data="admin_task_pending")],
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
 ])
+
+def get_category_management_menu():
+    """Меню управления категориями заданий"""
+    keyboard = [
+        [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="admin_category_easy")],
+        [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="admin_category_medium")],
+        [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="admin_category_hard")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_tasks")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_tasks_by_category_menu(tasks, category: str):
+    """Меню со списком заданий для выбора (для переноса в другую категорию)"""
+    keyboard = []
+    for task in tasks:
+        keyboard.append([InlineKeyboardButton(
+            text=f"{task['title']} | +{task['reward']} 🍬",
+            callback_data=f"admin_move_task_{task['id']}_{category}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_task_categories")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+def get_move_category_menu(task_id: int):
+    """Меню выбора категории для переноса задания"""
+    keyboard = [
+        [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data=f"admin_move_to_easy_{task_id}")],
+        [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data=f"admin_move_to_medium_{task_id}")],
+        [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data=f"admin_move_to_hard_{task_id}")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_task_categories")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 # ================= МЕНЮ УПРАВЛЕНИЯ ЗАЯВКАМИ =================
 def get_requests_menu(pending_tasks):

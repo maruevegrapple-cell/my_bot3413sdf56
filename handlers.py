@@ -55,14 +55,17 @@ from db import (
     get_user_task_records, delete_user_task_record, get_task_record_by_id, delete_task_record_by_id,
     has_private_access, add_private_purchase, mark_private_paid, get_private_purchase,
     get_user_subscription, get_user_subscriptions, add_subscription, remove_subscription, check_and_give_daily_bonus, get_all_active_subscriptions,
-    rate_video, get_video_rating, get_user_video_rating, get_videos_sorted_by_rating, get_video_count_for_user
+    rate_video, get_video_rating, get_user_video_rating, get_videos_sorted_by_rating, get_video_count_for_user,
+    TASK_CATEGORIES, get_active_tasks_by_category
 )
 from keyboards import (
     fake_menu, main_menu, video_menu, shop_menu, get_admin_menu, 
     confirm_menu, subscribe_menu, op_menu, admin_manage_menu,
-    get_tasks_menu, get_task_action_menu, admin_tasks_menu,
+    get_task_action_menu, admin_tasks_menu,
     private_pay_menu, get_private_crypto_menu, subscriptions_menu,
-    get_requests_menu, get_request_action_menu, rework_confirm_menu
+    get_requests_menu, get_request_action_menu, rework_confirm_menu,
+    get_categories_menu, get_tasks_menu_by_category, get_category_management_menu,
+    get_tasks_by_category_menu, get_move_category_menu
 )
 from payments import (
     create_invoice, 
@@ -118,8 +121,10 @@ class AdminStates(StatesGroup):
     waiting_for_edit_task_description = State()
     waiting_for_edit_task_reward = State()
     waiting_for_edit_task_max_completions = State()
+    waiting_for_edit_task_category = State()
     waiting_for_user_subscriptions = State()
     waiting_for_rework_confirm = State()
+    waiting_for_task_category = State()
 
 class CaptchaStates(StatesGroup):
     waiting_for_captcha = State()
@@ -142,6 +147,7 @@ class CreateTaskStates(StatesGroup):
     waiting_for_description = State()
     waiting_for_reward = State()
     waiting_for_max_completions = State()
+    waiting_for_category = State()
 
 class TaskStates(StatesGroup):
     waiting_for_task_photo = State()
@@ -863,27 +869,21 @@ async def process_captcha(message: Message, state: FSMContext, bot: Bot):
                     f"📊 Осталось попыток: {remaining_attempts}/3"
         )
 
-# ================= ИСПРАВЛЕННЫЙ ОБРАБОТЧИК ПОДПИСКИ =================
 @router.callback_query(F.data == "check_subscribe")
 async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
     print(f"🔍 check_subscribe: user {user_id} нажал кнопку")
     
-    # Сначала проверяем верификацию
     if not is_verified(user_id):
-        # Если пользователь не верифицирован, отправляем капчу
         image_bytes, captcha_code = generate_captcha_image()
         captcha_data[user_id] = captcha_code
         await state.update_data(captcha_code=captcha_code)
         await state.set_state(CaptchaStates.waiting_for_captcha)
-        
-        # Удаляем сообщение с кнопкой подписки
         try:
             await call.message.delete()
         except:
             pass
-        
         await call.message.answer_photo(
             photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
             caption="🔐 <b>ПОДТВЕРЖДЕНИЕ</b>\n\n"
@@ -894,13 +894,11 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, "🔐 Сначала пройдите верификацию", show_alert=True)
         return
     
-    # Проверяем подписку
     is_subscribed = await check_subscription(bot, user_id)
     
     print(f"🔍 Результат проверки подписки: {is_subscribed}")
     
     if is_subscribed:
-        # Начисляем бонус, если еще не получал
         if not has_received_subscribe_bonus(user_id):
             cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUBSCRIBE_BONUS, user_id))
             mark_subscribe_bonus_received(user_id)
@@ -908,20 +906,13 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
             await safe_answer(call, f"🎁 +{SUBSCRIBE_BONUS} 🍬 за подписку!", show_alert=True)
         
         await safe_answer(call, "✅ Спасибо за подписку!", show_alert=True)
-        
-        # Выходим из состояния подписки
         await state.set_state(None)
-        
-        # Сохраняем сообщение для удаления
         subscribe_message = call.message
-        
-        # Удаляем сообщение с кнопкой подписки
         try:
             await subscribe_message.delete()
         except Exception as e:
             print(f"❌ Ошибка удаления сообщения: {e}")
         
-        # Отправляем НОВОЕ сообщение с меню (не редактируем удаленное)
         has_access, _, is_main, can_manage = check_admin_access(user_id)
         if has_access:
             await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
@@ -930,7 +921,6 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     else:
         await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
 
-# ================= МАГАЗИН =================
 @router.callback_query(F.data == "shop")
 async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1381,7 +1371,6 @@ async def check_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
     else:
         await call.message.answer("⏳ Платёж ещё не оплачен")
 
-# ================= ЗАДАНИЯ =================
 @router.callback_query(F.data == "tasks")
 async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1391,10 +1380,30 @@ async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not await check_access(bot, user_id, state, call=call):
         return
     await safe_answer(call)
-    tasks = get_active_tasks()
-    if not tasks:
-        await call.message.answer("📭 Нет активных заданий")
+    await call.message.answer(
+        "📋 <b>ВЫБЕРИТЕ КАТЕГОРИЮ ЗАДАНИЙ</b>\n\n"
+        "Выполняйте задания и получайте награды!\n"
+        "📸 Для выполнения задания отправьте скриншот.",
+        reply_markup=get_categories_menu()
+    )
+
+@router.callback_query(F.data.startswith("tasks_category_"))
+async def tasks_category(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
         return
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    category = call.data.replace("tasks_category_", "")
+    await safe_answer(call)
+    
+    tasks = get_active_tasks_by_category(category)
+    if not tasks:
+        await call.message.answer(f"📭 В этой категории нет активных заданий")
+        return
+    
     user_tasks = []
     for task in tasks:
         status = get_user_task_status(user_id, task["id"])
@@ -1403,14 +1412,14 @@ async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
         task["max_completions"] = task.get("max_completions", 1)
         task["status"] = status["status"] if status else None
         user_tasks.append(task)
+    
     await call.message.answer(
-        "📋 <b>ДОСТУПНЫЕ ЗАДАНИЯ</b>\n\n"
-        "Выполняйте задания и получайте награды!\n"
-        "📸 Для выполнения задания отправьте скриншот.",
-        reply_markup=get_tasks_menu(user_tasks)
+        f"📋 <b>ЗАДАНИЯ</b>\n\n"
+        f"Категория: {TASK_CATEGORIES.get(category, {}).get('name', category)}",
+        reply_markup=get_tasks_menu_by_category(user_tasks, category)
     )
 
-@router.callback_query(F.data == "tasks_refresh")
+@router.callback_query(F.data.startswith("tasks_refresh_"))
 async def tasks_refresh(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     if await check_spam(user_id):
@@ -1418,11 +1427,15 @@ async def tasks_refresh(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     if not await check_access(bot, user_id, state, call=call):
         return
+    
+    category = call.data.replace("tasks_refresh_", "")
     await safe_answer(call, "🔄 Обновляю список...")
-    tasks = get_active_tasks()
+    
+    tasks = get_active_tasks_by_category(category)
     if not tasks:
-        await call.message.edit_text("📭 Нет активных заданий")
+        await call.message.edit_text(f"📭 В этой категории нет активных заданий")
         return
+    
     user_tasks = []
     for task in tasks:
         status = get_user_task_status(user_id, task["id"])
@@ -1431,11 +1444,11 @@ async def tasks_refresh(call: CallbackQuery, state: FSMContext, bot: Bot):
         task["max_completions"] = task.get("max_completions", 1)
         task["status"] = status["status"] if status else None
         user_tasks.append(task)
+    
     await call.message.edit_text(
-        "📋 <b>ДОСТУПНЫЕ ЗАДАНИЯ</b>\n\n"
-        "Выполняйте задания и получайте награды!\n"
-        "📸 Для выполнения задания отправьте скриншот.",
-        reply_markup=get_tasks_menu(user_tasks)
+        f"📋 <b>ЗАДАНИЯ</b>\n\n"
+        f"Категория: {TASK_CATEGORIES.get(category, {}).get('name', category)}",
+        reply_markup=get_tasks_menu_by_category(user_tasks, category)
     )
 
 @router.callback_query(F.data.startswith("task_"))
@@ -1607,21 +1620,23 @@ async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     
     if approve_task(user_id, task_id, task["reward"]):
+        completed = get_user_completed_count(user_id, task_id)
+        max_completions = task.get("max_completions", 1)
+        
+        text = (
+            f"✅ <b>Задание одобрено!</b>\n\n"
+            f"🎁 Начислено на ваш баланс: +{task['reward']} 🍬\n"
+            f"📊 Вы выполнили: {completed} из {max_completions}\n\n"
+            f"Спасибо за выполнение, выполняйте больше заданий!"
+        )
+        
         await safe_answer(call, "✅ Задание одобрено!")
         try:
             await call.message.delete()
         except:
             pass
         try:
-            completed = get_user_completed_count(user_id, task_id)
-            await bot.send_message(
-                user_id,
-                f"✅ <b>Задание одобрено!</b>\n\n"
-                f"📋 {task['title']}\n"
-                f"🎁 Начислено: +{task['reward']} 🍬\n"
-                f"📊 Выполнено: {completed} из {task.get('max_completions', 1)}\n\n"
-                f"Спасибо за выполнение!"
-            )
+            await bot.send_message(user_id, text)
         except:
             pass
     else:
@@ -1773,7 +1788,6 @@ async def cancel_task_by_user(call: CallbackQuery, state: FSMContext, bot: Bot):
             f"Вы можете выбрать другое задание в меню."
         )
 
-# ================= АДМИН - УПРАВЛЕНИЕ ЗАЯВКАМИ =================
 @router.callback_query(F.data == "admin_manage_requests")
 async def admin_manage_requests(call: CallbackQuery, state: FSMContext):
     if not check_admin_access(call.from_user.id)[0]:
@@ -1849,18 +1863,20 @@ async def admin_approve_request(call: CallbackQuery, state: FSMContext, bot: Bot
         return
     
     if approve_task(user_id, task_id, reward):
+        completed = get_user_completed_count(user_id, task_id)
+        max_completions = task.get("max_completions", 1)
+        
+        text = (
+            f"✅ <b>Задание одобрено!</b>\n\n"
+            f"🎁 Начислено на ваш баланс: +{reward} 🍬\n"
+            f"📊 Вы выполнили: {completed} из {max_completions}\n\n"
+            f"Спасибо за выполнение, выполняйте больше заданий!"
+        )
+        
         await safe_answer(call, "✅ Задание одобрено!")
         await call.message.delete()
         try:
-            completed = get_user_completed_count(user_id, task_id)
-            await bot.send_message(
-                user_id,
-                f"✅ <b>Задание одобрено!</b>\n\n"
-                f"📋 {task['title']}\n"
-                f"🎁 Начислено: +{reward} 🍬\n"
-                f"📊 Выполнено: {completed} из {task.get('max_completions', 1)}\n\n"
-                f"Спасибо за выполнение!"
-            )
+            await bot.send_message(user_id, text)
         except:
             pass
     else:
@@ -1969,6 +1985,521 @@ async def delete_specific_record(call: CallbackQuery, state: FSMContext, bot: Bo
         await call.message.edit_text("✅ Заявка успешно удалена")
     else:
         await safe_answer(call, "❌ Ошибка при удалении", show_alert=True)
+
+@router.callback_query(F.data == "admin_task_categories")
+async def admin_task_categories(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await call.message.answer(
+        "📂 <b>УПРАВЛЕНИЕ КАТЕГОРИЯМИ ЗАДАНИЙ</b>\n\n"
+        "Выберите категорию для просмотра и переноса заданий:",
+        reply_markup=get_category_management_menu()
+    )
+
+@router.callback_query(F.data.startswith("admin_category_"))
+async def admin_category_tasks(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    category = call.data.replace("admin_category_", "")
+    await safe_answer(call)
+    
+    tasks = get_active_tasks_by_category(category)
+    if not tasks:
+        await call.message.answer(f"📭 В категории {TASK_CATEGORIES.get(category, {}).get('name', category)} нет заданий")
+        return
+    
+    await call.message.answer(
+        f"📂 <b>{TASK_CATEGORIES.get(category, {}).get('name', category)}</b>\n\n"
+        f"Выберите задание для переноса в другую категорию:",
+        reply_markup=get_tasks_by_category_menu(tasks, category)
+    )
+
+@router.callback_query(F.data.startswith("admin_move_task_"))
+async def admin_move_task_select(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    parts = call.data.split("_")
+    task_id = int(parts[3])
+    current_category = parts[4]
+    
+    await safe_answer(call)
+    
+    task = get_task(task_id)
+    if not task:
+        await call.message.answer("❌ Задание не найдено")
+        return
+    
+    await call.message.answer(
+        f"📋 <b>{task['title']}</b>\n\n"
+        f"Текущая категория: {TASK_CATEGORIES.get(current_category, {}).get('name', current_category)}\n\n"
+        f"Выберите новую категорию для переноса:",
+        reply_markup=get_move_category_menu(task_id)
+    )
+
+@router.callback_query(F.data.startswith("admin_move_to_"))
+async def admin_move_task(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    parts = call.data.split("_")
+    new_category = parts[3]
+    task_id = int(parts[4])
+    
+    if update_task(task_id, category=new_category):
+        task = get_task(task_id)
+        await safe_answer(call, f"✅ Задание \"{task['title']}\" перенесено в категорию {TASK_CATEGORIES.get(new_category, {}).get('name', new_category)}!")
+        await call.message.edit_text(
+            f"✅ Задание успешно перенесено!\n\n"
+            f"📋 {task['title']}\n"
+            f"➡️ Новая категория: {TASK_CATEGORIES.get(new_category, {}).get('name', new_category)}"
+        )
+    else:
+        await safe_answer(call, "❌ Ошибка при переносе задания", show_alert=True)
+
+@router.callback_query(F.data == "admin_task_add")
+async def admin_task_add_start(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    await safe_answer(call)
+    await state.set_state(CreateTaskStates.waiting_for_title)
+    await call.message.answer("📝 Введите название задания:")
+
+@router.message(CreateTaskStates.waiting_for_title)
+async def admin_task_title(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    await state.update_data(title=message.text)
+    await state.set_state(CreateTaskStates.waiting_for_description)
+    await message.answer("📄 Введите описание задания:")
+
+@router.message(CreateTaskStates.waiting_for_description)
+async def admin_task_description(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    await state.update_data(description=message.text)
+    await state.set_state(CreateTaskStates.waiting_for_reward)
+    await message.answer("🎁 Введите награду (в 🍬):")
+
+@router.message(CreateTaskStates.waiting_for_reward)
+async def admin_task_reward(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    try:
+        reward = int(message.text)
+        if reward <= 0:
+            await message.answer("❌ Награда должна быть больше 0")
+            return
+        await state.update_data(reward=reward)
+        await state.set_state(CreateTaskStates.waiting_for_max_completions)
+        await message.answer("📊 Введите максимальное количество выполнений (1-999):")
+    except ValueError:
+        await message.answer("❌ Введите число")
+
+@router.message(CreateTaskStates.waiting_for_max_completions)
+async def admin_task_max_completions(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    try:
+        max_completions = int(message.text.strip())
+        if max_completions < 1:
+            max_completions = 1
+        if max_completions > 999:
+            max_completions = 999
+        await state.update_data(max_completions=max_completions)
+        await state.set_state(CreateTaskStates.waiting_for_category)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="task_category_easy")],
+            [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="task_category_medium")],
+            [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="task_category_hard")]
+        ])
+        await message.answer("📂 Выберите категорию задания:", reply_markup=keyboard)
+    except ValueError:
+        await message.answer("❌ Введите корректное число")
+
+@router.callback_query(F.data.startswith("task_category_"))
+async def admin_task_category(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    category = call.data.replace("task_category_", "")
+    await safe_answer(call)
+    
+    data = await state.get_data()
+    title = data.get("title", "Без названия")
+    description = data.get("description", "")
+    reward = data.get("reward", 0)
+    max_completions = data.get("max_completions", 1)
+    
+    if not title or title == "Без названия":
+        await call.message.answer("❌ Название задания не может быть пустым")
+        await state.clear()
+        return
+    if reward <= 0:
+        await call.message.answer("❌ Награда должна быть больше 0")
+        await state.clear()
+        return
+    
+    task_id = add_task(title=title, description=description, reward=reward, 
+                       category=category, task_type="photo", task_data=None, 
+                       max_completions=max_completions)
+    if task_id:
+        category_name = TASK_CATEGORIES.get(category, {}).get('name', category)
+        await call.message.answer(
+            f"✅ <b>Задание создано!</b>\n\n"
+            f"📋 Название: {title}\n"
+            f"📝 Описание: {description}\n"
+            f"🎁 Награда: +{reward} 🍬\n"
+            f"📊 Макс. выполнений: {max_completions}\n"
+            f"📂 Категория: {category_name}\n"
+            f"🆔 ID: {task_id}\n\n"
+            f"📸 Для выполнения задания пользователь должен отправить скриншот."
+        )
+    else:
+        await call.message.answer("❌ Ошибка при создании задания. Проверьте базу данных.")
+    await state.clear()
+
+@router.callback_query(F.data == "admin_task_edit")
+async def admin_task_edit_start(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    tasks = get_active_tasks()
+    if not tasks:
+        await call.message.answer("📭 Нет активных заданий для редактирования")
+        return
+    
+    keyboard = []
+    for task in tasks:
+        category_name = TASK_CATEGORIES.get(task.get("category", "easy"), {}).get('name', 'ЛЕГКИЕ')
+        keyboard.append([InlineKeyboardButton(
+            text=f"✏️ {task['title']} ({category_name}) | +{task['reward']}🍬",
+            callback_data=f"edit_task_select_{task['id']}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_tasks")])
+    
+    await call.message.answer(
+        "📋 <b>ВЫБЕРИТЕ ЗАДАНИЕ ДЛЯ РЕДАКТИРОВАНИЯ</b>\n\n"
+        "Нажмите на задание, чтобы начать редактирование:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
+@router.callback_query(F.data.startswith("edit_task_select_"))
+async def edit_task_select(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    task_id = int(call.data.replace("edit_task_select_", ""))
+    task = get_task(task_id)
+    
+    if not task:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    
+    await state.update_data(edit_task_id=task_id)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Редактировать название", callback_data="edit_task_title")],
+        [InlineKeyboardButton(text="📄 Редактировать описание", callback_data="edit_task_description")],
+        [InlineKeyboardButton(text="🎁 Редактировать награду", callback_data="edit_task_reward")],
+        [InlineKeyboardButton(text="📊 Редактировать лимит выполнений", callback_data="edit_task_max_completions")],
+        [InlineKeyboardButton(text="📂 Редактировать категорию", callback_data="edit_task_category")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_tasks")]
+    ])
+    
+    category_name = TASK_CATEGORIES.get(task.get("category", "easy"), {}).get('name', 'ЛЕГКИЕ')
+    
+    await safe_answer(call)
+    await call.message.answer(
+        f"✏️ <b>РЕДАКТИРОВАНИЕ ЗАДАНИЯ</b>\n\n"
+        f"🆔 ID: {task['id']}\n"
+        f"📋 Название: {task['title']}\n"
+        f"📝 Описание: {task['description']}\n"
+        f"🎁 Награда: +{task['reward']} 🍬\n"
+        f"📊 Макс. выполнений: {task['max_completions']}\n"
+        f"📂 Категория: {category_name}\n\n"
+        f"Выберите, что хотите изменить:",
+        reply_markup=keyboard
+    )
+
+@router.callback_query(F.data == "edit_task_title")
+async def edit_task_title_start(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.waiting_for_edit_task_title)
+    await safe_answer(call)
+    await call.message.answer("📝 Введите новое название задания:")
+
+@router.message(AdminStates.waiting_for_edit_task_title)
+async def edit_task_title_save(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    new_title = message.text.strip()
+    if not new_title:
+        await message.answer("❌ Название не может быть пустым")
+        return
+    
+    data = await state.get_data()
+    task_id = data.get("edit_task_id")
+    
+    if update_task(task_id, title=new_title):
+        await message.answer(f"✅ Название задания изменено на: {new_title}")
+    else:
+        await message.answer("❌ Ошибка при обновлении названия")
+    
+    await state.clear()
+
+@router.callback_query(F.data == "edit_task_description")
+async def edit_task_description_start(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.waiting_for_edit_task_description)
+    await safe_answer(call)
+    await call.message.answer("📄 Введите новое описание задания:")
+
+@router.message(AdminStates.waiting_for_edit_task_description)
+async def edit_task_description_save(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    new_description = message.text.strip()
+    data = await state.get_data()
+    task_id = data.get("edit_task_id")
+    
+    if update_task(task_id, description=new_description):
+        await message.answer(f"✅ Описание задания обновлено")
+    else:
+        await message.answer("❌ Ошибка при обновлении описания")
+    
+    await state.clear()
+
+@router.callback_query(F.data == "edit_task_reward")
+async def edit_task_reward_start(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.waiting_for_edit_task_reward)
+    await safe_answer(call)
+    await call.message.answer("🎁 Введите новую награду (в 🍬):")
+
+@router.message(AdminStates.waiting_for_edit_task_reward)
+async def edit_task_reward_save(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    try:
+        new_reward = int(message.text.strip())
+        if new_reward <= 0:
+            await message.answer("❌ Награда должна быть больше 0")
+            return
+        
+        data = await state.get_data()
+        task_id = data.get("edit_task_id")
+        
+        if update_task(task_id, reward=new_reward):
+            await message.answer(f"✅ Награда изменена на: +{new_reward} 🍬")
+        else:
+            await message.answer("❌ Ошибка при обновлении награды")
+        
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите число")
+
+@router.callback_query(F.data == "edit_task_max_completions")
+async def edit_task_max_completions_start(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.waiting_for_edit_task_max_completions)
+    await safe_answer(call)
+    await call.message.answer("📊 Введите новое максимальное количество выполнений (1-999):")
+
+@router.message(AdminStates.waiting_for_edit_task_max_completions)
+async def edit_task_max_completions_save(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    
+    try:
+        new_max = int(message.text.strip())
+        if new_max < 1:
+            new_max = 1
+        if new_max > 999:
+            new_max = 999
+        
+        data = await state.get_data()
+        task_id = data.get("edit_task_id")
+        
+        if update_task(task_id, max_completions=new_max):
+            await message.answer(f"✅ Лимит выполнений изменен на: {new_max}")
+        else:
+            await message.answer("❌ Ошибка при обновлении лимита")
+        
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите число")
+
+@router.callback_query(F.data == "edit_task_category")
+async def edit_task_category_start(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="edit_category_easy")],
+        [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="edit_category_medium")],
+        [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="edit_category_hard")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_tasks")]
+    ])
+    
+    await safe_answer(call)
+    await call.message.answer("📂 Выберите новую категорию для задания:", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("edit_category_"))
+async def edit_task_category_save(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    new_category = call.data.replace("edit_category_", "")
+    data = await state.get_data()
+    task_id = data.get("edit_task_id")
+    
+    if update_task(task_id, category=new_category):
+        category_name = TASK_CATEGORIES.get(new_category, {}).get('name', new_category)
+        await safe_answer(call, f"✅ Категория изменена на {category_name}")
+        await call.message.answer(f"✅ Категория задания изменена на: {category_name}")
+    else:
+        await safe_answer(call, "❌ Ошибка при изменении категории", show_alert=True)
+    
+    await state.clear()
+
+@router.callback_query(F.data == "admin_task_remove")
+async def admin_task_remove_start(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    await safe_answer(call)
+    await state.set_state(AdminTaskStates.waiting_for_task_id_to_delete)
+    tasks = get_active_tasks()
+    if not tasks:
+        await call.message.answer("📭 Нет активных заданий")
+        return
+    keyboard = []
+    for task in tasks:
+        category_name = TASK_CATEGORIES.get(task.get("category", "easy"), {}).get('name', 'ЛЕГКИЕ')
+        keyboard.append([InlineKeyboardButton(text=f"❌ {task['title']} ({category_name})", callback_data=f"delete_task_{task['id']}")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_tasks")])
+    await call.message.answer(
+        "🗑 <b>Выберите задание для удаления:</b>\n\n"
+        "Или введите ID задания:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
+@router.callback_query(F.data.startswith("delete_task_"))
+async def admin_task_remove_by_button(call: CallbackQuery, state: FSMContext):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    task_id = int(call.data.replace("delete_task_", ""))
+    task = get_task(task_id)
+    if not task:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    if remove_task(task_id):
+        await safe_answer(call, f"✅ Задание \"{task['title']}\" удалено!")
+        await call.message.edit_text(f"✅ Задание ID {task_id} удалено")
+    else:
+        await safe_answer(call, "❌ Ошибка при удалении", show_alert=True)
+    await state.clear()
+
+@router.message(AdminTaskStates.waiting_for_task_id_to_delete)
+async def admin_task_remove(message: Message, state: FSMContext):
+    if not check_admin_access(message.from_user.id)[0]:
+        return
+    try:
+        task_id = int(message.text.strip())
+        task = get_task(task_id)
+        if not task:
+            await message.answer("❌ Задание не найдено")
+            await state.clear()
+            return
+        if remove_task(task_id):
+            await message.answer(f"✅ Задание \"{task['title']}\" удалено!")
+        else:
+            await message.answer("❌ Ошибка при удалении")
+        await state.clear()
+    except ValueError:
+        await message.answer("❌ Введите ID задания (число)")
+
+@router.callback_query(F.data == "admin_task_list")
+async def admin_task_list(call: CallbackQuery):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    await safe_answer(call)
+    tasks = get_active_tasks()
+    if not tasks:
+        await call.message.answer("📭 Нет активных заданий")
+        return
+    text = "📋 <b>СПИСОК ЗАДАНИЙ</b>\n\n"
+    for task in tasks:
+        category_name = TASK_CATEGORIES.get(task.get("category", "easy"), {}).get('name', 'ЛЕГКИЕ')
+        text += f"🆔 <b>{task['id']}</b> | {task['title']} | {category_name}\n"
+        text += f"   🎁 +{task['reward']} 🍬\n"
+        text += f"   📊 {task['max_completions']} раз\n"
+        text += f"   📝 {task['description'][:50]}...\n\n"
+    await call.message.answer(text)
+
+@router.callback_query(F.data == "admin_task_pending")
+async def admin_task_pending(call: CallbackQuery):
+    if not check_admin_access(call.from_user.id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    await safe_answer(call)
+    pending = get_pending_tasks()
+    if not pending:
+        await call.message.answer("📭 Нет заданий на проверке")
+        return
+    text = "⏳ <b>ЗАДАНИЯ НА ПРОВЕРКЕ</b>\n\n"
+    for p in pending:
+        text += f"👤 @{p['username']} (ID: {p['user_id']})\n"
+        text += f"📋 {p['title']} | +{p['reward']} 🍬\n"
+        text += f"📄 {p['proof'][:100]}...\n"
+        text += f"🆔 Задания: {p['task_id']}\n\n"
+    await call.message.answer(text)
 
 # ================= ПОДДЕРЖКА =================
 @router.callback_query(F.data == "support")
@@ -3337,390 +3868,7 @@ async def admin_delete(call: CallbackQuery, state: FSMContext):
         await call.message.edit_text("❌ Ошибка при удалении админа")
     await admin_remove_menu(call, state)
 
-# ================= АДМИН - ЗАДАНИЯ =================
-@router.callback_query(F.data == "admin_tasks")
-async def admin_tasks_callback(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    if not check_admin_access(user_id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    await safe_answer(call)
-    await call.message.edit_text(
-        "📋 <b>УПРАВЛЕНИЕ ЗАДАНИЯМИ</b>\n\n"
-        "Выберите действие:",
-        reply_markup=admin_tasks_menu
-    )
-
-@router.callback_query(F.data == "admin_task_add")
-async def admin_task_add_start(call: CallbackQuery, state: FSMContext):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    await safe_answer(call)
-    await state.set_state(CreateTaskStates.waiting_for_title)
-    await call.message.answer("📝 Введите название задания:")
-
-@router.message(CreateTaskStates.waiting_for_title)
-async def admin_task_title(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    await state.update_data(title=message.text)
-    await state.set_state(CreateTaskStates.waiting_for_description)
-    await message.answer("📄 Введите описание задания:")
-
-@router.message(CreateTaskStates.waiting_for_description)
-async def admin_task_description(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    await state.update_data(description=message.text)
-    await state.set_state(CreateTaskStates.waiting_for_reward)
-    await message.answer("🎁 Введите награду (в 🍬):")
-
-@router.message(CreateTaskStates.waiting_for_reward)
-async def admin_task_reward(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    try:
-        reward = int(message.text)
-        if reward <= 0:
-            await message.answer("❌ Награда должна быть больше 0")
-            return
-        await state.update_data(reward=reward)
-        await state.set_state(CreateTaskStates.waiting_for_max_completions)
-        await message.answer("📊 Введите максимальное количество выполнений (1-999):")
-    except ValueError:
-        await message.answer("❌ Введите число")
-
-@router.message(CreateTaskStates.waiting_for_max_completions)
-async def admin_task_max_completions(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    try:
-        max_completions = int(message.text.strip())
-        if max_completions < 1:
-            max_completions = 1
-        if max_completions > 999:
-            max_completions = 999
-        data = await state.get_data()
-        title = data.get("title", "Без названия")
-        description = data.get("description", "")
-        reward = data.get("reward", 0)
-        logger.info(f"📝 Создание задания:")
-        logger.info(f"   Название: {title}")
-        logger.info(f"   Описание: {description}")
-        logger.info(f"   Награда: {reward}")
-        logger.info(f"   Макс. выполнений: {max_completions}")
-        if not title or title == "Без названия":
-            await message.answer("❌ Название задания не может быть пустым")
-            await state.clear()
-            return
-        if reward <= 0:
-            await message.answer("❌ Награда должна быть больше 0")
-            await state.clear()
-            return
-        task_id = add_task(title=title, description=description, reward=reward, task_type="photo", task_data=None, max_completions=max_completions)
-        if task_id:
-            await message.answer(
-                f"✅ <b>Задание создано!</b>\n\n"
-                f"📋 Название: {title}\n"
-                f"📝 Описание: {description}\n"
-                f"🎁 Награда: +{reward} 🍬\n"
-                f"📊 Макс. выполнений: {max_completions}\n"
-                f"🆔 ID: {task_id}\n\n"
-                f"📸 Для выполнения задания пользователь должен отправить скриншот."
-            )
-        else:
-            await message.answer("❌ Ошибка при создании задания. Проверьте базу данных.")
-        await state.clear()
-    except ValueError:
-        await message.answer("❌ Введите корректное число")
-    except Exception as e:
-        logger.error(f"❌ Ошибка при создании задания: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
-
-@router.callback_query(F.data == "admin_task_edit")
-async def admin_task_edit_start(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    if not check_admin_access(user_id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await safe_answer(call)
-    
-    tasks = get_active_tasks()
-    if not tasks:
-        await call.message.answer("📭 Нет активных заданий для редактирования")
-        return
-    
-    keyboard = []
-    for task in tasks:
-        keyboard.append([InlineKeyboardButton(
-            text=f"✏️ {task['title']} (ID: {task['id']})",
-            callback_data=f"edit_task_select_{task['id']}"
-        )])
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_tasks")])
-    
-    await call.message.answer(
-        "📋 <b>ВЫБЕРИТЕ ЗАДАНИЕ ДЛЯ РЕДАКТИРОВАНИЯ</b>\n\n"
-        "Нажмите на задание, чтобы начать редактирование:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
-    )
-
-@router.callback_query(F.data.startswith("edit_task_select_"))
-async def edit_task_select(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    if not check_admin_access(user_id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    task_id = int(call.data.replace("edit_task_select_", ""))
-    task = get_task(task_id)
-    
-    if not task:
-        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
-        return
-    
-    await state.update_data(edit_task_id=task_id)
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Редактировать название", callback_data="edit_task_title")],
-        [InlineKeyboardButton(text="📄 Редактировать описание", callback_data="edit_task_description")],
-        [InlineKeyboardButton(text="🎁 Редактировать награду", callback_data="edit_task_reward")],
-        [InlineKeyboardButton(text="📊 Редактировать лимит выполнений", callback_data="edit_task_max_completions")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_tasks")]
-    ])
-    
-    await safe_answer(call)
-    await call.message.answer(
-        f"✏️ <b>РЕДАКТИРОВАНИЕ ЗАДАНИЯ</b>\n\n"
-        f"🆔 ID: {task['id']}\n"
-        f"📋 Название: {task['title']}\n"
-        f"📝 Описание: {task['description']}\n"
-        f"🎁 Награда: +{task['reward']} 🍬\n"
-        f"📊 Макс. выполнений: {task['max_completions']}\n\n"
-        f"Выберите, что хотите изменить:",
-        reply_markup=keyboard
-    )
-
-@router.callback_query(F.data == "edit_task_title")
-async def edit_task_title_start(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    if not check_admin_access(user_id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await state.set_state(AdminStates.waiting_for_edit_task_title)
-    await safe_answer(call)
-    await call.message.answer("📝 Введите новое название задания:")
-
-@router.message(AdminStates.waiting_for_edit_task_title)
-async def edit_task_title_save(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    
-    new_title = message.text.strip()
-    if not new_title:
-        await message.answer("❌ Название не может быть пустым")
-        return
-    
-    data = await state.get_data()
-    task_id = data.get("edit_task_id")
-    
-    if update_task(task_id, title=new_title):
-        await message.answer(f"✅ Название задания изменено на: {new_title}")
-    else:
-        await message.answer("❌ Ошибка при обновлении названия")
-    
-    await state.clear()
-
-@router.callback_query(F.data == "edit_task_description")
-async def edit_task_description_start(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    if not check_admin_access(user_id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await state.set_state(AdminStates.waiting_for_edit_task_description)
-    await safe_answer(call)
-    await call.message.answer("📄 Введите новое описание задания:")
-
-@router.message(AdminStates.waiting_for_edit_task_description)
-async def edit_task_description_save(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    
-    new_description = message.text.strip()
-    data = await state.get_data()
-    task_id = data.get("edit_task_id")
-    
-    if update_task(task_id, description=new_description):
-        await message.answer(f"✅ Описание задания обновлено")
-    else:
-        await message.answer("❌ Ошибка при обновлении описания")
-    
-    await state.clear()
-
-@router.callback_query(F.data == "edit_task_reward")
-async def edit_task_reward_start(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    if not check_admin_access(user_id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await state.set_state(AdminStates.waiting_for_edit_task_reward)
-    await safe_answer(call)
-    await call.message.answer("🎁 Введите новую награду (в 🍬):")
-
-@router.message(AdminStates.waiting_for_edit_task_reward)
-async def edit_task_reward_save(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    
-    try:
-        new_reward = int(message.text.strip())
-        if new_reward <= 0:
-            await message.answer("❌ Награда должна быть больше 0")
-            return
-        
-        data = await state.get_data()
-        task_id = data.get("edit_task_id")
-        
-        if update_task(task_id, reward=new_reward):
-            await message.answer(f"✅ Награда изменена на: +{new_reward} 🍬")
-        else:
-            await message.answer("❌ Ошибка при обновлении награды")
-        
-        await state.clear()
-    except ValueError:
-        await message.answer("❌ Введите число")
-
-@router.callback_query(F.data == "edit_task_max_completions")
-async def edit_task_max_completions_start(call: CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    if not check_admin_access(user_id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    await state.set_state(AdminStates.waiting_for_edit_task_max_completions)
-    await safe_answer(call)
-    await call.message.answer("📊 Введите новое максимальное количество выполнений (1-999):")
-
-@router.message(AdminStates.waiting_for_edit_task_max_completions)
-async def edit_task_max_completions_save(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    
-    try:
-        new_max = int(message.text.strip())
-        if new_max < 1:
-            new_max = 1
-        if new_max > 999:
-            new_max = 999
-        
-        data = await state.get_data()
-        task_id = data.get("edit_task_id")
-        
-        if update_task(task_id, max_completions=new_max):
-            await message.answer(f"✅ Лимит выполнений изменен на: {new_max}")
-        else:
-            await message.answer("❌ Ошибка при обновлении лимита")
-        
-        await state.clear()
-    except ValueError:
-        await message.answer("❌ Введите число")
-
-@router.callback_query(F.data == "admin_task_remove")
-async def admin_task_remove_start(call: CallbackQuery, state: FSMContext):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    await safe_answer(call)
-    await state.set_state(AdminTaskStates.waiting_for_task_id_to_delete)
-    tasks = get_active_tasks()
-    if not tasks:
-        await call.message.answer("📭 Нет активных заданий")
-        return
-    keyboard = []
-    for task in tasks:
-        keyboard.append([InlineKeyboardButton(text=f"❌ {task['title']} (ID: {task['id']})", callback_data=f"delete_task_{task['id']}")])
-    keyboard.append([InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_tasks")])
-    await call.message.answer(
-        "🗑 <b>Выберите задание для удаления:</b>\n\n"
-        "Или введите ID задания:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
-    )
-
-@router.callback_query(F.data.startswith("delete_task_"))
-async def admin_task_remove_by_button(call: CallbackQuery, state: FSMContext):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    task_id = int(call.data.replace("delete_task_", ""))
-    task = get_task(task_id)
-    if not task:
-        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
-        return
-    if remove_task(task_id):
-        await safe_answer(call, f"✅ Задание \"{task['title']}\" удалено!")
-        await call.message.edit_text(f"✅ Задание ID {task_id} удалено")
-    else:
-        await safe_answer(call, "❌ Ошибка при удалении", show_alert=True)
-    await state.clear()
-
-@router.message(AdminTaskStates.waiting_for_task_id_to_delete)
-async def admin_task_remove(message: Message, state: FSMContext):
-    if not check_admin_access(message.from_user.id)[0]:
-        return
-    try:
-        task_id = int(message.text.strip())
-        task = get_task(task_id)
-        if not task:
-            await message.answer("❌ Задание не найдено")
-            await state.clear()
-            return
-        if remove_task(task_id):
-            await message.answer(f"✅ Задание \"{task['title']}\" удалено!")
-        else:
-            await message.answer("❌ Ошибка при удалении")
-        await state.clear()
-    except ValueError:
-        await message.answer("❌ Введите ID задания (число)")
-
-@router.callback_query(F.data == "admin_task_list")
-async def admin_task_list(call: CallbackQuery):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    await safe_answer(call)
-    tasks = get_active_tasks()
-    if not tasks:
-        await call.message.answer("📭 Нет активных заданий")
-        return
-    text = "📋 <b>СПИСОК ЗАДАНИЙ</b>\n\n"
-    for task in tasks:
-        text += f"🆔 <b>{task['id']}</b> | {task['title']}\n"
-        text += f"   🎁 +{task['reward']} 🍬\n"
-        text += f"   📊 {task['max_completions']} раз\n"
-        text += f"   📝 {task['description'][:50]}...\n\n"
-    await call.message.answer(text)
-
-@router.callback_query(F.data == "admin_task_pending")
-async def admin_task_pending(call: CallbackQuery):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    await safe_answer(call)
-    pending = get_pending_tasks()
-    if not pending:
-        await call.message.answer("📭 Нет заданий на проверке")
-        return
-    text = "⏳ <b>ЗАДАНИЯ НА ПРОВЕРКЕ</b>\n\n"
-    for p in pending:
-        text += f"👤 @{p['username']} (ID: {p['user_id']})\n"
-        text += f"📋 {p['title']} | +{p['reward']} 🍬\n"
-        text += f"📄 {p['proof'][:100]}...\n"
-        text += f"🆔 Задания: {p['task_id']}\n\n"
-    await call.message.answer(text)
+# ================= АДМИН - ЗАДАНИЯ (уже добавлены выше) =================
 
 # ================= КОМАНДЫ ДЛЯ УДАЛЕНИЯ ВИДЕО =================
 @router.message(Command("delete_200"))
