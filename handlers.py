@@ -1008,10 +1008,11 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
         stars_amount = int(parts[4])
         await call.message.answer(
             f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
-            f"Для оплаты напишите сюда: {ANON_CHAT_LINK}\n\n"
-            f"Сумма: {stars_amount} ⭐️ ({pack_amount} 🍬)\n"
+            f"Сумма: {stars_amount} ⭐️\n"
+            f"Вы получите: {pack_amount} 🍬\n\n"
             f"Отправьте подарок / NFT, на место которое будет указано в анонимных сообщениях.\n"
-            f"После оплаты баланс будет пополнен на аккаунт, с которого вы отправили подарок.",
+            f"После оплаты баланс будет пополнен на аккаунт, с которого вы отправили подарок.\n\n"
+            f"Для покупки, нажмите на кнопку, и напишите сообщение 👇",
             reply_markup=get_stars_payment_menu(pack_amount, stars_amount)
         )
         return
@@ -1027,7 +1028,7 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
             reply_markup=get_crypto_currency_menu(pack_amount, usd_amount, method)
         )
 
-# Обработчик выбора валюты для CryptoBot/xRocket
+# Обработчик выбора валюты для CryptoBot
 @router.callback_query(F.data.startswith("cryptobot_asset_"))
 async def cryptobot_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1077,6 +1078,7 @@ async def cryptobot_asset_selected(call: CallbackQuery, state: FSMContext, bot: 
         reply_markup=get_invoice_payment_menu(invoice['pay_url'], invoice_id, "cryptobot", pack_amount, crypto_amount, asset)
     )
 
+# Обработчик выбора валюты для xRocket
 @router.callback_query(F.data.startswith("xrocket_asset_"))
 async def xrocket_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1240,7 +1242,7 @@ async def check_xrocket_payment(call: CallbackQuery, state: FSMContext, bot: Bot
     else:
         await call.message.answer("⏳ Платёж ещё не оплачен\n\nПожалуйста, оплатите счет и нажмите \"Проверить оплату\" снова.")
 
-# Обработчик для звезд (создание заявки админу) - БЕЗ СООБЩЕНИЯ ПОЛЬЗОВАТЕЛЮ
+# Обработчик для звезд - просто инструкция (без отправки админу)
 @router.callback_query(F.data.startswith("pay_method_stars_"))
 async def stars_payment_request(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1254,82 +1256,19 @@ async def stars_payment_request(call: CallbackQuery, state: FSMContext, bot: Bot
     pack_amount = int(parts[3])
     stars_amount = int(parts[4])
     
-    cursor.execute("SELECT username, balance FROM users WHERE user_id = ?", (user_id,))
-    user = cursor.fetchone()
-    username = user["username"] if user else "нет username"
-    balance = user["balance"] if user else 0
-    
-    # Создаем заявку
-    request_id = add_stars_payment_request(user_id, username, pack_amount, stars_amount, call.message.message_id)
-    
-    # Отправляем админу (пользователь ничего не видит)
-    admin_id = get_main_admin_id()
-    if admin_id:
-        await bot.send_message(
-            admin_id,
-            f"⭐️ <b>НОВАЯ ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
-            f"👤 Пользователь: @{username}\n"
-            f"🆔 ID: {user_id}\n\n"
-            f"🍬 Конфет: {pack_amount}\n"
-            f"⭐️ Звезды: {stars_amount}\n"
-            f"💰 Баланс пользователя: {balance} 🍬",
-            reply_markup=get_stars_approve_menu(request_id, pack_amount, user_id)
-        )
-    
-    # НЕ ОТПРАВЛЯЕМ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЮ!
-    await call.message.delete()
-    await safe_answer(call, "✅ Заявка отправлена администратору", show_alert=True)
-
-# Админ: одобрить оплату звездами
-@router.callback_query(F.data.startswith("approve_stars_"))
-async def approve_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    parts = call.data.split("_")
-    request_id = int(parts[2])
-    pack_amount = int(parts[3])
-    user_id = int(parts[4])
-    
-    if approve_stars_payment(request_id):
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (pack_amount, user_id))
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-        new_balance = cursor.fetchone()["balance"]
-        conn.commit()
-        
-        try:
-            await bot.send_message(
-                user_id,
-                f"✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>\n\n"
-                f"🍬 Начислено: +{pack_amount} конфет\n"
-                f"💰 Текущий баланс: {new_balance} 🍬\n\n"
-                f"Спасибо за покупку! 🎉"
-            )
-        except:
-            pass
-        
-        await call.message.edit_text(
-            f"✅ Оплата одобрена! Пользователю @{call.from_user.username} начислено {pack_amount} 🍬"
-        )
-        await safe_answer(call, "✅ Оплата одобрена")
-    else:
-        await safe_answer(call, "❌ Ошибка при одобрении", show_alert=True)
-
-# Админ: отклонить оплату звездами
-@router.callback_query(F.data.startswith("reject_stars_"))
-async def reject_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
-    if not check_admin_access(call.from_user.id)[0]:
-        await safe_answer(call, "❌ Нет доступа", show_alert=True)
-        return
-    
-    request_id = int(call.data.split("_")[2])
-    
-    if reject_stars_payment(request_id):
-        await call.message.edit_text("❌ Оплата отклонена")
-        await safe_answer(call, "❌ Оплата отклонена")
-    else:
-        await safe_answer(call, "❌ Ошибка при отклонении", show_alert=True)
+    # Просто показываем инструкцию, без отправки админу
+    await call.message.answer(
+        f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
+        f"Сумма: {stars_amount} ⭐️\n"
+        f"Вы получите: {pack_amount} 🍬\n\n"
+        f"Отправьте подарок / NFT, на место которое будет указано в анонимных сообщениях.\n"
+        f"После оплаты баланс будет пополнен на аккаунт, с которого вы отправили подарок.\n\n"
+        f"Для покупки, нажмите на кнопку, и напишите сообщение 👇",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
+        ])
+    )
 
 # Кнопка назад к способам оплаты
 @router.callback_query(F.data.startswith("back_to_payment_methods_"))

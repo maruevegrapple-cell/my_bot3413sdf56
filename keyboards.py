@@ -45,7 +45,7 @@ video_menu = InlineKeyboardMarkup(inline_keyboard=[
 
 # ================= МЕНЮ МАГАЗИНА (НОВОЕ) =================
 def get_shop_menu(balance: int = 0):
-    """Главное меню магазина с паками конфет"""
+    """Главное меню магазина с паками конфет, подписками и приваткой"""
     keyboard = [
         [
             InlineKeyboardButton(text="20 🍬", callback_data="buy_pack_20"),
@@ -54,6 +54,10 @@ def get_shop_menu(balance: int = 0):
         ],
         [
             InlineKeyboardButton(text="180 🍬", callback_data="buy_pack_180")
+        ],
+        [
+            InlineKeyboardButton(text="💎 Премиум Подписки", callback_data="subscriptions_menu"),
+            InlineKeyboardButton(text="🔐 ПРИВАТКА", callback_data="buy_private")
         ],
         [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
     ]
@@ -74,25 +78,34 @@ def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: 
 
 def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str):
     """Меню выбора валюты для CryptoBot или xRocket"""
-    keyboard = [
-        [
-            InlineKeyboardButton(text="💵 USDT", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDT"),
-            InlineKeyboardButton(text="💎 TON", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TON")
-        ],
-        [
-            InlineKeyboardButton(text="₿ BTC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_BTC"),
-            InlineKeyboardButton(text="Ξ ETH", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_ETH")
-        ],
-        [
-            InlineKeyboardButton(text="🔶 BNB", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_BNB"),
-            InlineKeyboardButton(text="🟣 LTC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_LTC")
-        ],
-        [
-            InlineKeyboardButton(text="🌞 TRX", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TRX"),
-            InlineKeyboardButton(text="💲 USDC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDC")
-        ],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
-    ]
+    if method == "cryptobot":
+        keyboard = [
+            [
+                InlineKeyboardButton(text="💵 USDT", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDT"),
+                InlineKeyboardButton(text="💎 TON", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TON")
+            ],
+            [
+                InlineKeyboardButton(text="₿ BTC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_BTC"),
+                InlineKeyboardButton(text="Ξ ETH", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_ETH")
+            ],
+            [
+                InlineKeyboardButton(text="🔶 BNB", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_BNB"),
+                InlineKeyboardButton(text="🟣 LTC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_LTC")
+            ],
+            [
+                InlineKeyboardButton(text="🌞 TRX", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TRX"),
+                InlineKeyboardButton(text="💲 USDC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDC")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
+        ]
+    else:  # xrocket - только USDT и TON
+        keyboard = [
+            [
+                InlineKeyboardButton(text="💵 USDT", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDT"),
+                InlineKeyboardButton(text="💎 TON", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TON")
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
+        ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -140,13 +153,7 @@ def get_categories_menu():
 
 
 def get_tasks_menu_by_category(tasks, category: str):
-    """
-    Создает клавиатуру со списком заданий для конкретной категории.
-    Эмодзи статуса:
-    - 🔄 - задание на проверке (pending)
-    - ✅ - задание полностью выполнено (все возможные разы)
-    - 📋 - задание еще не начато
-    """
+    """Создает клавиатуру со списком заданий для конкретной категории"""
     keyboard = []
     
     for task in tasks:
@@ -154,7 +161,6 @@ def get_tasks_menu_by_category(tasks, category: str):
         max_completions = task.get("max_completions", 1)
         status = task.get("status")
         
-        # Определяем эмодзи статуса
         if completed >= max_completions:
             emoji = "✅"
             status_text = " (выполнено)"

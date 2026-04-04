@@ -19,8 +19,20 @@ XROCKET_HEADERS = {
     "Content-Type": "application/json"
 }
 
-# ДОСТУПНЫЕ ВАЛЮТЫ
-AVAILABLE_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BNB", "TRX", "SOL"]
+# ДОСТУПНЫЕ ВАЛЮТЫ ДЛЯ CRYPTOBOT
+CRYPTOBOT_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BNB", "TRX", "LTC", "SOL"]
+
+# ДОСТУПНЫЕ ВАЛЮТЫ ДЛЯ XROCKET (только ходовые)
+XROCKET_ASSETS = ["USDT", "TON"]
+
+# Курсы для xRocket
+XROCKET_RATES = {
+    "USDT": 1.0,
+    "TON": 5.5
+}
+
+# Общий список для выбора пользователем
+AVAILABLE_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BNB", "TRX", "LTC", "SOL"]
 
 def get_asset_icon(asset: str) -> str:
     """Иконки для валют"""
@@ -32,7 +44,8 @@ def get_asset_icon(asset: str) -> str:
         "USDC": "💲", 
         "BNB": "🔶",
         "TRX": "🌞",
-        "SOL": "◎"
+        "SOL": "◎",
+        "LTC": "🟣"
     }
     return icons.get(asset, "🪙")
 
@@ -81,7 +94,8 @@ def _get_fallback_rates():
         "USDC": 1.0,
         "BNB": 580.0,
         "TRX": 0.11,
-        "SOL": 150.0
+        "SOL": 150.0,
+        "LTC": 85.0
     }
 
 def convert_usd_to_crypto(amount_usd: float, asset: str, rates: dict = None) -> tuple:
@@ -94,7 +108,6 @@ def convert_usd_to_crypto(amount_usd: float, asset: str, rates: dict = None) -> 
     
     rate = rates.get(asset)
     if not rate:
-        # Fallback курсы
         fallback = _get_fallback_rates()
         rate = fallback.get(asset, 1.0)
     
@@ -221,15 +234,22 @@ def create_xrocket_invoice(amount_usd: float, asset: str = "USDT"):
                 "pay_url": BOT_LINK,
                 "status": "active",
                 "asset": asset,
-                "amount": str(amount_usd),
                 "crypto_amount": amount_usd,
                 "usd_amount": amount_usd,
-                "rate": None,
                 "method": "xrocket"
             }
         
-        rates = get_exchange_rates()
-        crypto_amount, rate = convert_usd_to_crypto(amount_usd, asset, rates)
+        # Конвертируем USD в выбранную валюту
+        if asset == "USDT":
+            crypto_amount = amount_usd
+            rate = 1.0
+        elif asset == "TON":
+            rate = XROCKET_RATES.get("TON", 5.5)
+            crypto_amount = amount_usd / rate
+            crypto_amount = round(crypto_amount, 4)
+        else:
+            crypto_amount = amount_usd
+            rate = 1.0
         
         payload = {
             "amount": str(crypto_amount),
@@ -255,7 +275,6 @@ def create_xrocket_invoice(amount_usd: float, asset: str = "USDT"):
                 "pay_url": result["link"],
                 "status": result.get("status", "active"),
                 "asset": asset,
-                "amount": str(crypto_amount),
                 "crypto_amount": crypto_amount,
                 "usd_amount": amount_usd,
                 "rate": rate,
@@ -268,7 +287,6 @@ def create_xrocket_invoice(amount_usd: float, asset: str = "USDT"):
                 "pay_url": BOT_LINK,
                 "status": "error",
                 "asset": asset,
-                "amount": str(amount_usd),
                 "crypto_amount": crypto_amount,
                 "usd_amount": amount_usd,
                 "rate": rate,
@@ -281,7 +299,6 @@ def create_xrocket_invoice(amount_usd: float, asset: str = "USDT"):
             "pay_url": BOT_LINK,
             "status": "error",
             "asset": asset,
-            "amount": str(amount_usd),
             "crypto_amount": amount_usd,
             "usd_amount": amount_usd,
             "rate": None,
@@ -396,4 +413,4 @@ def reject_stars_payment(request_id: int) -> bool:
     return False
 
 
-print("✅ payments.py загружен")
+print("✅ payments.py загручен")
