@@ -1,16 +1,24 @@
 import requests
-from config import CRYPTOBOT_API, CRYPTOBOT_TOKEN
 import logging
+from config import CRYPTOBOT_API, CRYPTOBOT_TOKEN, XROCKET_API_KEY
 
 # Ссылка на бота
 BOT_LINK = "https://t.me/AnonkaBot34bot"
 
-HEADERS = {
+# CryptoBot headers
+CRYPTOBOT_HEADERS = {
     "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
     "Content-Type": "application/json"
 }
 
-# ДОСТУПНЫЕ ВАЛЮТЫ (BUSD удалён)
+# xRocket headers
+XROCKET_API_URL = "https://pay.xrocket.exchange"
+XROCKET_HEADERS = {
+    "Rocket-Pay-Key": XROCKET_API_KEY,
+    "Content-Type": "application/json"
+}
+
+# ДОСТУПНЫЕ ВАЛЮТЫ
 AVAILABLE_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BNB", "TRX", "SOL"]
 
 def get_asset_icon(asset: str) -> str:
@@ -28,45 +36,29 @@ def get_asset_icon(asset: str) -> str:
     return icons.get(asset, "🪙")
 
 def get_exchange_rates():
-    """Получение актуальных курсов валют к USD"""
+    """Получение актуальных курсов валют к USD через CryptoBot API"""
     try:
         logging.info("🔍 get_exchange_rates: Запрашиваем курсы...")
         
         if not CRYPTOBOT_TOKEN:
             logging.warning("⚠️ CRYPTOBOT_TOKEN не задан, использую тестовые курсы")
-            return {
-                "BTC": 65000.0,
-                "TON": 5.5,
-                "ETH": 3500.0,
-                "USDT": 1.0,
-                "USDC": 1.0,
-                "BNB": 500.0,
-                "TRX": 0.12,
-                "SOL": 150.0
-            }
-        
-        logging.info(f"🔍 Отправляем запрос к {CRYPTOBOT_API}/getExchangeRates")
+            return _get_fallback_rates()
         
         r = requests.post(
             f"{CRYPTOBOT_API}/getExchangeRates",
-            headers=HEADERS,
+            headers=CRYPTOBOT_HEADERS,
             json={},
             timeout=15
         )
         
         logging.info(f"🔍 Статус ответа: {r.status_code}")
-        
         r.raise_for_status()
         data = r.json()
         
         rates = {}
-        
-        # ПРОХОДИМ ПО ВСЕМ ЭЛЕМЕНТАМ И СОБИРАЕМ КУРСЫ КРИПТОВАЛЮТ К USD
         for item in data["result"]:
             if item["is_valid"] and item["is_crypto"] and not item["is_fiat"]:
-                # Для каждой криптовалюты ищем пару с USD
                 if item["target"] == "USD":
-                    # Это курс: 1 source = X USD
                     crypto = item["source"]
                     rate = float(item["rate"])
                     rates[crypto] = rate
@@ -76,24 +68,53 @@ def get_exchange_rates():
         return rates
     except Exception as e:
         logging.error(f"❌ Error getting exchange rates: {e}")
-        import traceback
-        logging.error(traceback.format_exc())
-        # Возвращаем заглушку, чтобы бот не падал
-        return {
-            "BTC": 65000.0,
-            "TON": 5.5,
-            "ETH": 3500.0,
-            "USDT": 1.0,
-            "USDC": 1.0,
-            "BNB": 500.0,
-            "TRX": 0.12,
-            "SOL": 150.0
-        }
+        return _get_fallback_rates()
 
-def create_invoice(amount_usd: float, asset: str = "USDT"):
-    """Создание счета для оплаты в указанной криптовалюте"""
+def _get_fallback_rates():
+    """Fallback курсы при ошибке API"""
+    return {
+        "BTC": 65000.0,
+        "TON": 5.5,
+        "ETH": 3200.0,
+        "USDT": 1.0,
+        "USDC": 1.0,
+        "BNB": 580.0,
+        "TRX": 0.11,
+        "SOL": 150.0
+    }
+
+def convert_usd_to_crypto(amount_usd: float, asset: str, rates: dict = None) -> tuple:
+    """Конвертирует USD в криптовалюту, возвращает (crypto_amount, rate)"""
+    if rates is None:
+        rates = get_exchange_rates()
+    
+    if asset == "USDT" or asset == "USDC":
+        return amount_usd, 1.0
+    
+    rate = rates.get(asset)
+    if not rate:
+        # Fallback курсы
+        fallback = _get_fallback_rates()
+        rate = fallback.get(asset, 1.0)
+    
+    crypto_amount = amount_usd / rate
+    
+    # Округление
+    if asset in ["BTC", "ETH", "BNB", "SOL"]:
+        crypto_amount = round(crypto_amount, 8)
+    elif asset in ["TON"]:
+        crypto_amount = round(crypto_amount, 4)
+    else:
+        crypto_amount = round(crypto_amount, 2)
+    
+    return crypto_amount, rate
+
+
+# ================= CRYPTOBOT =================
+def create_cryptobot_invoice(amount_usd: float, asset: str = "USDT"):
+    """Создание счета через CryptoBot"""
     try:
-        logging.info(f"💰 create_invoice: amount_usd={amount_usd}, asset={asset}")
+        logging.info(f"💰 CryptoBot: create_invoice amount_usd={amount_usd}, asset={asset}")
         
         if not CRYPTOBOT_TOKEN:
             logging.warning("⚠️ CRYPTOBOT_TOKEN не задан, возвращаю тестовый инвойс")
@@ -105,61 +126,13 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
                 "amount": str(amount_usd),
                 "crypto_amount": amount_usd,
                 "usd_amount": amount_usd,
-                "rate": None
+                "rate": None,
+                "method": "cryptobot"
             }
         
         rates = get_exchange_rates()
-        logging.info(f"💰 Получены курсы: {rates}")
+        crypto_amount, rate = convert_usd_to_crypto(amount_usd, asset, rates)
         
-        # Конвертируем USD в выбранную криптовалюту
-        crypto_amount = amount_usd
-        rate = None
-        
-        if asset != "USDT" and rates and asset in rates:
-            rate = rates[asset]
-            crypto_amount = amount_usd / rate
-            logging.info(f"💰 Конвертация: {amount_usd} USD / {rate} = {crypto_amount} {asset}")
-            
-            # Округляем
-            if asset in ["BTC", "ETH", "BNB", "SOL"]:
-                crypto_amount = round(crypto_amount, 8)
-            elif asset in ["TON"]:
-                crypto_amount = round(crypto_amount, 4)
-            else:
-                crypto_amount = round(crypto_amount, 2)
-            
-            logging.info(f"💰 После округления: {crypto_amount} {asset}")
-        elif asset == "USDT":
-            # USDT всегда 1:1 с USD
-            rate = 1.0
-            crypto_amount = amount_usd
-            logging.info(f"💰 USDT без конвертации: {crypto_amount}")
-        else:
-            logging.warning(f"⚠️ Курс для {asset} не найден! Использую заглушку")
-            # Используем заглушку если API не дал курс
-            fallback_rates = {
-                "BTC": 65000.0,
-                "TON": 5.5,
-                "ETH": 3500.0,
-                "USDT": 1.0,
-                "USDC": 1.0,
-                "BNB": 500.0,
-                "TRX": 0.12,
-                "SOL": 150.0
-            }
-            if asset in fallback_rates:
-                rate = fallback_rates[asset]
-                crypto_amount = amount_usd / rate
-                logging.info(f"💰 Использую заглушку: {amount_usd} USD / {rate} = {crypto_amount} {asset}")
-                
-                if asset in ["BTC", "ETH", "BNB", "SOL"]:
-                    crypto_amount = round(crypto_amount, 8)
-                elif asset in ["TON"]:
-                    crypto_amount = round(crypto_amount, 4)
-                else:
-                    crypto_amount = round(crypto_amount, 2)
-        
-        # Создаем инвойс в CryptoBot
         payload = {
             "asset": asset,
             "amount": str(crypto_amount),
@@ -168,32 +141,27 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
             "allow_anonymous": False,
             "expires_in": 3600
         }
-        logging.info(f"💰 Отправляем в CryptoBot: {payload}")
+        logging.info(f"💰 CryptoBot payload: {payload}")
         
         r = requests.post(
             f"{CRYPTOBOT_API}/createInvoice",
-            headers=HEADERS,
+            headers=CRYPTOBOT_HEADERS,
             json=payload,
             timeout=15
         )
         
-        logging.info(f"💰 Статус ответа от CryptoBot: {r.status_code}")
         r.raise_for_status()
         result = r.json()["result"]
-        logging.info(f"💰 Ответ от CryptoBot: {result}")
         
-        # Добавляем наши поля в результат
         result["asset"] = asset
         result["crypto_amount"] = crypto_amount
         result["usd_amount"] = amount_usd
         result["rate"] = rate
+        result["method"] = "cryptobot"
         
-        logging.info(f"💰 Итоговый результат: {result}")
         return result
     except Exception as e:
-        logging.error(f"❌ Error creating invoice: {e}")
-        import traceback
-        logging.error(traceback.format_exc())
+        logging.error(f"❌ CryptoBot create_invoice error: {e}")
         return {
             "invoice_id": f"error_{amount_usd}_{asset}",
             "pay_url": BOT_LINK,
@@ -202,11 +170,13 @@ def create_invoice(amount_usd: float, asset: str = "USDT"):
             "amount": str(amount_usd),
             "crypto_amount": amount_usd,
             "usd_amount": amount_usd,
-            "rate": None
+            "rate": None,
+            "method": "cryptobot"
         }
 
-def check_invoice(invoice_id: str) -> dict:
-    """Проверка статуса оплаты"""
+
+def check_cryptobot_invoice(invoice_id: str) -> dict:
+    """Проверка статуса оплаты через CryptoBot"""
     try:
         if not CRYPTOBOT_TOKEN:
             if invoice_id.startswith("test_"):
@@ -215,13 +185,11 @@ def check_invoice(invoice_id: str) -> dict:
         
         if invoice_id.startswith("error_"):
             return {"status": "error", "paid": False}
-            
+        
         r = requests.post(
             f"{CRYPTOBOT_API}/getInvoices",
-            headers=HEADERS,
-            json={
-                "invoice_ids": [invoice_id]
-            },
+            headers=CRYPTOBOT_HEADERS,
+            json={"invoice_ids": [invoice_id]},
             timeout=15
         )
         r.raise_for_status()
@@ -235,5 +203,157 @@ def check_invoice(invoice_id: str) -> dict:
             }
         return {"status": "active", "paid": False}
     except Exception as e:
-        logging.error(f"Error checking invoice: {e}")
+        logging.error(f"Error checking CryptoBot invoice: {e}")
         return {"status": "error", "paid": False}
+
+
+# ================= XROCKET =================
+def create_xrocket_invoice(amount_usd: float, asset: str = "USDT"):
+    """Создание счета через xRocket"""
+    try:
+        logging.info(f"💰 xRocket: create_invoice amount_usd={amount_usd}, asset={asset}")
+        
+        if not XROCKET_API_KEY:
+            logging.warning("⚠️ XROCKET_API_KEY не задан, возвращаю тестовый инвойс")
+            return {
+                "invoice_id": f"xr_test_{amount_usd}_{asset}",
+                "pay_url": BOT_LINK,
+                "status": "active",
+                "asset": asset,
+                "amount": str(amount_usd),
+                "crypto_amount": amount_usd,
+                "usd_amount": amount_usd,
+                "rate": None,
+                "method": "xrocket"
+            }
+        
+        rates = get_exchange_rates()
+        crypto_amount, rate = convert_usd_to_crypto(amount_usd, asset, rates)
+        
+        payload = {
+            "amount": str(crypto_amount),
+            "asset": asset,
+            "numPayments": 1
+        }
+        logging.info(f"💰 xRocket payload: {payload}")
+        
+        r = requests.post(
+            f"{XROCKET_API_URL}/tg-invoices",
+            headers=XROCKET_HEADERS,
+            json=payload,
+            timeout=15
+        )
+        
+        logging.info(f"💰 xRocket response status: {r.status_code}")
+        result = r.json()
+        logging.info(f"💰 xRocket response: {result}")
+        
+        if result.get("id"):
+            return {
+                "invoice_id": str(result["id"]),
+                "pay_url": result["link"],
+                "status": result.get("status", "active"),
+                "asset": asset,
+                "amount": str(crypto_amount),
+                "crypto_amount": crypto_amount,
+                "usd_amount": amount_usd,
+                "rate": rate,
+                "method": "xrocket"
+            }
+        else:
+            logging.error(f"xRocket error: {result}")
+            return {
+                "invoice_id": f"xr_error_{amount_usd}_{asset}",
+                "pay_url": BOT_LINK,
+                "status": "error",
+                "asset": asset,
+                "amount": str(amount_usd),
+                "crypto_amount": crypto_amount,
+                "usd_amount": amount_usd,
+                "rate": rate,
+                "method": "xrocket"
+            }
+    except Exception as e:
+        logging.error(f"❌ xRocket create_invoice error: {e}")
+        return {
+            "invoice_id": f"xr_error_{amount_usd}_{asset}",
+            "pay_url": BOT_LINK,
+            "status": "error",
+            "asset": asset,
+            "amount": str(amount_usd),
+            "crypto_amount": amount_usd,
+            "usd_amount": amount_usd,
+            "rate": None,
+            "method": "xrocket"
+        }
+
+
+def check_xrocket_invoice(invoice_id: str) -> dict:
+    """Проверка статуса оплаты через xRocket"""
+    try:
+        if not XROCKET_API_KEY:
+            if invoice_id.startswith("xr_test_"):
+                return {"status": "paid", "paid": True}
+            return {"status": "error", "paid": False}
+        
+        if invoice_id.startswith("xr_error_"):
+            return {"status": "error", "paid": False}
+        
+        r = requests.get(
+            f"{XROCKET_API_URL}/tg-invoices/{invoice_id}",
+            headers=XROCKET_HEADERS,
+            timeout=15
+        )
+        r.raise_for_status()
+        result = r.json()
+        
+        if result.get("id"):
+            payments = result.get("payments", [])
+            is_paid = any(p.get("paid", False) for p in payments)
+            return {
+                "status": "paid" if is_paid else "active",
+                "paid": is_paid,
+                "asset": result.get("asset"),
+                "amount": float(result.get("amount", 0))
+            }
+        return {"status": "active", "paid": False}
+    except Exception as e:
+        logging.error(f"Error checking xRocket invoice: {e}")
+        return {"status": "error", "paid": False}
+
+
+# ================= УНИВЕРСАЛЬНЫЕ ФУНКЦИИ =================
+def create_invoice(amount_usd: float, asset: str = "USDT", method: str = "cryptobot"):
+    """Универсальная функция создания инвойса"""
+    if method == "cryptobot":
+        return create_cryptobot_invoice(amount_usd, asset)
+    elif method == "xrocket":
+        return create_xrocket_invoice(amount_usd, asset)
+    else:
+        return None
+
+
+def check_invoice(invoice_id: str, method: str = "cryptobot") -> dict:
+    """Универсальная функция проверки инвойса"""
+    if method == "cryptobot":
+        return check_cryptobot_invoice(invoice_id)
+    elif method == "xrocket":
+        return check_xrocket_invoice(invoice_id)
+    else:
+        return {"status": "error", "paid": False}
+
+
+# ================= ЦЕНЫ НА ПАКИ =================
+PACKS = {
+    20: {"usd": 0.20, "stars": 15},
+    35: {"usd": 0.30, "stars": 25},
+    70: {"usd": 0.50, "stars": 50},
+    180: {"usd": 2.00, "stars": 100}
+}
+
+def get_pack_info(amount: int):
+    """Возвращает информацию о паке"""
+    return PACKS.get(amount)
+
+
+print("✅ payments.py загружен")

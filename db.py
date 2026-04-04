@@ -203,7 +203,8 @@ def init_db():
         user_id INTEGER,
         amount INTEGER,
         paid INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        payment_method TEXT DEFAULT 'cryptobot'
     )
     """)
     
@@ -213,6 +214,15 @@ def init_db():
         try:
             cursor.execute("ALTER TABLE payments ADD COLUMN paid INTEGER DEFAULT 0")
             print("✅ Добавлена колонка paid в таблицу payments")
+        except:
+            pass
+    
+    try:
+        cursor.execute("SELECT payment_method FROM payments LIMIT 1")
+    except:
+        try:
+            cursor.execute("ALTER TABLE payments ADD COLUMN payment_method TEXT DEFAULT 'cryptobot'")
+            print("✅ Добавлена колонка payment_method в таблицу payments")
         except:
             pass
     
@@ -280,6 +290,21 @@ def init_db():
         dislikes INTEGER DEFAULT 0,
         rating REAL DEFAULT 0,
         total_ratings INTEGER DEFAULT 0
+    )
+    """)
+    
+    # Таблица для заявок на оплату звездами
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS stars_payment_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        pack_amount INTEGER,
+        stars_amount INTEGER,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP,
+        message_id INTEGER
     )
     """)
     
@@ -551,6 +576,58 @@ def delete_task_record_by_id(record_id: int):
     except:
         return False
 
+# ========== ФУНКЦИИ ДЛЯ ЗАЯВОК НА ОПЛАТУ ЗВЕЗДАМИ ==========
+def add_stars_payment_request_db(user_id: int, username: str, pack_amount: int, stars_amount: int, message_id: int = None):
+    """Добавить заявку на оплату звездами в БД"""
+    try:
+        cursor.execute("""
+            INSERT INTO stars_payment_requests (user_id, username, pack_amount, stars_amount, status, message_id)
+            VALUES (?, ?, ?, ?, 'pending', ?)
+        """, (user_id, username, pack_amount, stars_amount, message_id))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        print(f"❌ Ошибка add_stars_payment_request_db: {e}")
+        return None
+
+def get_stars_payment_request_db(request_id: int):
+    """Получить заявку из БД по ID"""
+    try:
+        cursor.execute("SELECT * FROM stars_payment_requests WHERE id = ?", (request_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+def get_all_stars_payment_requests_db(status: str = None):
+    """Получить все заявки из БД"""
+    try:
+        if status:
+            cursor.execute("SELECT * FROM stars_payment_requests WHERE status = ? ORDER BY created_at DESC", (status,))
+        else:
+            cursor.execute("SELECT * FROM stars_payment_requests ORDER BY created_at DESC")
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+def approve_stars_payment_db(request_id: int):
+    """Одобрить заявку в БД"""
+    try:
+        cursor.execute("UPDATE stars_payment_requests SET status = 'approved', processed_at = datetime('now') WHERE id = ?", (request_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+def reject_stars_payment_db(request_id: int):
+    """Отклонить заявку в БД"""
+    try:
+        cursor.execute("UPDATE stars_payment_requests SET status = 'rejected', processed_at = datetime('now') WHERE id = ?", (request_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========
 def get_mandatory_channels():
     try:
@@ -754,11 +831,11 @@ def clear_pending_referrer_bonus(user_id: int):
         return False
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПЛАТЕЖАМИ ==========
-def add_payment(invoice_id: str, user_id: int, amount: int):
+def add_payment(invoice_id: str, user_id: int, amount: int, payment_method: str = "cryptobot"):
     try:
         cursor.execute(
-            "INSERT INTO payments (invoice_id, user_id, amount) VALUES (?, ?, ?)",
-            (invoice_id, user_id, amount)
+            "INSERT INTO payments (invoice_id, user_id, amount, payment_method) VALUES (?, ?, ?, ?)",
+            (invoice_id, user_id, amount, payment_method)
         )
         conn.commit()
         return True

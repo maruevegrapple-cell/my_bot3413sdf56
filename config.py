@@ -15,6 +15,10 @@ MAIN_ADMIN_ID = get_main_admin_id()
 CRYPTOBOT_API = os.environ.get("CRYPTOBOT_API", "https://pay.crypt.bot/api")
 CRYPTOBOT_TOKEN = os.environ.get("CRYPTOBOT_TOKEN", "543615:AAEUVnLPOYGnEc0gR93BpjsaDiql8TkSY6G")
 
+# ================= XROCKET =================
+XROCKET_API_KEY = os.environ.get("XROCKET_API_KEY", "b520de38f72563abe3bb14caa")
+XROCKET_API_URL = os.environ.get("XROCKET_API_URL", "https://pay.xrocket.exchange")
+
 # ================= ECONOMY =================
 VIDEO_PRICE = int(os.environ.get("VIDEO_PRICE", "1"))
 BONUS_AMOUNT = int(os.environ.get("BONUS_AMOUNT", "3"))
@@ -63,17 +67,24 @@ SUBSCRIPTIONS = {
     }
 }
 
-# ================= ЦЕНЫ НА КОНФЕТЫ =================
-# Конфеты покупаются через CryptoBot
-CANDY_PRICES = {
-    "pay_150": {"candies": 150, "usd": 2.0},
+# ================= ЦЕНЫ НА КОНФЕТЫ (НОВЫЕ ПАКИ) =================
+# Пакеты конфет для магазина
+CANDY_PACKS = {
+    20: {"usd": 0.20, "stars": 15},
+    35: {"usd": 0.30, "stars": 25},
+    70: {"usd": 0.50, "stars": 50},
+    180: {"usd": 2.00, "stars": 100}
 }
 
 # ================= СПОСОБЫ ОПЛАТЫ =================
-# Звезды - через анонимный чат
-# Криптовалюта - через CryptoBot
+PAYMENT_METHODS = {
+    "sbp": {"name": "🏦 СБП", "enabled": False, "callback": "pay_sbp"},
+    "cryptobot": {"name": "🪙 CryptoBot", "enabled": True, "callback": "pay_cryptobot"},
+    "xrocket": {"name": "💎 xRocket", "enabled": True, "callback": "pay_xrocket"},
+    "stars": {"name": "⭐️ Telegram Stars", "enabled": True, "callback": "pay_stars"}
+}
 
-# ================= SPAM PROTECTION =================
+# ================= СПАМ ЗАЩИТА =================
 SPAM_COOLDOWN = int(os.environ.get("SPAM_COOLDOWN", "3"))
 
 print("✅ Конфигурация загружена!")
@@ -82,4 +93,5 @@ print(f"👑 MAIN_ADMIN_ID: {MAIN_ADMIN_ID}")
 print(f"📢 Канал: {CHANNEL_LINK}")
 print(f"⭐️ Оплата звездами: через {ANON_CHAT_LINK}")
 print(f"💰 Оплата криптовалютой: через CryptoBot")
+print(f"💎 Оплата xRocket: {'включена' if XROCKET_API_KEY else 'выключена'}")
 print(f"⏱ Бонус кулдаун: 3 часа")

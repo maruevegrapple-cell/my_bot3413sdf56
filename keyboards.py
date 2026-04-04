@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD
+from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD, CANDY_PACKS
 
 # ================= ФЕЙК МЕНЮ =================
 fake_menu = InlineKeyboardMarkup(inline_keyboard=[
@@ -43,6 +43,90 @@ video_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
 ])
 
+# ================= МЕНЮ МАГАЗИНА (НОВОЕ) =================
+def get_shop_menu(balance: int = 0):
+    """Главное меню магазина с паками конфет"""
+    keyboard = [
+        [
+            InlineKeyboardButton(text="20 🍬", callback_data="buy_pack_20"),
+            InlineKeyboardButton(text="35 🍬", callback_data="buy_pack_35"),
+            InlineKeyboardButton(text="70 🍬", callback_data="buy_pack_70")
+        ],
+        [
+            InlineKeyboardButton(text="180 🍬", callback_data="buy_pack_180")
+        ],
+        [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: int):
+    """Меню выбора способа оплаты после выбора пака"""
+    keyboard = [
+        [InlineKeyboardButton(text="🏦 СБП (скоро)", callback_data="pay_sbp")],
+        [InlineKeyboardButton(text="🪙 CryptoBot", callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")],
+        [InlineKeyboardButton(text="💎 xRocket", callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")],
+        [InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str):
+    """Меню выбора валюты для CryptoBot или xRocket"""
+    keyboard = [
+        [
+            InlineKeyboardButton(text="💵 USDT", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDT"),
+            InlineKeyboardButton(text="💎 TON", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TON")
+        ],
+        [
+            InlineKeyboardButton(text="₿ BTC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_BTC"),
+            InlineKeyboardButton(text="Ξ ETH", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_ETH")
+        ],
+        [
+            InlineKeyboardButton(text="🔶 BNB", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_BNB"),
+            InlineKeyboardButton(text="🟣 LTC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_LTC")
+        ],
+        [
+            InlineKeyboardButton(text="🌞 TRX", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TRX"),
+            InlineKeyboardButton(text="💲 USDC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDC")
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_invoice_payment_menu(pay_url: str, invoice_id: str, method: str, pack_amount: int, crypto_amount: float, asset: str):
+    """Меню с кнопкой оплаты и проверки для CryptoBot/xRocket"""
+    keyboard = [
+        [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} {asset}", url=pay_url)],
+        [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{method}_{invoice_id}_{pack_amount}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_stars_payment_menu(pack_amount: int, stars_amount: int):
+    """Меню для оплаты звездами"""
+    keyboard = [
+        [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+# ================= АДМИН-МЕНЮ ДЛЯ ПОДТВЕРЖДЕНИЯ ЗВЕЗД =================
+def get_stars_approve_menu(request_id: int, pack_amount: int, user_id: int):
+    """Меню для админа с кнопками Одобрить/Отклонить"""
+    keyboard = [
+        [
+            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_stars_{request_id}_{pack_amount}_{user_id}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_stars_{request_id}")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 # ================= МЕНЮ ЗАДАНИЙ С КАТЕГОРИЯМИ =================
 def get_categories_menu():
     """Меню выбора категории заданий"""
@@ -53,6 +137,7 @@ def get_categories_menu():
         [InlineKeyboardButton(text="🏠 В меню", callback_data="menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 def get_tasks_menu_by_category(tasks, category: str):
     """
@@ -96,6 +181,7 @@ def get_tasks_menu_by_category(tasks, category: str):
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+
 def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_type: str, task_data: str, task_status: str = None):
     keyboard = []
     if task_status != "approved" and task_status != "pending":
@@ -113,12 +199,6 @@ def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_t
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад к заданиям", callback_data="tasks")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# ================= КЛАВИАТУРА ВЫБОРА КАТЕГОРИИ ПРИ СОЗДАНИИ ЗАДАНИЯ =================
-task_category_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="task_category_easy")],
-    [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="task_category_medium")],
-    [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="task_category_hard")]
-])
 
 # ================= АДМИН-МЕНЮ =================
 def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False):
@@ -158,6 +238,7 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
         buttons.append([InlineKeyboardButton(text="👥 Управление админами", callback_data="admin_manage")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
 # ================= АДМИН-МЕНЮ ЗАДАНИЙ (С КАТЕГОРИЯМИ) =================
 admin_tasks_keyboard = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="➕ Создать задание", callback_data="admin_task_add")],
@@ -169,6 +250,7 @@ admin_tasks_keyboard = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
 ])
 
+
 def get_category_management_menu():
     """Меню управления категориями заданий"""
     keyboard = [
@@ -178,6 +260,7 @@ def get_category_management_menu():
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_tasks")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 def get_tasks_by_category_menu(tasks, category: str):
     """Меню со списком заданий для выбора (для переноса в другую категорию)"""
@@ -190,6 +273,7 @@ def get_tasks_by_category_menu(tasks, category: str):
     keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_task_categories")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+
 def get_move_category_menu(task_id: int):
     """Меню выбора категории для переноса задания"""
     keyboard = [
@@ -199,6 +283,15 @@ def get_move_category_menu(task_id: int):
         [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_task_categories")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+# ================= КЛАВИАТУРА ВЫБОРА КАТЕГОРИИ ПРИ СОЗДАНИИ ЗАДАНИЯ =================
+task_category_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="task_category_easy")],
+    [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="task_category_medium")],
+    [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="task_category_hard")]
+])
+
 
 # ================= МЕНЮ УПРАВЛЕНИЯ ЗАЯВКАМИ =================
 def get_requests_menu(pending_tasks):
@@ -210,6 +303,7 @@ def get_requests_menu(pending_tasks):
         )])
     keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 def get_request_action_menu(record_id: int, task_title: str, username: str, user_id: int, task_id: int, reward: int, proof: str):
     keyboard = [
@@ -223,6 +317,7 @@ def get_request_action_menu(record_id: int, task_title: str, username: str, user
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
+
 # ================= МЕНЮ ПОДТВЕРЖДЕНИЯ ДОРАБОТКИ =================
 rework_confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
     [
@@ -230,6 +325,7 @@ rework_confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_rework")
     ]
 ])
+
 
 # ================= МЕНЮ УПРАВЛЕНИЯ АДМИНАМИ =================
 admin_manage_menu = InlineKeyboardMarkup(inline_keyboard=[
@@ -239,6 +335,7 @@ admin_manage_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
 ])
 
+
 # ================= МЕНЮ УПРАВЛЕНИЯ ОП =================
 op_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="➕ Добавить канал", callback_data="op_add")],
@@ -247,15 +344,6 @@ op_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
 ])
 
-# ================= МЕНЮ МАГАЗИНА =================
-shop_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🍬 150 конфет • 2.0$ CryptoBot", callback_data="pay_150")],
-    [InlineKeyboardButton(text="✏️ Свое количество, дешевле на 25% • CryptoBot", callback_data="pay_custom")],
-    [InlineKeyboardButton(text="⭐️ Для оплаты звездами нажми на меня!", url=ANON_CHAT_LINK)],
-    [InlineKeyboardButton(text="💎 Премиум Подписка", callback_data="subscriptions_menu")],
-    [InlineKeyboardButton(text=f"🔐 ПРИВАТКА | {PRIVATE_PRICE_STARS} ⭐️ / ${PRIVATE_PRICE_USD}", callback_data="buy_private")],
-    [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
-])
 
 # ================= МЕНЮ ПОДПИСОК =================
 subscriptions_menu = InlineKeyboardMarkup(inline_keyboard=[
@@ -265,12 +353,14 @@ subscriptions_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="⬅️ Назад в магазин", callback_data="shop")]
 ])
 
+
 # ================= МЕНЮ ПРИВАТКИ =================
 private_pay_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text=f"⭐️ {PRIVATE_PRICE_STARS} звезд", callback_data="private_stars")],
     [InlineKeyboardButton(text=f"💰 Криптовалюта (${PRIVATE_PRICE_USD})", callback_data="private_crypto")],
     [InlineKeyboardButton(text="⬅️ Назад в магазин", callback_data="shop")]
 ])
+
 
 # ================= МЕНЮ ВЫБОРА ВАЛЮТЫ ДЛЯ ПРИВАТКИ =================
 def get_private_crypto_menu(assets):
@@ -287,6 +377,7 @@ def get_private_crypto_menu(assets):
         keyboard.append(row)
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 # ================= МЕНЮ ПОДТВЕРЖДЕНИЯ =================
 confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
