@@ -1,5 +1,6 @@
 import requests
 import logging
+from datetime import datetime
 from config import CRYPTOBOT_API, CRYPTOBOT_TOKEN, XROCKET_API_KEY
 
 # Ссылка на бота
@@ -354,6 +355,45 @@ PACKS = {
 def get_pack_info(amount: int):
     """Возвращает информацию о паке"""
     return PACKS.get(amount)
+
+
+# ================= ЗАЯВКИ НА ОПЛАТУ ЗВЕЗДАМИ (ВРЕМЕННОЕ ХРАНИЛИЩЕ) =================
+stars_payment_requests = {}
+_stars_request_counter = 0
+
+def add_stars_payment_request(user_id: int, username: str, pack_amount: int, stars_amount: int, message_id: int = None):
+    """Добавить заявку на оплату звездами"""
+    global _stars_request_counter
+    _stars_request_counter += 1
+    request_id = _stars_request_counter
+    stars_payment_requests[request_id] = {
+        "user_id": user_id,
+        "username": username,
+        "pack_amount": pack_amount,
+        "stars_amount": stars_amount,
+        "message_id": message_id,
+        "status": "pending",
+        "created_at": datetime.now()
+    }
+    return request_id
+
+def get_stars_payment_request(request_id: int):
+    """Получить заявку по ID"""
+    return stars_payment_requests.get(request_id)
+
+def approve_stars_payment(request_id: int) -> bool:
+    """Одобрить заявку"""
+    if request_id in stars_payment_requests:
+        stars_payment_requests[request_id]["status"] = "approved"
+        return True
+    return False
+
+def reject_stars_payment(request_id: int) -> bool:
+    """Отклонить заявку"""
+    if request_id in stars_payment_requests:
+        stars_payment_requests[request_id]["status"] = "rejected"
+        return True
+    return False
 
 
 print("✅ payments.py загружен")
