@@ -67,7 +67,7 @@ def get_shop_menu(balance: int = 0):
 def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: int):
     """Меню выбора способа оплаты после выбора пака"""
     keyboard = [
-        [InlineKeyboardButton(text="🏦 СБП (скоро)", callback_data="pay_sbp")],
+        [InlineKeyboardButton(text="🏦 СБП (Lolz)", callback_data=f"pay_method_sbp_{pack_amount}_{usd_amount}")],
         [InlineKeyboardButton(text="🪙 CryptoBot", callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")],
         [InlineKeyboardButton(text="💎 xRocket", callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")],
         [InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")],
