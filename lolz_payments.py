@@ -1,36 +1,30 @@
 import requests
 import logging
-from datetime import datetime
 from config import LOLZ_MERCHANT_SECRET_KEY, LOLZ_MERCHANT_ID, BOT_USERNAME
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Правильный эндпоинт из документации
 LOLZ_API_URL = "https://prod-api.lzt.market/invoice"
 
 
 def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username: str) -> dict:
     """
-    Создание счета через Lolz Market (СБП)
+    Создание счета через Lolz Market API
     Документация: https://lzt-market.readme.io/reference/paymentsinvoicecreate
     """
     try:
         logger.info(f"💰 Lolz: create_invoice amount_rub={amount_rub}, order_id={order_id}")
         
-        print(f"🔵 LOLZ_MERCHANT_SECRET_KEY = {LOLZ_MERCHANT_SECRET_KEY[:20] if LOLZ_MERCHANT_SECRET_KEY else 'None'}...")
-        print(f"🔵 LOLZ_MERCHANT_ID = {LOLZ_MERCHANT_ID}")
-        
-        if not LOLZ_MERCHANT_SECRET_KEY:
-            logger.warning("⚠️ LOLZ_MERCHANT_SECRET_KEY не задан")
-            return None
-        
-        if not LOLZ_MERCHANT_ID:
-            logger.warning("⚠️ LOLZ_MERCHANT_ID не задан")
+        if not LOLZ_MERCHANT_SECRET_KEY or not LOLZ_MERCHANT_ID:
+            logger.error("❌ LOLZ_MERCHANT_SECRET_KEY или LOLZ_MERCHANT_ID не заданы")
             return None
         
         bot_link = f"https://t.me/{BOT_USERNAME}"
         url_success = f"{bot_link}?start=payment_{order_id}"
         
+        # Формируем payload строго по документации
         payload = {
             "currency": "rub",
             "amount": amount_rub,
@@ -46,38 +40,16 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
         # Убираем None значения
         payload = {k: v for k, v in payload.items() if v is not None}
         
-        # Пробуем разные варианты авторизации
-        
-        # ВАРИАНТ 1: Bearer (стандартный)
+        # ПРАВИЛЬНЫЙ заголовок авторизации
         headers = {
             "Authorization": f"Bearer {LOLZ_MERCHANT_SECRET_KEY}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
         
-        # ВАРИАНТ 2: API-Key (раскомментировать и закомментировать вариант 1)
-        # headers = {
-        #     "API-Key": LOLZ_MERCHANT_SECRET_KEY,
-        #     "Content-Type": "application/json",
-        #     "Accept": "application/json"
-        # }
-        
-        # ВАРИАНТ 3: X-API-Key (раскомментировать и закомментировать вариант 1)
-        # headers = {
-        #     "X-API-Key": LOLZ_MERCHANT_SECRET_KEY,
-        #     "Content-Type": "application/json",
-        #     "Accept": "application/json"
-        # }
-        
-        # ВАРИАНТ 4: Только токен (без Bearer)
-        # headers = {
-        #     "Authorization": LOLZ_MERCHANT_SECRET_KEY,
-        #     "Content-Type": "application/json",
-        #     "Accept": "application/json"
-        # }
-        
-        print(f"🔵 headers: {headers}")
-        print(f"🔵 payload: {payload}")
+        print(f"🔵 Отправка запроса на {LOLZ_API_URL}")
+        print(f"🔵 Headers: Authorization: Bearer {LOLZ_MERCHANT_SECRET_KEY[:10]}...")
+        print(f"🔵 Payload: {payload}")
         
         response = requests.post(
             LOLZ_API_URL,
@@ -86,15 +58,14 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
             timeout=30
         )
         
-        print(f"🔵 response status: {response.status_code}")
-        print(f"🔵 response text: {response.text}")
+        print(f"🔵 Статус ответа: {response.status_code}")
+        print(f"🔵 Тело ответа: {response.text}")
         
         if response.status_code == 200:
             result = response.json()
-            print(f"🔵 result: {result}")
             
-            # API может вернуть данные в поле "data" или прямо в корне
-            invoice_data = result.get("data", result) if isinstance(result, dict) else {}
+            # В ответе может быть поле "data" или сам объект
+            invoice_data = result.get("data", result)
             invoice_id = invoice_data.get("id")
             pay_url = invoice_data.get("url")
             
@@ -108,37 +79,24 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
                     "order_id": order_id,
                     "pay_url": pay_url,
                     "amount_rub": amount_rub,
-                    "expires_at": invoice_data.get("expires_at"),
                     "method": "lolz"
                 }
             else:
-                # Если нет pay_url, но есть invoice_id, возвращаем его
-                if invoice_id:
-                    return {
-                        "status": "success",
-                        "invoice_id": str(invoice_id),
-                        "order_id": order_id,
-                        "pay_url": f"https://lzt.market/invoice/{invoice_id}",
-                        "amount_rub": amount_rub,
-                        "method": "lolz"
-                    }
+                logger.error(f"Не удалось получить pay_url из ответа: {result}")
+                return None
         
-        # Если ответ не 200, пробуем прочитать ошибку
-        error_text = response.text if hasattr(response, 'text') else 'No response'
-        logger.error(f"Lolz error: {error_text}")
-        
-        # Пробуем распарсить ошибку
-        try:
-            error_json = response.json()
-            print(f"🔵 error_json: {error_json}")
-        except:
-            pass
+        # Обработка ошибок
+        if response.status_code == 401:
+            logger.error("❌ Ошибка авторизации: неверный токен. Проверьте LOLZ_MERCHANT_SECRET_KEY")
+        elif response.status_code == 422:
+            logger.error(f"❌ Ошибка валидации данных: {response.text}")
+        else:
+            logger.error(f"❌ Ошибка Lolz API: {response.status_code} - {response.text}")
         
         return None
         
     except Exception as e:
-        logger.error(f"Lolz create invoice error: {e}")
-        print(f"🔵 Exception: {e}")
+        logger.error(f"❌ Исключение при создании инвойса Lolz: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -155,7 +113,6 @@ def check_lolz_payment(order_id: str) -> dict:
         
         headers = {
             "Authorization": f"Bearer {LOLZ_MERCHANT_SECRET_KEY}",
-            "Content-Type": "application/json",
             "Accept": "application/json"
         }
         
@@ -166,26 +123,22 @@ def check_lolz_payment(order_id: str) -> dict:
             timeout=15
         )
         
-        print(f"🔵 check response status: {response.status_code}")
-        print(f"🔵 check response text: {response.text}")
+        print(f"🔵 Проверка статуса: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
-            if result:
-                status = result.get("status", "")
-                is_paid = status == "paid"
-                return {
-                    "status": "paid" if is_paid else "pending",
-                    "paid": is_paid,
-                    "invoice_id": result.get("id"),
-                    "amount": result.get("amount")
-                }
+            status = result.get("status", "")
+            is_paid = status == "paid"
+            return {
+                "status": "paid" if is_paid else "pending",
+                "paid": is_paid,
+                "invoice_data": result
+            }
         
         return {"status": "pending", "paid": False}
         
     except Exception as e:
-        logger.error(f"Lolz check payment error: {e}")
-        print(f"🔵 check Exception: {e}")
+        logger.error(f"❌ Ошибка проверки платежа Lolz: {e}")
         return {"status": "error", "paid": False}
 
 
