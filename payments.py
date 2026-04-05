@@ -12,8 +12,8 @@ CRYPTOBOT_HEADERS = {
     "Content-Type": "application/json"
 }
 
-# xRocket headers
-XROCKET_API_URL = "https://pay.xrocket.exchange"
+# xRocket headers (исправленный URL)
+XROCKET_API_URL = "https://pay.xrocket.tg"  # ИСПРАВЛЕНО: правильный URL
 XROCKET_HEADERS = {
     "Rocket-Pay-Key": XROCKET_API_KEY,
     "Content-Type": "application/json"
@@ -23,12 +23,12 @@ XROCKET_HEADERS = {
 CRYPTOBOT_ASSETS = ["BTC", "TON", "ETH", "USDT", "USDC", "BNB", "TRX", "LTC", "SOL"]
 
 # ДОСТУПНЫЕ ВАЛЮТЫ ДЛЯ XROCKET (только ходовые)
-XROCKET_ASSETS = ["USDT", "TON"]
+XROCKET_ASSETS = ["USDT", "TONCOIN"]  # ИСПРАВЛЕНО: TONCOIN вместо TON
 
 # Курсы для xRocket
 XROCKET_RATES = {
     "USDT": 1.0,
-    "TON": 5.5
+    "TONCOIN": 5.5  # ИСПРАВЛЕНО: TONCOIN
 }
 
 # Общий список для выбора пользователем
@@ -39,6 +39,7 @@ def get_asset_icon(asset: str) -> str:
     icons = {
         "BTC": "₿",
         "TON": "💎", 
+        "TONCOIN": "💎",
         "ETH": "Ξ",
         "USDT": "💵",
         "USDC": "💲", 
@@ -221,119 +222,102 @@ def check_cryptobot_invoice(invoice_id: str) -> dict:
         return {"status": "error", "paid": False}
 
 
-# ================= XROCKET =================
-def create_xrocket_invoice(amount_usd: float, asset: str = "USDT"):
+# ================= XROCKET (ИСПРАВЛЕННЫЙ) =================
+def create_xrocket_invoice(amount_usd: float, currency: str = "USDT"):
     """Создание счета через xRocket"""
     try:
-        logging.info(f"💰 xRocket: create_invoice amount_usd={amount_usd}, asset={asset}")
+        logging.info(f"💰 xRocket: create_invoice amount_usd={amount_usd}, currency={currency}")
         
         if not XROCKET_API_KEY:
-            logging.warning("⚠️ XROCKET_API_KEY не задан, возвращаю тестовый инвойс")
-            return {
-                "invoice_id": f"xr_test_{amount_usd}_{asset}",
-                "pay_url": BOT_LINK,
-                "status": "active",
-                "asset": asset,
-                "crypto_amount": amount_usd,
-                "usd_amount": amount_usd,
-                "method": "xrocket"
-            }
+            logging.warning("⚠️ XROCKET_API_KEY не задан")
+            return None
         
         # Конвертируем USD в выбранную валюту
-        if asset == "USDT":
+        if currency == "USDT":
             crypto_amount = amount_usd
-            rate = 1.0
-        elif asset == "TON":
-            rate = XROCKET_RATES.get("TON", 5.5)
+        elif currency == "TONCOIN":
+            rate = XROCKET_RATES.get("TONCOIN", 5.5)
             crypto_amount = amount_usd / rate
             crypto_amount = round(crypto_amount, 4)
         else:
             crypto_amount = amount_usd
-            rate = 1.0
         
+        # ПРАВИЛЬНЫЙ ФОРМАТ ЗАПРОСА ДЛЯ XROCKET
         payload = {
-            "amount": str(crypto_amount),
-            "asset": asset,
-            "numPayments": 1
+            "amount": crypto_amount,  # число, не строка
+            "currency": currency,     # ВАЖНО: currency, а не asset!
+            "numPayments": 1,
+            "expiredIn": 3600
         }
+        
         logging.info(f"💰 xRocket payload: {payload}")
         
-        r = requests.post(
+        response = requests.post(
             f"{XROCKET_API_URL}/tg-invoices",
             headers=XROCKET_HEADERS,
             json=payload,
             timeout=15
         )
         
-        logging.info(f"💰 xRocket response status: {r.status_code}")
-        result = r.json()
-        logging.info(f"💰 xRocket response: {result}")
+        logging.info(f"💰 xRocket response status: {response.status_code}")
         
-        if result.get("id"):
-            return {
-                "invoice_id": str(result["id"]),
-                "pay_url": result["link"],
-                "status": result.get("status", "active"),
-                "asset": asset,
-                "crypto_amount": crypto_amount,
-                "usd_amount": amount_usd,
-                "rate": rate,
-                "method": "xrocket"
-            }
-        else:
-            logging.error(f"xRocket error: {result}")
-            return {
-                "invoice_id": f"xr_error_{amount_usd}_{asset}",
-                "pay_url": BOT_LINK,
-                "status": "error",
-                "asset": asset,
-                "crypto_amount": crypto_amount,
-                "usd_amount": amount_usd,
-                "rate": rate,
-                "method": "xrocket"
-            }
+        if response.status_code == 200:
+            result = response.json()
+            logging.info(f"💰 xRocket response: {result}")
+            
+            if result.get("id"):
+                return {
+                    "invoice_id": str(result["id"]),
+                    "pay_url": result.get("link") or f"https://t.me/xrocket?start=inv_{result['id']}",
+                    "status": "active",
+                    "asset": currency,
+                    "crypto_amount": crypto_amount,
+                    "usd_amount": amount_usd,
+                    "method": "xrocket"
+                }
+        
+        # Если не 200 или нет id
+        logging.error(f"xRocket error: {response.text}")
+        return None
+        
     except Exception as e:
-        logging.error(f"❌ xRocket create_invoice error: {e}")
-        return {
-            "invoice_id": f"xr_error_{amount_usd}_{asset}",
-            "pay_url": BOT_LINK,
-            "status": "error",
-            "asset": asset,
-            "crypto_amount": amount_usd,
-            "usd_amount": amount_usd,
-            "rate": None,
-            "method": "xrocket"
-        }
+        logging.error(f"xRocket error: {e}")
+        return None
 
 
 def check_xrocket_invoice(invoice_id: str) -> dict:
     """Проверка статуса оплаты через xRocket"""
     try:
         if not XROCKET_API_KEY:
-            if invoice_id.startswith("xr_test_"):
-                return {"status": "paid", "paid": True}
             return {"status": "error", "paid": False}
         
-        if invoice_id.startswith("xr_error_"):
-            return {"status": "error", "paid": False}
-        
-        r = requests.get(
+        response = requests.get(
             f"{XROCKET_API_URL}/tg-invoices/{invoice_id}",
             headers=XROCKET_HEADERS,
             timeout=15
         )
-        r.raise_for_status()
-        result = r.json()
         
-        if result.get("id"):
+        if response.status_code == 200:
+            result = response.json()
+            
+            # Проверяем статус инвойса
+            status = result.get("status", "")
+            is_paid = status == "paid"
+            
+            # Также проверяем payments
             payments = result.get("payments", [])
-            is_paid = any(p.get("paid", False) for p in payments)
+            for payment in payments:
+                if payment.get("paid"):
+                    is_paid = True
+                    break
+            
             return {
                 "status": "paid" if is_paid else "active",
                 "paid": is_paid,
-                "asset": result.get("asset"),
+                "asset": result.get("currency"),
                 "amount": float(result.get("amount", 0))
             }
+        
         return {"status": "active", "paid": False}
     except Exception as e:
         logging.error(f"Error checking xRocket invoice: {e}")
@@ -374,7 +358,7 @@ def get_pack_info(amount: int):
     return PACKS.get(amount)
 
 
-# ================= ЗАЯВКИ НА ОПЛАТУ ЗВЕЗДАМИ (ВРЕМЕННОЕ ХРАНИЛИЩЕ) =================
+# ================= ЗАЯВКИ НА ОПЛАТУ ЗВЕЗДАМИ =================
 stars_payment_requests = {}
 _stars_request_counter = 0
 
@@ -413,4 +397,4 @@ def reject_stars_payment(request_id: int) -> bool:
     return False
 
 
-print("✅ payments.py загручен")
+print("✅ payments.py загружен")

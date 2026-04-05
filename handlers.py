@@ -1091,7 +1091,7 @@ async def xrocket_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bo
     parts = call.data.split("_")
     pack_amount = int(parts[2])
     usd_amount = float(parts[3])
-    asset = parts[4]
+    asset = parts[4]  # Здесь может быть USDT или TONCOIN
     
     # Создаем инвойс в xRocket
     invoice = create_invoice(usd_amount, asset, method="xrocket")

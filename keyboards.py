@@ -98,11 +98,11 @@ def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str):
             ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
         ]
-    else:  # xrocket - только USDT и TON
+    else:  # xrocket - только USDT и TONCOIN
         keyboard = [
             [
                 InlineKeyboardButton(text="💵 USDT", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDT"),
-                InlineKeyboardButton(text="💎 TON", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TON")
+                InlineKeyboardButton(text="💎 TON", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TONCOIN")
             ],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
         ]
