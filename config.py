@@ -22,7 +22,7 @@ XROCKET_API_URL = os.environ.get("XROCKET_API_URL", "https://pay.xrocket.exchang
 # ================= LOLZ MARKET (СБП) =================
 LOLZ_MERCHANT_SECRET_KEY = os.environ.get("LOLZ_MERCHANT_SECRET_KEY", "03e806e30159c90648e3fae47db6e95d8827e656715e87a7456b83b85796462d")
 LOLZ_MERCHANT_ID = int(os.environ.get("LOLZ_MERCHANT_ID", "2321"))
-LOLZ_API_URL = os.environ.get("LOLZ_API_URL", "https://prod-api.lzt.market/invoice")
+LOLZ_API_URL = os.environ.get("LOLZ_API_URL", "https://lzt.market/merchant/invoice")
 
 # ================= ECONOMY =================
 VIDEO_PRICE = int(os.environ.get("VIDEO_PRICE", "1"))
