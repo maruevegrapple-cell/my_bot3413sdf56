@@ -12,10 +12,12 @@ LOLZ_API_URL = "https://prod-api.lzt.market/invoice"
 def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username: str) -> dict:
     """
     Создание счета через Lolz Market (СБП)
-    Документация: https://lzt-market.readme.io/reference/paymentsinvoicecreate
     """
     try:
         logger.info(f"💰 Lolz: create_invoice amount_rub={amount_rub}, order_id={order_id}")
+        
+        print(f"🔵 LOLZ_MERCHANT_SECRET_KEY = {LOLZ_MERCHANT_SECRET_KEY[:20]}...")
+        print(f"🔵 LOLZ_MERCHANT_ID = {LOLZ_MERCHANT_ID}")
         
         if not LOLZ_MERCHANT_SECRET_KEY:
             logger.warning("⚠️ LOLZ_MERCHANT_SECRET_KEY не задан")
@@ -48,6 +50,8 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
             "Accept": "application/json"
         }
         
+        print(f"🔵 payload: {payload}")
+        
         response = requests.post(
             LOLZ_API_URL,
             json=payload,
@@ -55,8 +59,12 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
             timeout=30
         )
         
+        print(f"🔵 response status: {response.status_code}")
+        print(f"🔵 response text: {response.text}")
+        
         if response.status_code == 200:
             result = response.json()
+            print(f"🔵 result: {result}")
             
             invoice_data = result.get("data", result) if isinstance(result, dict) else {}
             invoice_id = invoice_data.get("id")
@@ -81,6 +89,7 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
         
     except Exception as e:
         logger.error(f"Lolz create invoice error: {e}")
+        print(f"🔵 Exception: {e}")
         return None
 
 
