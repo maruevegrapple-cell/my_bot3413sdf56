@@ -33,7 +33,9 @@ from config import (
     PRIVATE_PRICE_STARS,
     SUBSCRIPTIONS,
     CANDY_PACKS,
-    SPAM_COOLDOWN
+    SPAM_COOLDOWN,
+    LOLZ_MERCHANT_SECRET_KEY,
+    LOLZ_MERCHANT_ID
 )
 
 from db import (
@@ -84,6 +86,14 @@ from payments import (
     approve_stars_payment,
     reject_stars_payment
 )
+
+# Импорт Lolz платежей
+try:
+    from lolz_payments import create_lolz_invoice, check_lolz_payment
+    LOLZ_AVAILABLE = True
+except ImportError:
+    LOLZ_AVAILABLE = False
+    print("⚠️ Lolz payments not available")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -171,6 +181,9 @@ class AdminTaskStates(StatesGroup):
 class AdminRequestStates(StatesGroup):
     waiting_for_rework_text = State()
     waiting_for_rework_confirm = State()
+
+class LolzStates(StatesGroup):
+    waiting_for_payment = State()
 
 captcha_data = {}
 captcha_attempts = {}
@@ -950,7 +963,8 @@ async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     await call.message.answer(
         f"🍬 <b>МАГАЗИН КОНФЕТ</b>\n\n"
-        f"💰 Ваш баланс: {balance} 🍬\n\n"
+        f"💰 Ваш баланс: {balance} 🍬\n"
+        f"Курс по которому конфеты придут на твой баланс, ты сможешь посмотреть когда выберешь пак!\n\n"
         f"Выберите пак конфет для покупки 👇",
         reply_markup=get_shop_menu(balance)
     )
@@ -977,8 +991,10 @@ async def buy_pack(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     await state.update_data(pending_pack=pack_amount, pending_usd=usd_amount, pending_stars=stars_amount)
     
+    # Показываем курс
     await call.message.answer(
         f"💎 Выбрано конфеток: {pack_amount} 🍬\n\n"
+        f"📊 Курс: 1$ = {pack_amount / usd_amount:.0f} 🍬\n\n"
         f"💳 Выберите способ оплаты:",
         reply_markup=get_payment_methods_menu(pack_amount, usd_amount, stars_amount)
     )
@@ -998,9 +1014,46 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
     pack_amount = int(parts[3])
     
     if method == "sbp":
+        if not LOLZ_AVAILABLE:
+            await call.message.answer("❌ Оплата через СБП временно недоступна")
+            return
+        usd_amount = float(parts[4])
+        
+        pack_info = CANDY_PACKS.get(pack_amount)
+        if not pack_info:
+            await safe_answer(call, "❌ Пак не найден", show_alert=True)
+            return
+        
+        # Конвертируем USD в RUB (примерный курс 1$ = 95 RUB)
+        rub_amount = usd_amount * 95
+        order_id = f"candy_{user_id}_{int(time.time())}"
+        
+        cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+        user = cursor.fetchone()
+        username = user["username"] if user else "user"
+        
+        invoice = create_lolz_invoice(rub_amount, order_id, user_id, username)
+        
+        if not invoice or invoice.get("status") != "success":
+            await call.message.answer("❌ Ошибка при создании платежа. Попробуйте позже.")
+            return
+        
+        await state.update_data(pending_sbp_order=order_id, pending_sbp_pack=pack_amount)
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏦 Оплатить через Lolz", url=invoice["pay_url"])],
+            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_sbp_{order_id}_{pack_amount}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
+        ])
+        
         await call.message.answer(
-            "🏦 <b>СБП ОПЛАТА</b>\n\n"
-            "🚧 В разработке. Скоро появится!"
+            f"🏦 <b>ОПЛАТА ЧЕРЕЗ Lolz Market (СБП)</b>\n\n"
+            f"🍬 Конфет: {pack_amount}\n"
+            f"💰 Сумма: {rub_amount} RUB\n\n"
+            f"🔗 Ссылка для оплаты:\n{invoice['pay_url']}\n\n"
+            f"📱 После оплаты нажмите \"Проверить оплату\"\n\n"
+            f"⏳ Счет действителен 1 час",
+            reply_markup=keyboard
         )
         return
     
@@ -1027,6 +1080,64 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
             f"Выберите валюту:",
             reply_markup=get_crypto_currency_menu(pack_amount, usd_amount, method)
         )
+
+# Обработчик проверки оплаты для Lolz (СБП)
+@router.callback_query(F.data.startswith("check_sbp_"))
+async def check_sbp_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    if await check_spam(user_id):
+        await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    parts = call.data.split("_")
+    order_id = parts[2]
+    pack_amount = int(parts[3])
+    
+    result = check_lolz_payment(order_id)
+    
+    if result.get("paid", False):
+        cursor.execute("SELECT paid FROM payments WHERE invoice_id = ?", (order_id,))
+        payment = cursor.fetchone()
+        if payment and payment["paid"] == 1:
+            await call.message.answer("✅ Этот платёж уже был обработан")
+            return
+        
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (pack_amount, user_id))
+        cursor.execute("INSERT INTO payments (invoice_id, user_id, amount, paid) VALUES (?, ?, ?, 1)",
+                      (order_id, user_id, pack_amount))
+        
+        # Реферальная система
+        cursor.execute("SELECT referrer FROM users WHERE user_id = ?", (user_id,))
+        user = cursor.fetchone()
+        if user and user["referrer"]:
+            ref_bonus = int(pack_amount * REF_PERCENT / 100)
+            if ref_bonus > 0:
+                cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (ref_bonus, user["referrer"]))
+                try:
+                    await bot.send_message(
+                        user["referrer"],
+                        f"💰 Ваш реферал купил {pack_amount} 🍬\n"
+                        f"➕ Вы получили {ref_bonus} 🍬 ({REF_PERCENT}%)"
+                    )
+                except:
+                    pass
+        
+        conn.commit()
+        
+        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+        new_balance = cursor.fetchone()["balance"]
+        
+        await call.message.answer(
+            f"✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>\n\n"
+            f"🍬 Начислено: +{pack_amount} конфет\n"
+            f"💰 Текущий баланс: {new_balance} 🍬\n\n"
+            f"Спасибо за покупку! 🎉"
+        )
+        await call.message.delete()
+    else:
+        await call.message.answer("⏳ Платёж ещё не оплачен\n\nПожалуйста, оплатите счет и нажмите \"Проверить оплату\" снова.")
 
 # Обработчик выбора валюты для CryptoBot
 @router.callback_query(F.data.startswith("cryptobot_asset_"))
@@ -1091,7 +1202,7 @@ async def xrocket_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bo
     parts = call.data.split("_")
     pack_amount = int(parts[2])
     usd_amount = float(parts[3])
-    asset = parts[4]  # Здесь может быть USDT или TONCOIN
+    asset = parts[4]
     
     # Создаем инвойс в xRocket
     invoice = create_invoice(usd_amount, asset, method="xrocket")
@@ -1242,9 +1353,9 @@ async def check_xrocket_payment(call: CallbackQuery, state: FSMContext, bot: Bot
     else:
         await call.message.answer("⏳ Платёж ещё не оплачен\n\nПожалуйста, оплатите счет и нажмите \"Проверить оплату\" снова.")
 
-# Обработчик для звезд - просто инструкция (без отправки админу)
+# Обработчик для звезд - покупка пака
 @router.callback_query(F.data.startswith("pay_method_stars_"))
-async def stars_payment_request(call: CallbackQuery, state: FSMContext, bot: Bot):
+async def stars_payment_for_pack(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     if await check_spam(user_id):
         await safe_answer(call, "⏳ Подождите 3 секунды перед следующим действием!", show_alert=True)
@@ -1256,14 +1367,16 @@ async def stars_payment_request(call: CallbackQuery, state: FSMContext, bot: Bot
     pack_amount = int(parts[3])
     stars_amount = int(parts[4])
     
-    # Просто показываем инструкцию, без отправки админу
     await call.message.answer(
         f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
         f"Сумма: {stars_amount} ⭐️\n"
         f"Вы получите: {pack_amount} 🍬\n\n"
-        f"Отправьте подарок / NFT, на место которое будет указано в анонимных сообщениях.\n"
-        f"После оплаты баланс будет пополнен на аккаунт, с которого вы отправили подарок.\n\n"
-        f"Для покупки, нажмите на кнопку, и напишите сообщение 👇",
+        f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
+        f"2. Напишите: Хочу купить {pack_amount} 🍬 за {stars_amount} ⭐️\n"
+        f"3. Укажите ваш ID: <code>1234567890</code>\n"
+        f"4. Оплатите гифтами (подарками)\n"
+        f"5. Ожидайте зачисления!\n\n"
+        f"🔗 Ссылка: {ANON_CHAT_LINK}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
@@ -1282,13 +1395,14 @@ async def back_to_payment_methods(call: CallbackQuery, state: FSMContext, bot: B
     
     parts = call.data.split("_")
     pack_amount = int(parts[4])
+    usd_amount = float(parts[5])
     
     pack_info = CANDY_PACKS.get(pack_amount)
-    usd_amount = pack_info["usd"]
     stars_amount = pack_info["stars"]
     
     await call.message.edit_text(
         f"💎 Выбрано конфеток: {pack_amount} 🍬\n\n"
+        f"📊 Курс: 1$ = {pack_amount / usd_amount:.0f} 🍬\n\n"
         f"💳 Выберите способ оплаты:",
         reply_markup=get_payment_methods_menu(pack_amount, usd_amount, stars_amount)
     )
@@ -1403,13 +1517,20 @@ async def pay_subscription_stars(call: CallbackQuery, state: FSMContext, bot: Bo
     if not sub:
         await safe_answer(call, "❌ Подписка не найдена", show_alert=True)
         return
+    
+    sub_texts = {
+        "op": f"💎 {sub['name']}",
+        "base": f"🚀 {sub['name']}",
+        "newbie": f"😊 {sub['name']}"
+    }
+    
     await safe_answer(call)
     await call.message.answer(
         f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
-        f"Для покупки {sub['name']}:\n\n"
+        f"Для покупки {sub_texts.get(sub_type, sub['name'])}:\n\n"
         f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
-        f"2. Напишите: Хочу купить {sub['name']} за {sub['stars']} ⭐️\n"
-        f"3. Укажите ваш ID: <code>{user_id}</code>\n"
+        f"2. Напишите: Хочу купить {sub_texts.get(sub_type, sub['name'])} за {sub['stars']} ⭐️\n"
+        f"3. Укажите ваш ID: <code>1234567890</code>\n"
         f"4. Оплатите гифтами (подарками)\n"
         f"5. Ожидайте активации!\n\n"
         f"🔗 Ссылка: {ANON_CHAT_LINK}",
@@ -1535,7 +1656,7 @@ async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"Для получения доступа к приватке:\n\n"
         f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
         f"2. Напишите: Хочу купить приватку за {PRIVATE_PRICE_STARS} ⭐️\n"
-        f"3. Укажите ваш ID: <code>{user_id}</code>\n"
+        f"3. Укажите ваш ID: <code>1234567890</code>\n"
         f"4. Оплатите гифтами (подарками)\n"
         f"5. Ожидайте доступа!\n\n"
         f"🔗 Ссылка: {ANON_CHAT_LINK}",

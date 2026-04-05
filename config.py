@@ -19,6 +19,11 @@ CRYPTOBOT_TOKEN = os.environ.get("CRYPTOBOT_TOKEN", "543615:AAEUVnLPOYGnEc0gR93B
 XROCKET_API_KEY = os.environ.get("XROCKET_API_KEY", "b520de38f72563abe3bb14caa")
 XROCKET_API_URL = os.environ.get("XROCKET_API_URL", "https://pay.xrocket.exchange")
 
+# ================= LOLZ MARKET (СБП) =================
+LOLZ_MERCHANT_SECRET_KEY = os.environ.get("LOLZ_MERCHANT_SECRET_KEY", "03e806e30159c90648e3fae47db6e95d8827e656715e87a7456b83b85796462d")
+LOLZ_MERCHANT_ID = int(os.environ.get("LOLZ_MERCHANT_ID", "2321"))
+LOLZ_API_URL = os.environ.get("LOLZ_API_URL", "https://prod-api.lzt.market/invoice")
+
 # ================= ECONOMY =================
 VIDEO_PRICE = int(os.environ.get("VIDEO_PRICE", "1"))
 BONUS_AMOUNT = int(os.environ.get("BONUS_AMOUNT", "3"))
@@ -78,7 +83,7 @@ CANDY_PACKS = {
 
 # ================= СПОСОБЫ ОПЛАТЫ =================
 PAYMENT_METHODS = {
-    "sbp": {"name": "🏦 СБП", "enabled": False, "callback": "pay_sbp"},
+    "sbp": {"name": "🏦 СБП (Lolz)", "enabled": True, "callback": "pay_sbp"},
     "cryptobot": {"name": "🪙 CryptoBot", "enabled": True, "callback": "pay_cryptobot"},
     "xrocket": {"name": "💎 xRocket", "enabled": True, "callback": "pay_xrocket"},
     "stars": {"name": "⭐️ Telegram Stars", "enabled": True, "callback": "pay_stars"}
@@ -94,4 +99,5 @@ print(f"📢 Канал: {CHANNEL_LINK}")
 print(f"⭐️ Оплата звездами: через {ANON_CHAT_LINK}")
 print(f"💰 Оплата криптовалютой: через CryptoBot")
 print(f"💎 Оплата xRocket: {'включена' if XROCKET_API_KEY else 'выключена'}")
+print(f"🏦 Оплата СБП (Lolz): {'включена' if LOLZ_MERCHANT_SECRET_KEY else 'выключена'}")
 print(f"⏱ Бонус кулдаун: 3 часа")

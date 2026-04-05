@@ -1,4 +1,4 @@
-import sqlite3
+=import sqlite3
 import random
 import string
 import os
@@ -112,6 +112,7 @@ def set_main_admin(user_id: int, username: str = ""):
         return None
 
 def init_db():
+    # ========== ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -128,6 +129,7 @@ def init_db():
     )
     """)
     
+    # Добавляем недостающие колонки
     try:
         cursor.execute("SELECT pending_referrer_bonus FROM users LIMIT 1")
     except:
@@ -146,6 +148,7 @@ def init_db():
         except:
             pass
 
+    # ========== ТАБЛИЦА АДМИНОВ ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS admins (
         user_id INTEGER PRIMARY KEY,
@@ -158,6 +161,7 @@ def init_db():
     )
     """)
 
+    # ========== ТАБЛИЦА КАНАЛОВ ОП ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS mandatory_channels (
         channel_id TEXT PRIMARY KEY,
@@ -166,6 +170,7 @@ def init_db():
     )
     """)
 
+    # ========== ТАБЛИЦА ВИДЕО ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS videos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -173,6 +178,7 @@ def init_db():
     )
     """)
 
+    # ========== ТАБЛИЦА ПРОСМОТРОВ ВИДЕО ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_videos (
         user_id INTEGER,
@@ -181,6 +187,7 @@ def init_db():
     )
     """)
 
+    # ========== ТАБЛИЦА ПРОМОКОДОВ ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS promocodes (
         code TEXT PRIMARY KEY,
@@ -189,6 +196,7 @@ def init_db():
     )
     """)
 
+    # ========== ТАБЛИЦА ИСПОЛЬЗОВАННЫХ ПРОМОКОДОВ ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS used_promocodes (
         user_id INTEGER,
@@ -197,6 +205,7 @@ def init_db():
     )
     """)
 
+    # ========== ТАБЛИЦА ПЛАТЕЖЕЙ ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS payments (
         invoice_id TEXT PRIMARY KEY,
@@ -226,6 +235,7 @@ def init_db():
         except:
             pass
     
+    # ========== ТАБЛИЦА ЗАДАНИЙ ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -241,6 +251,7 @@ def init_db():
     )
     """)
     
+    # ========== ТАБЛИЦА ВЫПОЛНЕНИЙ ЗАДАНИЙ ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -252,6 +263,7 @@ def init_db():
     )
     """)
     
+    # ========== ТАБЛИЦА ПОКУПОК ПРИВАТКИ ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS private_purchases (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -263,6 +275,7 @@ def init_db():
     )
     """)
     
+    # ========== ТАБЛИЦА ПОДПИСОК ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS user_subscriptions (
         user_id INTEGER PRIMARY KEY,
@@ -273,6 +286,7 @@ def init_db():
     )
     """)
     
+    # ========== ТАБЛИЦА РЕЙТИНГОВ ВИДЕО ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS video_ratings (
         video_id INTEGER,
@@ -283,6 +297,7 @@ def init_db():
     )
     """)
     
+    # ========== ТАБЛИЦА СТАТИСТИКИ ВИДЕО ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS video_stats (
         video_id INTEGER PRIMARY KEY,
@@ -293,7 +308,7 @@ def init_db():
     )
     """)
     
-    # Таблица для заявок на оплату звездами
+    # ========== ТАБЛИЦА ЗАЯВОК НА ОПЛАТУ ЗВЕЗДАМИ ==========
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS stars_payment_requests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -308,10 +323,26 @@ def init_db():
     )
     """)
     
+    # ========== ТАБЛИЦА ДЛЯ LOLZ ПЛАТЕЖЕЙ (СБП) ==========
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS lolz_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id TEXT UNIQUE,
+        order_id TEXT,
+        user_id INTEGER,
+        amount_rub REAL,
+        pack_amount INTEGER,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        paid_at TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(user_id)
+    )
+    """)
+    
     conn.commit()
     print("✅ База данных инициализирована")
     
-    # Добавляем колонку category если её нет
+    # Обновляем схему tasks
     try:
         cursor.execute("PRAGMA table_info(tasks)")
         columns = [col[1] for col in cursor.fetchall()]
@@ -627,6 +658,60 @@ def reject_stars_payment_db(request_id: int):
         return True
     except:
         return False
+
+# ========== ФУНКЦИИ ДЛЯ LOLZ ПЛАТЕЖЕЙ (СБП) ==========
+def add_lolz_payment(invoice_id: str, order_id: str, user_id: int, amount_rub: float, pack_amount: int):
+    """Добавить запись о Lolz платеже"""
+    try:
+        cursor.execute("""
+            INSERT INTO lolz_payments (invoice_id, order_id, user_id, amount_rub, pack_amount, status)
+            VALUES (?, ?, ?, ?, ?, 'pending')
+        """, (invoice_id, order_id, user_id, amount_rub, pack_amount))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка add_lolz_payment: {e}")
+        return False
+
+def mark_lolz_payment_paid(invoice_id: str):
+    """Отметить Lolz платеж как оплаченный"""
+    try:
+        cursor.execute("""
+            UPDATE lolz_payments 
+            SET status = 'paid', paid_at = datetime('now') 
+            WHERE invoice_id = ?
+        """, (invoice_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка mark_lolz_payment_paid: {e}")
+        return False
+
+def get_lolz_payment(invoice_id: str):
+    """Получить Lolz платеж по invoice_id"""
+    try:
+        cursor.execute("SELECT * FROM lolz_payments WHERE invoice_id = ?", (invoice_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+def get_lolz_payment_by_order(order_id: str):
+    """Получить Lolz платеж по order_id"""
+    try:
+        cursor.execute("SELECT * FROM lolz_payments WHERE order_id = ?", (order_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+def get_pending_lolz_payments():
+    """Получить все ожидающие Lolz платежи"""
+    try:
+        cursor.execute("SELECT * FROM lolz_payments WHERE status = 'pending' ORDER BY created_at DESC")
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========
 def get_mandatory_channels():
@@ -1298,5 +1383,6 @@ def get_video_count_for_user(user_id: int):
     except:
         return 0
 
+# ========== ЗАПУСК ИНИЦИАЛИЗАЦИИ ==========
 init_db()
 print("✅ db.py загружен")
