@@ -27,7 +27,7 @@ TASK_CATEGORIES = {
     'hard': {'name': '🥇 ЛУЧШИЕ ЗАДАЧИ', 'emoji': '🥇', 'order': 3}
 }
 
-# ========== УДАЛЕНИЕ UNIQUE ИЗ user_tasks ==========
+
 def fix_user_tasks_table():
     try:
         cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='user_tasks'")
@@ -70,6 +70,7 @@ def fix_user_tasks_table():
     except Exception as e:
         print(f"❌ Ошибка исправления user_tasks: {e}")
 
+
 def generate_ref_code(length=6):
     chars = string.ascii_uppercase + string.digits
     chars = chars.replace('O', '').replace('0', '').replace('I', '').replace('1', '')
@@ -78,6 +79,7 @@ def generate_ref_code(length=6):
         cursor.execute("SELECT user_id FROM users WHERE ref_code = ?", (code,))
         if not cursor.fetchone():
             return code
+
 
 def get_main_admin_id():
     try:
@@ -88,6 +90,7 @@ def get_main_admin_id():
     except:
         pass
     return None
+
 
 def set_main_admin(user_id: int, username: str = ""):
     try:
@@ -110,6 +113,7 @@ def set_main_admin(user_id: int, username: str = ""):
     except Exception as e:
         print(f"❌ Ошибка установки главного админа: {e}")
         return None
+
 
 def init_db():
     # ========== ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ ==========
@@ -339,6 +343,21 @@ def init_db():
     )
     """)
     
+    # ========== ТАБЛИЦА ИГР (КАЗИНО) ==========
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS casino_games (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        game_type TEXT NOT NULL,
+        bet_amount INTEGER NOT NULL,
+        win_amount INTEGER DEFAULT 0,
+        is_win INTEGER DEFAULT 0,
+        result_data TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(user_id)
+    )
+    """)
+    
     conn.commit()
     print("✅ База данных инициализирована")
     
@@ -369,7 +388,42 @@ def init_db():
     
     fix_user_tasks_table()
 
-# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЗАДАНИЯМИ (С КАТЕГОРИЯМИ) ==========
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ИГРАМИ ==========
+def add_game_record(user_id: int, game_type: str, bet_amount: int, win_amount: int, is_win: int, result_data: str = None):
+    """Добавить запись об игре в БД"""
+    try:
+        cursor.execute("""
+            INSERT INTO casino_games (user_id, game_type, bet_amount, win_amount, is_win, result_data)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, game_type, bet_amount, win_amount, is_win, result_data))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        print(f"❌ Ошибка add_game_record: {e}")
+        return None
+
+
+def get_user_game_stats(user_id: int):
+    """Получить статистику игр пользователя"""
+    try:
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_games,
+                SUM(CASE WHEN is_win = 1 THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN is_win = 0 THEN 1 ELSE 0 END) as losses,
+                SUM(bet_amount) as total_bet,
+                SUM(win_amount) as total_win
+            FROM casino_games 
+            WHERE user_id = ?
+        """, (user_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else {"total_games": 0, "wins": 0, "losses": 0, "total_bet": 0, "total_win": 0}
+    except:
+        return {"total_games": 0, "wins": 0, "losses": 0, "total_bet": 0, "total_win": 0}
+
+
+# ========== ФУНКЦИИ ДЛЯ ЗАДАНИЙ (С КАТЕГОРИЯМИ) ==========
 def get_active_tasks():
     try:
         cursor.execute("SELECT * FROM tasks WHERE is_active = 1 ORDER BY id")
@@ -380,6 +434,7 @@ def get_active_tasks():
             return [dict(row) for row in cursor.fetchall()]
         except:
             return []
+
 
 def get_active_tasks_by_category(category: str = None):
     """Получить активные задания по категории"""
@@ -392,12 +447,14 @@ def get_active_tasks_by_category(category: str = None):
     except:
         return []
 
+
 def get_all_tasks_by_category():
     """Получить все задания сгруппированные по категориям"""
     result = {}
     for cat_key in TASK_CATEGORIES.keys():
         result[cat_key] = get_active_tasks_by_category(cat_key)
     return result
+
 
 def get_task(task_id: int):
     try:
@@ -406,6 +463,7 @@ def get_task(task_id: int):
         return dict(row) if row else None
     except:
         return None
+
 
 def add_task(title: str, description: str, reward: int, category: str = 'easy', task_type: str = "photo", task_data: str = None, max_completions: int = 1):
     try:
@@ -418,6 +476,7 @@ def add_task(title: str, description: str, reward: int, category: str = 'easy', 
     except Exception as e:
         print(f"❌ Ошибка добавления задания: {e}")
         return None
+
 
 def update_task(task_id: int, title: str = None, description: str = None, reward: int = None, max_completions: int = None, category: str = None):
     try:
@@ -452,6 +511,7 @@ def update_task(task_id: int, title: str = None, description: str = None, reward
         print(f"❌ Ошибка обновления задания: {e}")
         return False
 
+
 def remove_task(task_id: int):
     try:
         cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
@@ -461,6 +521,7 @@ def remove_task(task_id: int):
     except:
         return False
 
+
 def get_user_task_status(user_id: int, task_id: int):
     try:
         cursor.execute("SELECT status, completed_at FROM user_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC LIMIT 1", (user_id, task_id))
@@ -469,12 +530,14 @@ def get_user_task_status(user_id: int, task_id: int):
     except:
         return None
 
+
 def get_user_task_records(user_id: int, task_id: int):
     try:
         cursor.execute("SELECT * FROM user_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC", (user_id, task_id))
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
+
 
 def delete_user_task_record(record_id: int):
     try:
@@ -483,6 +546,7 @@ def delete_user_task_record(record_id: int):
         return True
     except:
         return False
+
 
 def submit_task(user_id: int, task_id: int, proof: str = None):
     try:
@@ -510,6 +574,7 @@ def submit_task(user_id: int, task_id: int, proof: str = None):
         print(f"❌ Ошибка submit_task: {e}")
         return False
 
+
 def approve_task(user_id: int, task_id: int, reward: int):
     try:
         cursor.execute("SELECT id FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1", (user_id, task_id))
@@ -526,6 +591,7 @@ def approve_task(user_id: int, task_id: int, reward: int):
         print(f"❌ Ошибка approve_task: {e}")
         return False
 
+
 def reject_task(user_id: int, task_id: int):
     try:
         cursor.execute("SELECT id FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1", (user_id, task_id))
@@ -539,6 +605,7 @@ def reject_task(user_id: int, task_id: int):
         return True
     except:
         return False
+
 
 def get_pending_tasks():
     try:
@@ -554,6 +621,7 @@ def get_pending_tasks():
     except:
         return []
 
+
 def get_user_completed_tasks(user_id: int):
     try:
         cursor.execute("""
@@ -567,6 +635,7 @@ def get_user_completed_tasks(user_id: int):
     except:
         return []
 
+
 def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
     try:
         cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
@@ -575,6 +644,7 @@ def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
     except:
         return False
 
+
 def get_user_completed_count(user_id: int, task_id: int) -> int:
     try:
         cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
@@ -582,6 +652,7 @@ def get_user_completed_count(user_id: int, task_id: int) -> int:
         return row["count"] if row else 0
     except:
         return 0
+
 
 def get_task_record_by_id(record_id: int):
     """Получить запись по ID"""
@@ -598,6 +669,7 @@ def get_task_record_by_id(record_id: int):
     except:
         return None
 
+
 def delete_task_record_by_id(record_id: int):
     """Удалить запись по ID"""
     try:
@@ -606,6 +678,7 @@ def delete_task_record_by_id(record_id: int):
         return True
     except:
         return False
+
 
 # ========== ФУНКЦИИ ДЛЯ ЗАЯВОК НА ОПЛАТУ ЗВЕЗДАМИ ==========
 def add_stars_payment_request_db(user_id: int, username: str, pack_amount: int, stars_amount: int, message_id: int = None):
@@ -621,6 +694,7 @@ def add_stars_payment_request_db(user_id: int, username: str, pack_amount: int, 
         print(f"❌ Ошибка add_stars_payment_request_db: {e}")
         return None
 
+
 def get_stars_payment_request_db(request_id: int):
     """Получить заявку из БД по ID"""
     try:
@@ -629,6 +703,7 @@ def get_stars_payment_request_db(request_id: int):
         return dict(row) if row else None
     except:
         return None
+
 
 def get_all_stars_payment_requests_db(status: str = None):
     """Получить все заявки из БД"""
@@ -641,6 +716,7 @@ def get_all_stars_payment_requests_db(status: str = None):
     except:
         return []
 
+
 def approve_stars_payment_db(request_id: int):
     """Одобрить заявку в БД"""
     try:
@@ -650,6 +726,7 @@ def approve_stars_payment_db(request_id: int):
     except:
         return False
 
+
 def reject_stars_payment_db(request_id: int):
     """Отклонить заявку в БД"""
     try:
@@ -658,6 +735,7 @@ def reject_stars_payment_db(request_id: int):
         return True
     except:
         return False
+
 
 # ========== ФУНКЦИИ ДЛЯ LOLZ ПЛАТЕЖЕЙ (СБП) ==========
 def add_lolz_payment(invoice_id: str, order_id: str, user_id: int, amount_rub: float, pack_amount: int):
@@ -673,6 +751,7 @@ def add_lolz_payment(invoice_id: str, order_id: str, user_id: int, amount_rub: f
         print(f"❌ Ошибка add_lolz_payment: {e}")
         return False
 
+
 def mark_lolz_payment_paid(invoice_id: str):
     """Отметить Lolz платеж как оплаченный"""
     try:
@@ -687,6 +766,7 @@ def mark_lolz_payment_paid(invoice_id: str):
         print(f"❌ Ошибка mark_lolz_payment_paid: {e}")
         return False
 
+
 def get_lolz_payment(invoice_id: str):
     """Получить Lolz платеж по invoice_id"""
     try:
@@ -695,6 +775,7 @@ def get_lolz_payment(invoice_id: str):
         return dict(row) if row else None
     except:
         return None
+
 
 def get_lolz_payment_by_order(order_id: str):
     """Получить Lolz платеж по order_id"""
@@ -705,6 +786,7 @@ def get_lolz_payment_by_order(order_id: str):
     except:
         return None
 
+
 def get_pending_lolz_payments():
     """Получить все ожидающие Lolz платежи"""
     try:
@@ -713,6 +795,7 @@ def get_pending_lolz_payments():
     except:
         return []
 
+
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========
 def get_mandatory_channels():
     try:
@@ -720,6 +803,7 @@ def get_mandatory_channels():
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
+
 
 def add_mandatory_channel(channel_id, channel_name, channel_link):
     try:
@@ -732,6 +816,7 @@ def add_mandatory_channel(channel_id, channel_name, channel_link):
     except:
         return False
 
+
 def remove_mandatory_channel(channel_id):
     try:
         cursor.execute("DELETE FROM mandatory_channels WHERE channel_id = ?", (channel_id,))
@@ -739,6 +824,7 @@ def remove_mandatory_channel(channel_id):
         return True
     except:
         return False
+
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С АДМИНАМИ ==========
 def is_admin(user_id: int) -> bool:
@@ -749,6 +835,7 @@ def is_admin(user_id: int) -> bool:
     except:
         return False
 
+
 def is_main_admin(user_id: int) -> bool:
     try:
         cursor.execute("SELECT is_main_admin FROM admins WHERE user_id = ?", (user_id,))
@@ -756,6 +843,7 @@ def is_main_admin(user_id: int) -> bool:
         return row and row["is_main_admin"] == 1
     except:
         return False
+
 
 def can_manage_admins(user_id: int) -> bool:
     try:
@@ -766,6 +854,7 @@ def can_manage_admins(user_id: int) -> bool:
         return row and row["can_add_admins"] == 1
     except:
         return False
+
 
 def get_all_admins():
     try:
@@ -778,6 +867,7 @@ def get_all_admins():
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
+
 
 def add_admin(admin_id: int, username: str, added_by: int, can_add: bool = False):
     try:
@@ -796,6 +886,7 @@ def add_admin(admin_id: int, username: str, added_by: int, can_add: bool = False
     except:
         return False
 
+
 def remove_admin(admin_id: int):
     try:
         cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (admin_id,))
@@ -804,6 +895,7 @@ def remove_admin(admin_id: int):
         return True
     except:
         return False
+
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С БОНУСАМИ ==========
 def has_received_subscribe_bonus(user_id: int) -> bool:
@@ -814,6 +906,7 @@ def has_received_subscribe_bonus(user_id: int) -> bool:
     except:
         return False
 
+
 def mark_subscribe_bonus_received(user_id: int):
     try:
         cursor.execute("UPDATE users SET subscribe_bonus_received = 1 WHERE user_id = ?", (user_id,))
@@ -821,6 +914,7 @@ def mark_subscribe_bonus_received(user_id: int):
         return True
     except:
         return False
+
 
 def update_last_bonus(user_id: int, timestamp: int):
     try:
@@ -830,6 +924,7 @@ def update_last_bonus(user_id: int, timestamp: int):
     except:
         return False
 
+
 def get_bonus_stats():
     try:
         cursor.execute("SELECT COUNT(*) as users_took_bonus FROM users WHERE last_bonus > 0")
@@ -837,6 +932,7 @@ def get_bonus_stats():
         return {"users_took_bonus": row["users_took_bonus"] if row else 0}
     except:
         return {"users_took_bonus": 0}
+
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ ==========
 def get_user(user_id: int):
@@ -847,6 +943,7 @@ def get_user(user_id: int):
     except:
         return None
 
+
 def update_user_balance(user_id: int, amount: int):
     try:
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
@@ -854,6 +951,7 @@ def update_user_balance(user_id: int, amount: int):
         return True
     except:
         return False
+
 
 def get_user_by_ref_code(ref_code: str):
     try:
@@ -863,6 +961,7 @@ def get_user_by_ref_code(ref_code: str):
     except:
         return None
 
+
 def get_referrals_count(user_id: int) -> int:
     try:
         cursor.execute("SELECT COUNT(*) as count FROM users WHERE referrer = ?", (user_id,))
@@ -870,6 +969,7 @@ def get_referrals_count(user_id: int) -> int:
         return row["count"] if row else 0
     except:
         return 0
+
 
 def get_top_referrers(limit: int = 10):
     try:
@@ -886,6 +986,7 @@ def get_top_referrers(limit: int = 10):
     except:
         return []
 
+
 def get_top_balances(limit: int = 20):
     try:
         cursor.execute("""
@@ -899,6 +1000,7 @@ def get_top_balances(limit: int = 20):
     except:
         return []
 
+
 def get_pending_referrer_bonus(user_id: int):
     try:
         cursor.execute("SELECT pending_referrer_bonus FROM users WHERE user_id = ?", (user_id,))
@@ -907,6 +1009,7 @@ def get_pending_referrer_bonus(user_id: int):
     except:
         return None
 
+
 def clear_pending_referrer_bonus(user_id: int):
     try:
         cursor.execute("UPDATE users SET pending_referrer_bonus = NULL WHERE user_id = ?", (user_id,))
@@ -914,6 +1017,7 @@ def clear_pending_referrer_bonus(user_id: int):
         return True
     except:
         return False
+
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПЛАТЕЖАМИ ==========
 def add_payment(invoice_id: str, user_id: int, amount: int, payment_method: str = "cryptobot"):
@@ -927,6 +1031,7 @@ def add_payment(invoice_id: str, user_id: int, amount: int, payment_method: str 
     except:
         return False
 
+
 def mark_payment_paid(invoice_id: str):
     try:
         cursor.execute("UPDATE payments SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
@@ -935,6 +1040,7 @@ def mark_payment_paid(invoice_id: str):
     except:
         return False
 
+
 def get_payment(invoice_id: str):
     try:
         cursor.execute("SELECT * FROM payments WHERE invoice_id = ?", (invoice_id,))
@@ -942,6 +1048,7 @@ def get_payment(invoice_id: str):
         return dict(row) if row else None
     except:
         return None
+
 
 def get_user_payments(user_id: int, limit: int = 10):
     try:
@@ -954,6 +1061,7 @@ def get_user_payments(user_id: int, limit: int = 10):
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
+
 
 def get_payments_stats():
     try:
@@ -969,6 +1077,7 @@ def get_payments_stats():
     except:
         return {"total_attempts": 0, "successful": 0, "pending": 0, "total_candies": 0}
 
+
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ВИДЕО ==========
 def get_all_videos():
     try:
@@ -976,6 +1085,7 @@ def get_all_videos():
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
+
 
 def get_video_count() -> int:
     try:
@@ -985,6 +1095,7 @@ def get_video_count() -> int:
     except:
         return 0
 
+
 def add_video(file_id: str):
     try:
         cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
@@ -993,12 +1104,14 @@ def add_video(file_id: str):
     except:
         return False
 
+
 def get_user_watched_videos(user_id: int):
     try:
         cursor.execute("SELECT video_id FROM user_videos WHERE user_id = ?", (user_id,))
         return [row["video_id"] for row in cursor.fetchall()]
     except:
         return []
+
 
 def mark_video_watched(user_id: int, video_id: int):
     try:
@@ -1010,6 +1123,7 @@ def mark_video_watched(user_id: int, video_id: int):
         return True
     except:
         return False
+
 
 def get_watched_stats():
     try:
@@ -1023,6 +1137,7 @@ def get_watched_stats():
     except:
         return {"unique_viewers": 0, "total_views": 0}
 
+
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРОМОКОДАМИ ==========
 def add_promo_code(code: str, reward: int, activations: int):
     try:
@@ -1035,6 +1150,7 @@ def add_promo_code(code: str, reward: int, activations: int):
     except:
         return False
 
+
 def get_promo_code(code: str):
     try:
         cursor.execute("SELECT * FROM promocodes WHERE code = ?", (code,))
@@ -1042,6 +1158,7 @@ def get_promo_code(code: str):
         return dict(row) if row else None
     except:
         return None
+
 
 def use_promo_code(code: str, user_id: int):
     try:
@@ -1052,6 +1169,7 @@ def use_promo_code(code: str, user_id: int):
     except:
         return False
 
+
 def check_promo_used(user_id: int, code: str) -> bool:
     try:
         cursor.execute(
@@ -1061,6 +1179,7 @@ def check_promo_used(user_id: int, code: str) -> bool:
         return cursor.fetchone() is not None
     except:
         return False
+
 
 def get_promo_stats():
     try:
@@ -1075,6 +1194,7 @@ def get_promo_stats():
     except:
         return {"total_codes": 0, "total_left": 0, "total_used": 0}
 
+
 # ========== ФУНКЦИИ ДЛЯ ПОЛУЧЕНИЯ ОБЩЕЙ СТАТИСТИКИ ==========
 def get_total_users() -> int:
     try:
@@ -1084,6 +1204,7 @@ def get_total_users() -> int:
     except:
         return 0
 
+
 def get_verified_users() -> int:
     try:
         cursor.execute("SELECT COUNT(*) as count FROM users WHERE is_verified = 1")
@@ -1091,6 +1212,7 @@ def get_verified_users() -> int:
         return row["count"] if row else 0
     except:
         return 0
+
 
 def get_users_with_balance() -> int:
     try:
@@ -1100,6 +1222,7 @@ def get_users_with_balance() -> int:
     except:
         return 0
 
+
 def get_total_balance() -> int:
     try:
         cursor.execute("SELECT SUM(balance) as total FROM users")
@@ -1107,6 +1230,7 @@ def get_total_balance() -> int:
         return row["total"] if row and row["total"] else 0
     except:
         return 0
+
 
 def get_max_balance() -> int:
     try:
@@ -1116,6 +1240,7 @@ def get_max_balance() -> int:
     except:
         return 0
 
+
 def get_avg_balance() -> float:
     try:
         cursor.execute("SELECT AVG(balance) as avg FROM users")
@@ -1123,6 +1248,7 @@ def get_avg_balance() -> float:
         return row["avg"] if row and row["avg"] else 0
     except:
         return 0
+
 
 def get_referral_stats():
     try:
@@ -1137,6 +1263,7 @@ def get_referral_stats():
     except:
         return {"total_refs": 0, "unique_referrers": 0}
 
+
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРИВАТКОЙ ==========
 def add_private_purchase(user_id: int, invoice_id: str, amount: float):
     try:
@@ -1148,6 +1275,7 @@ def add_private_purchase(user_id: int, invoice_id: str, amount: float):
         return True
     except:
         return False
+
 
 def mark_private_paid(invoice_id: str):
     try:
@@ -1161,6 +1289,7 @@ def mark_private_paid(invoice_id: str):
     except:
         return False
 
+
 def get_private_purchase(invoice_id: str):
     try:
         cursor.execute("SELECT * FROM private_purchases WHERE invoice_id = ?", (invoice_id,))
@@ -1169,6 +1298,7 @@ def get_private_purchase(invoice_id: str):
     except:
         return None
 
+
 def has_private_access(user_id: int) -> bool:
     try:
         cursor.execute("SELECT private_access FROM users WHERE user_id = ?", (user_id,))
@@ -1176,6 +1306,7 @@ def has_private_access(user_id: int) -> bool:
         return row and row["private_access"] == 1
     except:
         return False
+
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОДПИСКАМИ ==========
 def get_user_subscription(user_id: int):
@@ -1190,6 +1321,7 @@ def get_user_subscription(user_id: int):
     except:
         return None
 
+
 def get_user_subscriptions(user_id: int):
     try:
         cursor.execute("""
@@ -1201,6 +1333,7 @@ def get_user_subscriptions(user_id: int):
         return [dict(row) for row in cursor.fetchall()]
     except:
         return []
+
 
 def add_subscription(user_id: int, sub_type: str, days: int):
     try:
@@ -1214,6 +1347,7 @@ def add_subscription(user_id: int, sub_type: str, days: int):
         print(f"❌ Ошибка добавления подписки: {e}")
         return False
 
+
 def remove_subscription(user_id: int):
     try:
         cursor.execute("DELETE FROM user_subscriptions WHERE user_id = ?", (user_id,))
@@ -1221,6 +1355,7 @@ def remove_subscription(user_id: int):
         return True
     except:
         return False
+
 
 def get_all_active_subscriptions():
     try:
@@ -1234,6 +1369,7 @@ def get_all_active_subscriptions():
     except Exception as e:
         print(f"❌ Ошибка get_all_active_subscriptions: {e}")
         return []
+
 
 def check_and_give_daily_bonus(user_id: int):
     try:
@@ -1268,6 +1404,7 @@ def check_and_give_daily_bonus(user_id: int):
     except Exception as e:
         print(f"❌ Ошибка check_and_give_daily_bonus: {e}")
         return False
+
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С РЕЙТИНГОМ ВИДЕО ==========
 def rate_video(video_id: int, user_id: int, rating: int):
@@ -1320,6 +1457,7 @@ def rate_video(video_id: int, user_id: int, rating: int):
         traceback.print_exc()
         return None
 
+
 def get_video_rating(video_id: int):
     try:
         cursor.execute("SELECT likes, dislikes, rating FROM video_stats WHERE video_id = ?", (video_id,))
@@ -1328,6 +1466,7 @@ def get_video_rating(video_id: int):
     except:
         return {"likes": 0, "dislikes": 0, "rating": 0}
 
+
 def get_user_video_rating(video_id: int, user_id: int):
     try:
         cursor.execute("SELECT rating FROM video_ratings WHERE video_id = ? AND user_id = ?", (video_id, user_id))
@@ -1335,6 +1474,7 @@ def get_user_video_rating(video_id: int, user_id: int):
         return row["rating"] if row else 0
     except:
         return 0
+
 
 def get_videos_sorted_by_rating(user_id: int, limit: int = 1):
     try:
@@ -1375,6 +1515,7 @@ def get_videos_sorted_by_rating(user_id: int, limit: int = 1):
         print(f"❌ Ошибка get_videos_sorted_by_rating: {e}")
         return []
 
+
 def get_video_count_for_user(user_id: int):
     try:
         cursor.execute("SELECT COUNT(*) as count FROM videos WHERE id NOT IN (SELECT video_id FROM user_videos WHERE user_id = ?)", (user_id,))
@@ -1382,6 +1523,7 @@ def get_video_count_for_user(user_id: int):
         return row["count"] if row else 0
     except:
         return 0
+
 
 # ========== ЗАПУСК ИНИЦИАЛИЗАЦИИ ==========
 init_db()

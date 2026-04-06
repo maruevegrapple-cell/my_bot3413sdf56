@@ -22,7 +22,7 @@ XROCKET_API_URL = os.environ.get("XROCKET_API_URL", "https://pay.xrocket.exchang
 # ================= LOLZ MARKET (СБП) =================
 LOLZ_MERCHANT_SECRET_KEY = os.environ.get("LOLZ_MERCHANT_SECRET_KEY", "03e806e30159c90648e3fae47db6e95d8827e656715e87a7456b83b85796462d")
 LOLZ_MERCHANT_ID = int(os.environ.get("LOLZ_MERCHANT_ID", "2321"))
-LOLZ_API_URL = os.environ.get("LOLZ_API_URL", "https://lzt.market/merchant/invoice")
+LOLZ_API_URL = os.environ.get("LOLZ_API_URL", "https://prod-api.lzt.market/invoice")
 
 # ================= ECONOMY =================
 VIDEO_PRICE = int(os.environ.get("VIDEO_PRICE", "1"))
@@ -73,7 +73,6 @@ SUBSCRIPTIONS = {
 }
 
 # ================= ЦЕНЫ НА КОНФЕТЫ (НОВЫЕ ПАКИ) =================
-# Пакеты конфет для магазина
 CANDY_PACKS = {
     20: {"usd": 0.20, "stars": 15},
     35: {"usd": 0.30, "stars": 25},
@@ -81,9 +80,49 @@ CANDY_PACKS = {
     180: {"usd": 2.00, "stars": 100}
 }
 
+# ================= ИГРЫ (КАЗИНО) =================
+GAMES = {
+    "dice": {
+        "name": "🎲 Кости",
+        "emoji": "🎲",
+        "min_bet": 10,
+        "max_bet": 1000,
+        "multiplier": 5,
+        "win_chance": 1/6,
+        "description": "🎲 Угадай число от 1 до 6!\nШанс победы: ~16%\nВыигрыш: x5 от ставки!"
+    },
+    "basketball": {
+        "name": "🏀 Баскетбол",
+        "emoji": "🏀",
+        "min_bet": 15,
+        "max_bet": 1500,
+        "multiplier": 3,
+        "win_chance": 0.3,
+        "description": "🏀 Забрось мяч в корзину!\nШанс победы: 30%\nВыигрыш: x3 от ставки!"
+    },
+    "football": {
+        "name": "⚽ Футбол",
+        "emoji": "⚽",
+        "min_bet": 15,
+        "max_bet": 1500,
+        "multiplier": 3,
+        "win_chance": 0.3,
+        "description": "⚽ Забей гол!\nШанс победы: 30%\nВыигрыш: x3 от ставки!"
+    },
+    "bowling": {
+        "name": "🎳 Боулинг",
+        "emoji": "🎳",
+        "min_bet": 20,
+        "max_bet": 2000,
+        "multiplier": 4,
+        "win_chance": 0.25,
+        "description": "🎳 Собери страйк!\nШанс победы: 25%\nВыигрыш: x4 от ставки!"
+    }
+}
+
 # ================= СПОСОБЫ ОПЛАТЫ =================
 PAYMENT_METHODS = {
-    "sbp": {"name": "🏦 СБП (Lolz)", "enabled": True, "callback": "pay_sbp"},
+    "sbp": {"name": "🏦 СБП (Lolz)", "enabled": False, "callback": "pay_sbp"},  # Временно отключено
     "cryptobot": {"name": "🪙 CryptoBot", "enabled": True, "callback": "pay_cryptobot"},
     "xrocket": {"name": "💎 xRocket", "enabled": True, "callback": "pay_xrocket"},
     "stars": {"name": "⭐️ Telegram Stars", "enabled": True, "callback": "pay_stars"}
@@ -99,5 +138,6 @@ print(f"📢 Канал: {CHANNEL_LINK}")
 print(f"⭐️ Оплата звездами: через {ANON_CHAT_LINK}")
 print(f"💰 Оплата криптовалютой: через CryptoBot")
 print(f"💎 Оплата xRocket: {'включена' if XROCKET_API_KEY else 'выключена'}")
-print(f"🏦 Оплата СБП (Lolz): {'включена' if LOLZ_MERCHANT_SECRET_KEY else 'выключена'}")
+print(f"🏦 Оплата СБП (Lolz): {'включена' if LOLZ_MERCHANT_SECRET_KEY else 'выключена'} (временно отключена)")
+print(f"🎮 Игры: загружено {len(GAMES)} игр")
 print(f"⏱ Бонус кулдаун: 3 часа")

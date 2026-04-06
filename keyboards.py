@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD, CANDY_PACKS
+from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD, CANDY_PACKS, GAMES
 
 # ================= ФЕЙК МЕНЮ =================
 fake_menu = InlineKeyboardMarkup(inline_keyboard=[
@@ -22,15 +22,18 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="👤 Профиль", callback_data="profile")
     ],
     [
-        InlineKeyboardButton(text="🎁 Бонус", callback_data="bonus"),
-        InlineKeyboardButton(text="🎟 Промокод", callback_data="promo")
+        InlineKeyboardButton(text="🎮 Игры", callback_data="games_menu"),
+        InlineKeyboardButton(text="🎁 Бонус", callback_data="bonus")
     ],
     [
-        InlineKeyboardButton(text="📋 Задания", callback_data="tasks"),
-        InlineKeyboardButton(text="🎬 Предложка", callback_data="suggestion")
+        InlineKeyboardButton(text="🎟 Промокод", callback_data="promo"),
+        InlineKeyboardButton(text="📋 Задания", callback_data="tasks")
     ],
     [
-        InlineKeyboardButton(text="🆘 Поддержка", callback_data="support"),
+        InlineKeyboardButton(text="🎬 Предложка", callback_data="suggestion"),
+        InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")
+    ],
+    [
         InlineKeyboardButton(text="📢 Наш канал", url=CHANNEL_LINK)
     ]
 ])
@@ -43,7 +46,34 @@ video_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
 ])
 
-# ================= МЕНЮ МАГАЗИНА (НОВОЕ) =================
+# ================= МЕНЮ ИГР =================
+def get_games_menu():
+    """Меню выбора игры"""
+    keyboard = []
+    for game_id, game in GAMES.items():
+        keyboard.append([InlineKeyboardButton(
+            text=f"{game['emoji']} {game['name']} | x{game['multiplier']}",
+            callback_data=f"game_select_{game_id}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="🏠 В меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_game_bet_menu(game_id: str, game_name: str, min_bet: int, max_bet: int):
+    """Меню выбора ставки для игры"""
+    keyboard = [
+        [InlineKeyboardButton(text="🔟 10 🍬", callback_data=f"game_bet_{game_id}_10"),
+         InlineKeyboardButton(text="2️⃣5️⃣ 25 🍬", callback_data=f"game_bet_{game_id}_25"),
+         InlineKeyboardButton(text="5️⃣0️⃣ 50 🍬", callback_data=f"game_bet_{game_id}_50")],
+        [InlineKeyboardButton(text="🔟0️⃣ 100 🍬", callback_data=f"game_bet_{game_id}_100"),
+         InlineKeyboardButton(text="2️⃣5️⃣0️⃣ 250 🍬", callback_data=f"game_bet_{game_id}_250"),
+         InlineKeyboardButton(text="5️⃣0️⃣0️⃣ 500 🍬", callback_data=f"game_bet_{game_id}_500")],
+        [InlineKeyboardButton(text="💰 Своя сумма", callback_data=f"game_custom_bet_{game_id}")],
+        [InlineKeyboardButton(text="⬅️ Назад к играм", callback_data="games_menu")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+# ================= МЕНЮ МАГАЗИНА =================
 def get_shop_menu(balance: int = 0):
     """Главное меню магазина с паками конфет, подписками и приваткой"""
     keyboard = [
@@ -67,7 +97,7 @@ def get_shop_menu(balance: int = 0):
 def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: int):
     """Меню выбора способа оплаты после выбора пака"""
     keyboard = [
-        [InlineKeyboardButton(text="🏦 СБП (Lolz)", callback_data=f"pay_method_sbp_{pack_amount}_{usd_amount}")],
+        # [InlineKeyboardButton(text="🏦 СБП (Lolz)", callback_data=f"pay_method_sbp_{pack_amount}_{usd_amount}")],  # Временно отключено
         [InlineKeyboardButton(text="🪙 CryptoBot", callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")],
         [InlineKeyboardButton(text="💎 xRocket", callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")],
         [InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")],
