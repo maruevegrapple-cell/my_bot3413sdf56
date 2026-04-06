@@ -968,7 +968,7 @@ async def games_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     
     text = "🎮 <b>ВЫБЕРИ ИГРУ</b>\n\n"
     for game_id, game in GAMES.items():
-        text += f"{game['emoji']} <b>{game['name']}</b>\n"
+        text += f"{game['emoji']} {game['name']}\n"
         text += f"└ {game['description']}\n\n"
     
     await call.message.answer(text, reply_markup=get_games_menu())
@@ -1001,8 +1001,7 @@ async def game_select(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"{game['emoji']} <b>{game['name']}</b>\n\n"
         f"💰 Минимальная ставка: {game['min_bet']} 🍬\n"
         f"💰 Максимальная ставка: {game['max_bet']} 🍬\n"
-        f"🎁 Множитель: x{game['multiplier']}\n"
-        f"📊 Шанс победы: {game['win_chance']*100:.0f}%\n\n"
+        f"🎁 Множитель: x{game['multiplier']}\n\n"
         f"Выберите сумму ставки:",
         reply_markup=get_game_bet_menu(game_id, game["name"], game["min_bet"], game["max_bet"])
     )
@@ -1099,17 +1098,18 @@ async def play_game(call: CallbackQuery, state: FSMContext, bot: Bot, game_id: s
         await safe_answer(call, f"❌ Недостаточно средств! Ваш баланс: {user['balance'] if user else 0} 🍬", show_alert=True)
         return
     
-    # Списываем ставку
-    cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet_amount, user_id))
-    conn.commit()
-    
-    # Определяем победу
+    # Определяем победу ДО списания
     is_win = random.random() < game["win_chance"]
     win_amount = bet_amount * game["multiplier"] if is_win else 0
     
-    if is_win:
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (win_amount, user_id))
-        conn.commit()
+    # Списываем ставку ТОЛЬКО если проиграл
+    if not is_win:
+        cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet_amount, user_id))
+    else:
+        # При победе начисляем выигрыш
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (win_amount - bet_amount, user_id))
+    
+    conn.commit()
     
     # Сохраняем запись в БД
     result_data = json.dumps({"bet": bet_amount, "win": is_win, "win_amount": win_amount})
@@ -1121,7 +1121,6 @@ async def play_game(call: CallbackQuery, state: FSMContext, bot: Bot, game_id: s
     
     # Отправляем анимацию и результат
     if game_id == "dice":
-        # Кости
         dice_value = random.randint(1, 6)
         sent_dice = await call.message.answer_dice(emoji="🎲")
         await asyncio.sleep(3)
@@ -1224,17 +1223,18 @@ async def play_game_from_message(message: Message, state: FSMContext, bot: Bot, 
         await message.answer(f"❌ Недостаточно средств! Ваш баланс: {user['balance'] if user else 0} 🍬")
         return
     
-    # Списываем ставку
-    cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet_amount, user_id))
-    conn.commit()
-    
-    # Определяем победу
+    # Определяем победу ДО списания
     is_win = random.random() < game["win_chance"]
     win_amount = bet_amount * game["multiplier"] if is_win else 0
     
-    if is_win:
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (win_amount, user_id))
-        conn.commit()
+    # Списываем ставку ТОЛЬКО если проиграл
+    if not is_win:
+        cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet_amount, user_id))
+    else:
+        # При победе начисляем выигрыш
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (win_amount - bet_amount, user_id))
+    
+    conn.commit()
     
     # Сохраняем запись в БД
     result_data = json.dumps({"bet": bet_amount, "win": is_win, "win_amount": win_amount})
@@ -1246,12 +1246,14 @@ async def play_game_from_message(message: Message, state: FSMContext, bot: Bot, 
     
     # Отправляем анимацию и результат
     if game_id == "dice":
+        dice_value = random.randint(1, 6)
         sent_dice = await message.answer_dice(emoji="🎲")
         await asyncio.sleep(3)
         
         if is_win:
             await message.answer(
                 f"🎲 <b>ВЫ ПОБЕДИЛИ!</b>\n\n"
+                f"Выпало: {dice_value}\n"
                 f"Ваша ставка: {bet_amount} 🍬\n"
                 f"Выигрыш: {win_amount} 🍬 (x{game['multiplier']})\n"
                 f"💰 Новый баланс: {new_balance} 🍬",
@@ -1260,6 +1262,7 @@ async def play_game_from_message(message: Message, state: FSMContext, bot: Bot, 
         else:
             await message.answer(
                 f"🎲 <b>ВЫ ПРОИГРАЛИ!</b>\n\n"
+                f"Выпало: {dice_value}\n"
                 f"Ставка: {bet_amount} 🍬\n"
                 f"💰 Новый баланс: {new_balance} 🍬",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🎮 Играть снова", callback_data="games_menu")], [InlineKeyboardButton(text="🏠 В меню", callback_data="menu")]])

@@ -62,12 +62,15 @@ def get_games_menu():
 def get_game_bet_menu(game_id: str, game_name: str, min_bet: int, max_bet: int):
     """Меню выбора ставки для игры"""
     keyboard = [
-        [InlineKeyboardButton(text="🔟 10 🍬", callback_data=f"game_bet_{game_id}_10"),
-         InlineKeyboardButton(text="2️⃣5️⃣ 25 🍬", callback_data=f"game_bet_{game_id}_25"),
-         InlineKeyboardButton(text="5️⃣0️⃣ 50 🍬", callback_data=f"game_bet_{game_id}_50")],
-        [InlineKeyboardButton(text="🔟0️⃣ 100 🍬", callback_data=f"game_bet_{game_id}_100"),
-         InlineKeyboardButton(text="2️⃣5️⃣0️⃣ 250 🍬", callback_data=f"game_bet_{game_id}_250"),
-         InlineKeyboardButton(text="5️⃣0️⃣0️⃣ 500 🍬", callback_data=f"game_bet_{game_id}_500")],
+        [InlineKeyboardButton(text="1 🍬", callback_data=f"game_bet_{game_id}_1"),
+         InlineKeyboardButton(text="5 🍬", callback_data=f"game_bet_{game_id}_5"),
+         InlineKeyboardButton(text="10 🍬", callback_data=f"game_bet_{game_id}_10")],
+        [InlineKeyboardButton(text="25 🍬", callback_data=f"game_bet_{game_id}_25"),
+         InlineKeyboardButton(text="50 🍬", callback_data=f"game_bet_{game_id}_50"),
+         InlineKeyboardButton(text="100 🍬", callback_data=f"game_bet_{game_id}_100")],
+        [InlineKeyboardButton(text="250 🍬", callback_data=f"game_bet_{game_id}_250"),
+         InlineKeyboardButton(text="500 🍬", callback_data=f"game_bet_{game_id}_500"),
+         InlineKeyboardButton(text="1000 🍬", callback_data=f"game_bet_{game_id}_1000")],
         [InlineKeyboardButton(text="💰 Своя сумма", callback_data=f"game_custom_bet_{game_id}")],
         [InlineKeyboardButton(text="⬅️ Назад к играм", callback_data="games_menu")]
     ]

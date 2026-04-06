@@ -72,7 +72,7 @@ SUBSCRIPTIONS = {
     }
 }
 
-# ================= ЦЕНЫ НА КОНФЕТЫ (НОВЫЕ ПАКИ) =================
+# ================= ЦЕНЫ НА КОНФЕТЫ =================
 CANDY_PACKS = {
     20: {"usd": 0.20, "stars": 15},
     35: {"usd": 0.30, "stars": 25},
@@ -85,44 +85,44 @@ GAMES = {
     "dice": {
         "name": "🎲 Кости",
         "emoji": "🎲",
-        "min_bet": 10,
+        "min_bet": 1,
         "max_bet": 1000,
-        "multiplier": 5,
+        "multiplier": 2,
         "win_chance": 1/6,
-        "description": "🎲 Угадай число от 1 до 6!\nШанс победы: ~16%\nВыигрыш: x5 от ставки!"
+        "description": "Угадай число от 1 до 6!\nВыигрыш: x2 от ставки!"
     },
     "basketball": {
         "name": "🏀 Баскетбол",
         "emoji": "🏀",
-        "min_bet": 15,
-        "max_bet": 1500,
-        "multiplier": 3,
+        "min_bet": 1,
+        "max_bet": 1000,
+        "multiplier": 2,
         "win_chance": 0.3,
-        "description": "🏀 Забрось мяч в корзину!\nШанс победы: 30%\nВыигрыш: x3 от ставки!"
+        "description": "Забрось мяч в корзину!\nВыигрыш: x2 от ставки!"
     },
     "football": {
-        "name": "⚽ Футбол",
-        "emoji": "⚽",
-        "min_bet": 15,
-        "max_bet": 1500,
-        "multiplier": 3,
+        "name": "⚽️ Футбол",
+        "emoji": "⚽️",
+        "min_bet": 1,
+        "max_bet": 1000,
+        "multiplier": 2,
         "win_chance": 0.3,
-        "description": "⚽ Забей гол!\nШанс победы: 30%\nВыигрыш: x3 от ставки!"
+        "description": "Забей гол!\nВыигрыш: x2 от ставки!"
     },
     "bowling": {
         "name": "🎳 Боулинг",
         "emoji": "🎳",
-        "min_bet": 20,
-        "max_bet": 2000,
-        "multiplier": 4,
+        "min_bet": 1,
+        "max_bet": 1000,
+        "multiplier": 2,
         "win_chance": 0.25,
-        "description": "🎳 Собери страйк!\nШанс победы: 25%\nВыигрыш: x4 от ставки!"
+        "description": "Собери страйк!\nВыигрыш: x2 от ставки!"
     }
 }
 
 # ================= СПОСОБЫ ОПЛАТЫ =================
 PAYMENT_METHODS = {
-    "sbp": {"name": "🏦 СБП (Lolz)", "enabled": False, "callback": "pay_sbp"},  # Временно отключено
+    "sbp": {"name": "🏦 СБП (Lolz)", "enabled": False, "callback": "pay_sbp"},
     "cryptobot": {"name": "🪙 CryptoBot", "enabled": True, "callback": "pay_cryptobot"},
     "xrocket": {"name": "💎 xRocket", "enabled": True, "callback": "pay_xrocket"},
     "stars": {"name": "⭐️ Telegram Stars", "enabled": True, "callback": "pay_stars"}
