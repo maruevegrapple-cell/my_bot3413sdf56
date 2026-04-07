@@ -326,9 +326,9 @@ def get_move_category_menu(task_id: int):
 
 # ================= КЛАВИАТУРА ВЫБОРА КАТЕГОРИИ ПРИ СОЗДАНИИ ЗАДАНИЯ =================
 task_category_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="task_category_easy")],
-    [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="task_category_medium")],
-    [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="task_category_hard")]
+    [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="admin_task_category_easy")],
+    [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="admin_task_category_medium")],
+    [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="admin_task_category_hard")]
 ])
 
 
