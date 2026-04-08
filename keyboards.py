@@ -1,5 +1,6 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD, CANDY_PACKS, GAMES
+from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD, CANDY_PACKS
+from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL, DAILY_EXP_LIMIT, PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD
 
 # ================= ФЕЙК МЕНЮ =================
 fake_menu = InlineKeyboardMarkup(inline_keyboard=[
@@ -22,7 +23,7 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="👤 Профиль", callback_data="profile")
     ],
     [
-        InlineKeyboardButton(text="🎮 Игры", callback_data="games_menu"),
+        InlineKeyboardButton(text="🎖 Боевой пропуск", callback_data="battlepass_menu"),
         InlineKeyboardButton(text="🎁 Бонус", callback_data="bonus")
     ],
     [
@@ -53,35 +54,100 @@ video_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
 ])
 
-# ================= МЕНЮ ИГР =================
-def get_games_menu():
-    """Меню выбора игры"""
+# ================= МЕНЮ БОЕВОГО ПРОПУСКА =================
+def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, premium: bool, claimed_rewards: list, next_hourly_seconds: int = 0):
+    from locales import get_text
+    
     keyboard = []
-    for game_id, game in GAMES.items():
-        keyboard.append([InlineKeyboardButton(
-            text=f"{game['emoji']} {game['name']} | x{game['multiplier']}",
-            callback_data=f"game_select_{game_id}"
-        )])
+    
+    # Кнопка ежечасного бонуса
+    if next_hourly_seconds == 0:
+        keyboard.append([InlineKeyboardButton(text="⏰ Забрать 5 XP", callback_data="bp_hourly")])
+    else:
+        minutes = next_hourly_seconds // 60
+        seconds = next_hourly_seconds % 60
+        keyboard.append([InlineKeyboardButton(text=f"⏰ 5 XP (через {minutes}:{seconds:02d})", callback_data="bp_hourly_disabled")])
+    
+    # Кнопки для каждого уровня (1-20)
+    row = []
+    for lvl in range(1, 21):
+        can_claim = level >= lvl
+        is_claimed = f"level_{lvl}" in claimed_rewards
+        is_premium_claimed = f"premium_{lvl}" in claimed_rewards if premium else False
+        
+        if can_claim and not is_claimed:
+            emoji = "🎁"
+        elif is_claimed:
+            emoji = "✅"
+        else:
+            emoji = "🔒"
+        
+        row.append(InlineKeyboardButton(text=f"{emoji} {lvl}", callback_data=f"bp_claim_{lvl}"))
+        
+        if len(row) == 5:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    # Кнопка покупки премиум пропуска (если ещё не куплен)
+    if not premium:
+        keyboard.append([InlineKeyboardButton(text="💎 Купить премиум пропуск", callback_data="bp_buy_premium")])
+    
     keyboard.append([InlineKeyboardButton(text="🏠 В меню", callback_data="menu")])
+    
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_game_bet_menu(game_id: str, game_name: str, min_bet: int, max_bet: int):
-    """Меню выбора ставки для игры"""
+def get_battlepass_info_text(user_id: int, level: int, exp: int, daily_exp: int, premium: bool, claimed_rewards: list, next_hourly_seconds: int = 0):
+    from locales import get_text
+    
+    next_level_exp = BATTLEPASS_LEVELS.get(level + 1, {}).get("exp", BATTLEPASS_LEVELS[level]["exp"])
+    exp_to_next = next_level_exp - exp
+    
+    # Подсчёт доступных наград
+    available_rewards = 0
+    available_premium = 0
+    for lvl in range(1, level + 1):
+        if f"level_{lvl}" not in claimed_rewards:
+            available_rewards += BATTLEPASS_LEVELS[lvl]["reward"]
+        if premium and f"premium_{lvl}" not in claimed_rewards:
+            available_premium += BATTLEPASS_LEVELS[lvl]["premium_reward"]
+    
+    # Время до следующего бонуса
+    hourly_text = ""
+    if next_hourly_seconds > 0:
+        minutes = next_hourly_seconds // 60
+        seconds = next_hourly_seconds % 60
+        hourly_text = f"\n⏰ Следующий бонус: {minutes}:{seconds:02d}"
+    
+    text = f"🎖 <b>{get_text(user_id, 'battlepass_title')}</b>\n\n"
+    text += f"📊 {get_text(user_id, 'battlepass_level')}: {level}/{MAX_LEVEL}\n"
+    text += f"⭐️ {get_text(user_id, 'battlepass_exp')}: {exp}/{next_level_exp}\n"
+    text += f"📈 {get_text(user_id, 'battlepass_next')}: {exp_to_next} XP\n"
+    text += f"📅 {get_text(user_id, 'battlepass_daily')}: {daily_exp}/{DAILY_EXP_LIMIT} XP{hourly_text}\n\n"
+    
+    if premium:
+        text += f"💎 {get_text(user_id, 'battlepass_premium_active')}\n"
+        text += f"🎁 {get_text(user_id, 'battlepass_available')}: {available_rewards + available_premium} 🍬\n"
+    else:
+        text += f"🔓 {get_text(user_id, 'battlepass_premium_buy')}\n"
+        text += f"🎁 {get_text(user_id, 'battlepass_available')}: {available_rewards} 🍬\n"
+    
+    return text
+
+
+def get_battlepass_premium_menu(user_id: int):
+    """Меню выбора способа оплаты премиум пропуска"""
+    from locales import get_text
+    
     keyboard = [
-        [InlineKeyboardButton(text="1 🍬", callback_data=f"game_bet_{game_id}_1"),
-         InlineKeyboardButton(text="5 🍬", callback_data=f"game_bet_{game_id}_5"),
-         InlineKeyboardButton(text="10 🍬", callback_data=f"game_bet_{game_id}_10")],
-        [InlineKeyboardButton(text="25 🍬", callback_data=f"game_bet_{game_id}_25"),
-         InlineKeyboardButton(text="50 🍬", callback_data=f"game_bet_{game_id}_50"),
-         InlineKeyboardButton(text="100 🍬", callback_data=f"game_bet_{game_id}_100")],
-        [InlineKeyboardButton(text="250 🍬", callback_data=f"game_bet_{game_id}_250"),
-         InlineKeyboardButton(text="500 🍬", callback_data=f"game_bet_{game_id}_500"),
-         InlineKeyboardButton(text="1000 🍬", callback_data=f"game_bet_{game_id}_1000")],
-        [InlineKeyboardButton(text="💰 Своя сумма", callback_data=f"game_custom_bet_{game_id}")],
-        [InlineKeyboardButton(text="⬅️ Назад к играм", callback_data="games_menu")]
+        [InlineKeyboardButton(text="⭐️ Оплатить звездами (400 ⭐️)", callback_data="bp_pay_stars")],
+        [InlineKeyboardButton(text="💰 Оплатить криптовалютой ($5)", callback_data="bp_pay_crypto")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="battlepass_menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
 
 # ================= МЕНЮ МАГАЗИНА =================
 def get_shop_menu(balance: int = 0):
@@ -117,6 +183,15 @@ def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: 
     keyboard.append([InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")])
     keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")])
     
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_stars_payment_menu(pack_amount: int, stars_amount: int, user_id: int):
+    """Меню для оплаты звездами"""
+    keyboard = [
+        [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}")]
+    ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -159,15 +234,6 @@ def get_invoice_payment_menu(pay_url: str, invoice_id: str, method: str, pack_am
         [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} {asset}", url=pay_url)],
         [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{method}_{invoice_id}_{pack_amount}")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_stars_payment_menu(pack_amount: int, stars_amount: int):
-    """Меню для оплаты звездами"""
-    keyboard = [
-        [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 

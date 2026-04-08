@@ -34,7 +34,6 @@ from config import (
     SUBSCRIPTIONS,
     CANDY_PACKS,
     SPAM_COOLDOWN,
-    GAMES,
     LOLZ_MERCHANT_SECRET_KEY,
     LOLZ_MERCHANT_ID
 )
@@ -61,8 +60,9 @@ from db import (
     rate_video, get_video_rating, get_user_video_rating, get_videos_sorted_by_rating, get_video_count_for_user,
     TASK_CATEGORIES, get_active_tasks_by_category,
     add_lolz_payment, mark_lolz_payment_paid, get_lolz_payment,
-    add_game_record, get_user_game_stats,
-    get_user_language_db, set_user_language_db
+    get_user_language_db, set_user_language_db,
+    get_battlepass, update_battlepass, create_battlepass, add_battlepass_exp_db,
+    claim_hourly_exp_db, claim_battlepass_reward_db, activate_premium_battlepass_db
 )
 from keyboards import (
     fake_menu, main_menu, video_menu, get_admin_menu, 
@@ -75,8 +75,8 @@ from keyboards import (
     task_category_keyboard,
     get_shop_menu, get_payment_methods_menu, get_crypto_currency_menu,
     get_invoice_payment_menu, get_stars_payment_menu, get_stars_approve_menu,
-    get_games_menu, get_game_bet_menu,
-    language_keyboard
+    language_keyboard,
+    get_battlepass_menu, get_battlepass_info_text, get_battlepass_premium_menu
 )
 from payments import (
     create_invoice, 
@@ -93,6 +93,7 @@ from payments import (
     reject_stars_payment
 )
 from locales import get_text, set_user_language, get_user_language
+from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL, PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD
 
 # Импорт Lolz платежей
 try:
@@ -188,11 +189,6 @@ class AdminTaskStates(StatesGroup):
 class AdminRequestStates(StatesGroup):
     waiting_for_rework_text = State()
     waiting_for_rework_confirm = State()
-
-class GameStates(StatesGroup):
-    waiting_for_game_choice = State()
-    waiting_for_bet_amount = State()
-    waiting_for_custom_bet = State()
 
 captcha_data = {}
 captcha_attempts = {}
@@ -980,9 +976,9 @@ async def change_language(call: CallbackQuery, state: FSMContext, bot: Bot):
         await call.message.edit_text(get_text(user_id, "welcome"), reply_markup=main_menu)
 
 
-# ================= ИГРЫ (КАЗИНО) =================
-@router.callback_query(F.data == "games_menu")
-async def games_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
+# ================= БОЕВОЙ ПРОПУСК =================
+@router.callback_query(F.data == "battlepass_menu")
+async def battlepass_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     if await check_spam(user_id):
         await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
@@ -990,358 +986,250 @@ async def games_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not await check_access(bot, user_id, state, call=call):
         return
     
-    await safe_answer(call)
-    await state.set_state(GameStates.waiting_for_game_choice)
+    bp = get_battlepass(user_id)
+    if not bp:
+        if create_battlepass(user_id):
+            bp = get_battlepass(user_id)
+        else:
+            await call.message.answer("❌ Ошибка загрузки пропуска")
+            return
     
-    text = get_text(user_id, "choose_game") + "\n\n"
-    for game_id, game in GAMES.items():
-        text += f"{game['emoji']} {game['name']}\n"
-        text += f"└ {game['description']}\n\n"
+    import json
+    claimed = json.loads(bp["claimed_rewards"])
     
-    await call.message.answer(text, reply_markup=get_games_menu())
-
-
-@router.callback_query(F.data.startswith("game_select_"))
-async def game_select(call: CallbackQuery, state: FSMContext, bot: Bot):
-    user_id = call.from_user.id
-    if await check_spam(user_id):
-        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
-        return
-    if not await check_access(bot, user_id, state, call=call):
-        return
+    # Получаем время до следующего ежечасного бонуса
+    next_hourly_seconds = 0
+    if bp.get("last_hourly_claim"):
+        last_time = datetime.fromisoformat(bp["last_hourly_claim"])
+        elapsed = (datetime.now() - last_time).total_seconds()
+        if elapsed < 3600:
+            next_hourly_seconds = int(3600 - elapsed)
     
-    game_id = call.data.replace("game_select_", "")
-    game = GAMES.get(game_id)
-    
-    if not game:
-        await safe_answer(call, get_text(user_id, "game_not_found"), show_alert=True)
-        return
-    
-    await state.update_data(selected_game=game_id, selected_game_name=game["name"], 
-                           selected_game_min_bet=game["min_bet"], selected_game_max_bet=game["max_bet"],
-                           selected_game_multiplier=game["multiplier"], selected_game_emoji=game["emoji"])
-    
-    await safe_answer(call)
-    await state.set_state(GameStates.waiting_for_bet_amount)
+    text = get_battlepass_info_text(user_id, bp["level"], bp["exp"], bp["daily_exp"], bp.get("premium", 0), claimed, next_hourly_seconds)
     
     await call.message.answer(
-        f"{game['emoji']} <b>{game['name']}</b>\n\n"
-        f"{get_text(user_id, 'min_bet').format(game['min_bet'])}\n"
-        f"{get_text(user_id, 'max_bet').format(game['max_bet'])}\n"
-        f"{get_text(user_id, 'multiplier').format(game['multiplier'])}\n\n"
-        f"{get_text(user_id, 'choose_bet')}",
-        reply_markup=get_game_bet_menu(game_id, game["name"], game["min_bet"], game["max_bet"])
+        text,
+        reply_markup=get_battlepass_menu(user_id, bp["level"], bp["exp"], bp["daily_exp"], bp.get("premium", 0), claimed, next_hourly_seconds)
     )
 
 
-@router.callback_query(F.data.startswith("game_bet_"))
-async def game_bet(call: CallbackQuery, state: FSMContext, bot: Bot):
+@router.callback_query(F.data.startswith("bp_claim_"))
+async def battlepass_claim(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
+    level = int(call.data.replace("bp_claim_", ""))
+    
     if await check_spam(user_id):
         await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
         return
     if not await check_access(bot, user_id, state, call=call):
         return
     
-    parts = call.data.split("_")
-    game_id = parts[2]
-    bet_amount = int(parts[3])
+    # Сначала пробуем забрать обычную награду
+    result = claim_battlepass_reward_db(user_id, level, is_premium=False)
     
-    data = await state.get_data()
-    min_bet = data.get("selected_game_min_bet", GAMES[game_id]["min_bet"])
-    max_bet = data.get("selected_game_max_bet", GAMES[game_id]["max_bet"])
+    if not result:
+        # Если обычная уже забрана, пробуем премиум
+        result = claim_battlepass_reward_db(user_id, level, is_premium=True)
     
-    if bet_amount < min_bet or bet_amount > max_bet:
-        await safe_answer(call, f"❌ Ставка должна быть от {min_bet} до {max_bet} 🍬", show_alert=True)
-        return
-    
-    await state.update_data(bet_amount=bet_amount)
-    await play_game(call, state, bot, game_id, bet_amount)
+    if result:
+        await safe_answer(call, f"✅ +{result['reward']} 🍬 за {result['level']} уровень!", show_alert=True)
+        
+        # Добавляем опыт за получение награды (+5 XP)
+        add_battlepass_exp_db(user_id, 5)
+        
+        # Обновляем меню
+        bp = get_battlepass(user_id)
+        import json
+        claimed = json.loads(bp["claimed_rewards"])
+        
+        next_hourly_seconds = 0
+        if bp.get("last_hourly_claim"):
+            last_time = datetime.fromisoformat(bp["last_hourly_claim"])
+            elapsed = (datetime.now() - last_time).total_seconds()
+            if elapsed < 3600:
+                next_hourly_seconds = int(3600 - elapsed)
+        
+        await call.message.edit_text(
+            get_battlepass_info_text(user_id, bp["level"], bp["exp"], bp["daily_exp"], bp.get("premium", 0), claimed, next_hourly_seconds),
+            reply_markup=get_battlepass_menu(user_id, bp["level"], bp["exp"], bp["daily_exp"], bp.get("premium", 0), claimed, next_hourly_seconds)
+        )
+    else:
+        await safe_answer(call, "❌ Награда уже получена или уровень не достигнут!", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("game_custom_bet_"))
-async def game_custom_bet(call: CallbackQuery, state: FSMContext, bot: Bot):
+@router.callback_query(F.data == "bp_hourly")
+async def battlepass_hourly(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
+    
     if await check_spam(user_id):
         await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
         return
     if not await check_access(bot, user_id, state, call=call):
         return
     
-    game_id = call.data.replace("game_custom_bet_", "")
-    await state.update_data(custom_bet_game=game_id)
-    await state.set_state(GameStates.waiting_for_custom_bet)
+    result = claim_hourly_exp_db(user_id)
     
-    data = await state.get_data()
-    min_bet = data.get("selected_game_min_bet", GAMES[game_id]["min_bet"])
-    max_bet = data.get("selected_game_max_bet", GAMES[game_id]["max_bet"])
-    
-    await call.message.answer(get_text(user_id, "enter_bet").format(min_bet, max_bet))
+    if result["status"] == "success":
+        await safe_answer(call, f"✅ +{result['exp_gained']} XP!", show_alert=True)
+        if result.get("leveled_up"):
+            await call.message.answer(f"🎉 Поздравляем! Вы достигли {result['new_level']} уровня в боевом пропуске!")
+        
+        # Обновляем меню
+        bp = get_battlepass(user_id)
+        import json
+        claimed = json.loads(bp["claimed_rewards"])
+        
+        next_hourly_seconds = 3600
+        if bp.get("last_hourly_claim"):
+            last_time = datetime.fromisoformat(bp["last_hourly_claim"])
+            elapsed = (datetime.now() - last_time).total_seconds()
+            if elapsed < 3600:
+                next_hourly_seconds = int(3600 - elapsed)
+        
+        await call.message.edit_text(
+            get_battlepass_info_text(user_id, bp["level"], bp["exp"], bp["daily_exp"], bp.get("premium", 0), claimed, next_hourly_seconds),
+            reply_markup=get_battlepass_menu(user_id, bp["level"], bp["exp"], bp["daily_exp"], bp.get("premium", 0), claimed, next_hourly_seconds)
+        )
+    elif result["status"] == "cooldown":
+        await safe_answer(call, f"⏰ Следующий бонус через {result['minutes_left']} минут!", show_alert=True)
+    else:
+        await safe_answer(call, "❌ Ошибка при получении бонуса", show_alert=True)
 
 
-@router.message(GameStates.waiting_for_custom_bet)
-async def process_custom_bet(message: Message, state: FSMContext, bot: Bot):
-    user_id = message.from_user.id
-    if not await check_access(bot, user_id, state, message=message):
-        return
-    
-    try:
-        bet_amount = int(message.text.strip())
-    except ValueError:
-        await message.answer(get_text(user_id, "invalid_amount"))
-        return
-    
-    data = await state.get_data()
-    game_id = data.get("custom_bet_game")
-    game = GAMES.get(game_id)
-    
-    if not game:
-        await message.answer(get_text(user_id, "game_not_found"))
-        await state.clear()
-        return
-    
-    if bet_amount < game["min_bet"] or bet_amount > game["max_bet"]:
-        await message.answer(f"❌ Ставка должна быть от {game['min_bet']} до {game['max_bet']} 🍬")
-        return
-    
-    await state.update_data(bet_amount=bet_amount, selected_game=game_id, selected_game_name=game["name"],
-                           selected_game_multiplier=game["multiplier"], selected_game_emoji=game["emoji"])
-    await play_game_from_message(message, state, bot, game_id, bet_amount)
+@router.callback_query(F.data == "bp_hourly_disabled")
+async def battlepass_hourly_disabled(call: CallbackQuery, state: FSMContext, bot: Bot):
+    await safe_answer(call, "⏰ Подождите немного перед следующим бонусом!", show_alert=True)
 
 
-async def play_game(call: CallbackQuery, state: FSMContext, bot: Bot, game_id: str, bet_amount: int):
+@router.callback_query(F.data == "bp_buy_premium")
+async def battlepass_buy_premium(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
-    game = GAMES.get(game_id)
     
-    if not game:
-        await safe_answer(call, get_text(user_id, "game_not_found"), show_alert=True)
+    if await check_spam(user_id):
+        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
         return
     
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    user = cursor.fetchone()
-    
-    if not user or user["balance"] < bet_amount:
-        await safe_answer(call, get_text(user_id, "not_enough_balance").format(user['balance'] if user else 0), show_alert=True)
+    bp = get_battlepass(user_id)
+    if bp and bp.get("premium", 0):
+        await call.message.answer("❌ У вас уже есть премиум пропуск!")
         return
     
-    is_win = random.random() < game["win_chance"]
-    win_amount = bet_amount * game["multiplier"] if is_win else 0
-    
-    if not is_win:
-        cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet_amount, user_id))
-    else:
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (win_amount - bet_amount, user_id))
-    
-    conn.commit()
-    
-    result_data = json.dumps({"bet": bet_amount, "win": is_win, "win_amount": win_amount})
-    add_game_record(user_id, game_id, bet_amount, win_amount, 1 if is_win else 0, result_data)
-    
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    new_balance = cursor.fetchone()["balance"]
-    
-    if game_id == "dice":
-        dice_value = random.randint(1, 6)
-        sent_dice = await call.message.answer_dice(emoji="🎲")
-        await asyncio.sleep(3)
-        
-        if is_win:
-            await call.message.answer(
-                f"🎲 <b>{get_text(user_id, 'you_won')}</b>\n\n"
-                f"Выпало: {dice_value}\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'your_win').format(win_amount, game['multiplier'])}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-        else:
-            await call.message.answer(
-                f"🎲 <b>{get_text(user_id, 'you_lost')}</b>\n\n"
-                f"Выпало: {dice_value}\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-    
-    elif game_id == "basketball":
-        sent_basket = await call.message.answer_dice(emoji="🏀")
-        await asyncio.sleep(3)
-        
-        if is_win:
-            await call.message.answer(
-                f"🏀 <b>{get_text(user_id, 'you_won')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'your_win').format(win_amount, game['multiplier'])}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-        else:
-            await call.message.answer(
-                f"🏀 <b>{get_text(user_id, 'you_lost')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-    
-    elif game_id == "football":
-        sent_football = await call.message.answer_dice(emoji="⚽")
-        await asyncio.sleep(3)
-        
-        if is_win:
-            await call.message.answer(
-                f"⚽ <b>{get_text(user_id, 'you_won')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'your_win').format(win_amount, game['multiplier'])}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-        else:
-            await call.message.answer(
-                f"⚽ <b>{get_text(user_id, 'you_lost')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-    
-    elif game_id == "bowling":
-        sent_bowling = await call.message.answer_dice(emoji="🎳")
-        await asyncio.sleep(3)
-        
-        if is_win:
-            await call.message.answer(
-                f"🎳 <b>{get_text(user_id, 'you_won')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'your_win').format(win_amount, game['multiplier'])}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-        else:
-            await call.message.answer(
-                f"🎳 <b>{get_text(user_id, 'you_lost')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-    
-    await state.clear()
+    await call.message.answer(
+        f"💎 <b>ПРЕМИУМ БОЕВОЙ ПРОПУСК</b>\n\n"
+        f"Премиум пропуск даёт двойные награды за каждый уровень!\n\n"
+        f"💰 Стоимость: {PREMIUM_PRICE_STARS} ⭐️ или ${PREMIUM_PRICE_USD}\n\n"
+        f"Выберите способ оплаты:",
+        reply_markup=get_battlepass_premium_menu(user_id)
+    )
 
 
-async def play_game_from_message(message: Message, state: FSMContext, bot: Bot, game_id: str, bet_amount: int):
-    user_id = message.from_user.id
-    game = GAMES.get(game_id)
+@router.callback_query(F.data == "bp_pay_stars")
+async def battlepass_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
     
-    if not game:
-        await message.answer(get_text(user_id, "game_not_found"))
-        await state.clear()
+    if await check_spam(user_id):
+        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
         return
     
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    user = cursor.fetchone()
+    await call.message.answer(
+        f"⭐️ <b>ОПЛАТА ПРЕМИУМ ПРОПУСКА ЗВЕЗДАМИ</b>\n\n"
+        f"Стоимость: {PREMIUM_PRICE_STARS} ⭐️\n\n"
+        f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
+        f"2. Нажмите на текст и отправьте его в сообщения:\n"
+        f"<code>Хочу купить премиум боевой пропуск за {PREMIUM_PRICE_STARS} ⭐️\nмой id: {user_id}</code>\n"
+        f"3. Оплатите ОБЫЧНЫМИ подарками\n"
+        f"4. Ожидайте активации!\n\n"
+        f"🔗 Ссылка: {ANON_CHAT_LINK}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="bp_buy_premium")]
+        ])
+    )
+
+
+@router.callback_query(F.data == "bp_pay_crypto")
+async def battlepass_pay_crypto(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
     
-    if not user or user["balance"] < bet_amount:
-        await message.answer(get_text(user_id, "not_enough_balance").format(user['balance'] if user else 0))
+    if await check_spam(user_id):
+        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
         return
     
-    is_win = random.random() < game["win_chance"]
-    win_amount = bet_amount * game["multiplier"] if is_win else 0
+    # Создаём инвойс для оплаты премиум пропуска
+    invoice = create_invoice(PREMIUM_PRICE_USD, "USDT", method="cryptobot")
     
-    if not is_win:
-        cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (bet_amount, user_id))
+    if not invoice or invoice.get("status") == "error":
+        await call.message.answer("❌ Ошибка при создании платежа. Попробуйте позже.")
+        return
+    
+    invoice_id = invoice["invoice_id"]
+    crypto_amount = invoice.get("crypto_amount", PREMIUM_PRICE_USD)
+    
+    await state.update_data(pending_premium_invoice=invoice_id)
+    
+    await call.message.answer(
+        f"💎 <b>ОПЛАТА ПРЕМИУМ ПРОПУСКА КРИПТОВАЛЮТОЙ</b>\n\n"
+        f"💰 Сумма: ${PREMIUM_PRICE_USD}\n"
+        f"💱 К оплате: {crypto_amount} USDT\n\n"
+        f"🔗 Ссылка для оплаты:\n{invoice['pay_url']}\n\n"
+        f"🔄 После оплаты нажмите \"Проверить оплату\"",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} USDT", url=invoice["pay_url"])],
+            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_premium_{invoice_id}")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="bp_buy_premium")]
+        ])
+    )
+
+
+@router.callback_query(F.data.startswith("check_premium_"))
+async def check_premium_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    
+    if await check_spam(user_id):
+        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    invoice_id = call.data.replace("check_premium_", "")
+    
+    result = check_invoice(invoice_id, method="cryptobot")
+    
+    if result.get("paid", False):
+        if activate_premium_battlepass_db(user_id):
+            await safe_answer(call, "✅ Премиум пропуск активирован!", show_alert=True)
+            await call.message.answer(
+                f"🎉 <b>ПРЕМИУМ ПРОПУСК АКТИВИРОВАН!</b>\n\n"
+                f"Теперь вы получаете двойные награды за каждый уровень!\n"
+                f"Заберите свои награды в меню боевого пропуска."
+            )
+            
+            # Обновляем меню пропуска
+            bp = get_battlepass(user_id)
+            import json
+            claimed = json.loads(bp["claimed_rewards"])
+            
+            next_hourly_seconds = 0
+            if bp.get("last_hourly_claim"):
+                last_time = datetime.fromisoformat(bp["last_hourly_claim"])
+                elapsed = (datetime.now() - last_time).total_seconds()
+                if elapsed < 3600:
+                    next_hourly_seconds = int(3600 - elapsed)
+            
+            await call.message.edit_text(
+                get_battlepass_info_text(user_id, bp["level"], bp["exp"], bp["daily_exp"], 1, claimed, next_hourly_seconds),
+                reply_markup=get_battlepass_menu(user_id, bp["level"], bp["exp"], bp["daily_exp"], 1, claimed, next_hourly_seconds)
+            )
+        else:
+            await call.message.answer("❌ Ошибка при активации пропуска")
     else:
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (win_amount - bet_amount, user_id))
-    
-    conn.commit()
-    
-    result_data = json.dumps({"bet": bet_amount, "win": is_win, "win_amount": win_amount})
-    add_game_record(user_id, game_id, bet_amount, win_amount, 1 if is_win else 0, result_data)
-    
-    cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-    new_balance = cursor.fetchone()["balance"]
-    
-    if game_id == "dice":
-        dice_value = random.randint(1, 6)
-        sent_dice = await message.answer_dice(emoji="🎲")
-        await asyncio.sleep(3)
-        
-        if is_win:
-            await message.answer(
-                f"🎲 <b>{get_text(user_id, 'you_won')}</b>\n\n"
-                f"Выпало: {dice_value}\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'your_win').format(win_amount, game['multiplier'])}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-        else:
-            await message.answer(
-                f"🎲 <b>{get_text(user_id, 'you_lost')}</b>\n\n"
-                f"Выпало: {dice_value}\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-    
-    elif game_id == "basketball":
-        sent_basket = await message.answer_dice(emoji="🏀")
-        await asyncio.sleep(3)
-        
-        if is_win:
-            await message.answer(
-                f"🏀 <b>{get_text(user_id, 'you_won')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'your_win').format(win_amount, game['multiplier'])}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-        else:
-            await message.answer(
-                f"🏀 <b>{get_text(user_id, 'you_lost')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-    
-    elif game_id == "football":
-        sent_football = await message.answer_dice(emoji="⚽")
-        await asyncio.sleep(3)
-        
-        if is_win:
-            await message.answer(
-                f"⚽ <b>{get_text(user_id, 'you_won')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'your_win').format(win_amount, game['multiplier'])}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-        else:
-            await message.answer(
-                f"⚽ <b>{get_text(user_id, 'you_lost')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-    
-    elif game_id == "bowling":
-        sent_bowling = await message.answer_dice(emoji="🎳")
-        await asyncio.sleep(3)
-        
-        if is_win:
-            await message.answer(
-                f"🎳 <b>{get_text(user_id, 'you_won')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'your_win').format(win_amount, game['multiplier'])}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-        else:
-            await message.answer(
-                f"🎳 <b>{get_text(user_id, 'you_lost')}</b>\n\n"
-                f"{get_text(user_id, 'your_bet').format(bet_amount)}\n"
-                f"{get_text(user_id, 'new_balance').format(new_balance)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=get_text(user_id, "play_again"), callback_data="games_menu")], [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]])
-            )
-    
-    await state.clear()
+        await call.message.answer("⏳ Платёж ещё не оплачен")
 
 
 # ================= МАГАЗИН =================
@@ -1414,9 +1302,9 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
             return
         
         await call.message.answer(
-            f"{get_text(user_id, 'card_payment')}\n\n"
-            f"{get_text(user_id, 'card_amount')}\n"
-            f"{get_text(user_id, 'card_get')}\n\n"
+            f"💳 <b>ОПЛАТА ПО КАРТЕ</b>\n\n"
+            f"Сумма: 180 ₽ 💸\n"
+            f"Вы получите: 180 🍬\n\n"
             f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
             f"2. Напишите: Хочу купить 180 🍬 за 180 ₽\n"
             f"3. Укажите ваш ID: <code>{user_id}</code>\n"
@@ -1424,8 +1312,8 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
             f"5. Ожидайте зачисления!\n\n"
             f"🔗 Ссылка: {ANON_CHAT_LINK}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=get_text(user_id, "go_to_pay"), url=ANON_CHAT_LINK)],
-                [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="shop")]
+                [InlineKeyboardButton(text="💳 Перейти к оплате", url=ANON_CHAT_LINK)],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
             ])
         )
         return
@@ -1478,18 +1366,18 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
     if method == "stars":
         stars_amount = int(parts[4])
         await call.message.answer(
-            f"{get_text(user_id, 'stars_payment')}\n\n"
-            f"{get_text(user_id, 'stars_amount').format(stars_amount)}\n"
-            f"{get_text(user_id, 'stars_get').format(pack_amount)}\n\n"
+            f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
+            f"Сумма: {stars_amount} ⭐️\n"
+            f"Вы получите: {pack_amount} 🍬\n\n"
             f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
-            f"2. Напишите: Хочу купить {pack_amount} 🍬 за {stars_amount} ⭐️\n"
-            f"3. Укажите ваш ID: <code>{user_id}</code>\n"
-            f"4. Оплатите гифтами (подарками)\n"
-            f"5. Ожидайте зачисления!\n\n"
+            f"2. Нажмите на текст и отправьте его в сообщения:\n"
+            f"<code>Хочу купить {pack_amount} 🍬 за {stars_amount} ⭐️\nмой id: {user_id}</code>\n"
+            f"3. Оплатите ОБЫЧНЫМИ подарками\n"
+            f"4. Ожидайте зачисления!\n\n"
             f"🔗 Ссылка: {ANON_CHAT_LINK}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text=get_text(user_id, "go_to_pay"), url=ANON_CHAT_LINK)],
-                [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data=f"back_to_payment_methods_{pack_amount}")]
+                [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}")]
             ])
         )
         return
@@ -1567,6 +1455,9 @@ async def cryptobot_asset_selected(call: CallbackQuery, state: FSMContext, bot: 
     )
     conn.commit()
     
+    # Добавляем опыт за покупку
+    add_battlepass_exp_db(user_id, pack_amount // 10)
+    
     await call.message.answer(
         f"💳 <b>ОПЛАТА ЧЕРЕЗ CRYPTOBOT</b>\n\n"
         f"🍬 Конфет: {pack_amount}\n"
@@ -1615,6 +1506,9 @@ async def xrocket_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bo
     )
     conn.commit()
     
+    # Добавляем опыт за покупку
+    add_battlepass_exp_db(user_id, pack_amount // 10)
+    
     await call.message.answer(
         f"💎 <b>ОПЛАТА ЧЕРЕЗ XROCKET</b>\n\n"
         f"🍬 Конфет: {pack_amount}\n"
@@ -1650,6 +1544,9 @@ async def check_cryptobot_payment(call: CallbackQuery, state: FSMContext, bot: B
         
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (pack_amount, user_id))
         cursor.execute("UPDATE payments SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
+        
+        # Добавляем опыт за покупку (ещё раз, если не добавили ранее)
+        add_battlepass_exp_db(user_id, pack_amount // 10)
         
         cursor.execute("SELECT referrer FROM users WHERE user_id = ?", (user_id,))
         user = cursor.fetchone()
@@ -1706,6 +1603,9 @@ async def check_xrocket_payment(call: CallbackQuery, state: FSMContext, bot: Bot
         
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (pack_amount, user_id))
         cursor.execute("UPDATE payments SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
+        
+        # Добавляем опыт за покупку
+        add_battlepass_exp_db(user_id, pack_amount // 10)
         
         cursor.execute("SELECT referrer FROM users WHERE user_id = ?", (user_id,))
         user = cursor.fetchone()
@@ -1886,10 +1786,10 @@ async def pay_subscription_stars(call: CallbackQuery, state: FSMContext, bot: Bo
         f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
         f"Для покупки {sub_texts.get(sub_type, sub['name'])}:\n\n"
         f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
-        f"2. Напишите: Хочу купить {sub_texts.get(sub_type, sub['name'])} за {sub['stars']} ⭐️\n"
-        f"3. Укажите ваш ID: <code>{user_id}</code>\n"
-        f"4. Оплатите гифтами (подарками)\n"
-        f"5. Ожидайте активации!\n\n"
+        f"2. Нажмите на текст и отправьте его в сообщения:\n"
+        f"<code>Хочу купить {sub_texts.get(sub_type, sub['name'])} за {sub['stars']} ⭐️\nмой id: {user_id}</code>\n"
+        f"3. Оплатите ОБЫЧНЫМИ подарками\n"
+        f"4. Ожидайте активации!\n\n"
         f"🔗 Ссылка: {ANON_CHAT_LINK}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
@@ -2012,10 +1912,10 @@ async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
         f"Для получения доступа к приватке:\n\n"
         f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
-        f"2. Напишите: Хочу купить приватку за {PRIVATE_PRICE_STARS} ⭐️\n"
-        f"3. Укажите ваш ID: <code>{user_id}</code>\n"
-        f"4. Оплатите гифтами (подарками)\n"
-        f"5. Ожидайте доступа!\n\n"
+        f"2. Нажмите на текст и отправьте его в сообщения:\n"
+        f"<code>Хочу купить приватку за {PRIVATE_PRICE_STARS} ⭐️\nмой id: {user_id}</code>\n"
+        f"3. Оплатите ОБЫЧНЫМИ подарками\n"
+        f"4. Ожидайте доступа!\n\n"
         f"🔗 Ссылка: {ANON_CHAT_LINK}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
@@ -2286,6 +2186,9 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
                 )
             except Exception as e:
                 print(f"Ошибка отправки админу: {e}")
+        
+        # Добавляем опыт в боевой пропуск за выполнение задания
+        add_battlepass_exp_db(user_id, task["reward"] // 2)
     else:
         await message.answer("❌ Ошибка при отправке задания. Попробуйте позже.")
     
@@ -2330,6 +2233,9 @@ async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
             await bot.send_message(user_id, text)
         except:
             pass
+        
+        # Добавляем опыт в боевой пропуск за одобренное задание
+        add_battlepass_exp_db(user_id, task["reward"] // 2)
     else:
         await safe_answer(call, "❌ Ошибка при одобрении", show_alert=True)
 
@@ -3402,6 +3308,9 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
     bonus = check_and_give_daily_bonus(user_id)
     if bonus:
         await call.message.answer(get_text(user_id, "bonus_received").format(bonus))
+        # Добавляем опыт в боевой пропуск за бонус
+        add_battlepass_exp_db(user_id, 10)
+    
     subscription = get_user_subscription(user_id)
     has_op_subscription = subscription and subscription["subscription_type"] == "op"
     if has_op_subscription:
@@ -3444,6 +3353,9 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
             await safe_answer(call, f"🍬 Видео отправлено! Списана {VIDEO_PRICE} конфета", show_alert=True)
         cursor.execute("INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)", (user_id, video["id"]))
         conn.commit()
+        
+        # Добавляем опыт в боевой пропуск за просмотр видео
+        add_battlepass_exp_db(user_id, 5)
     except Exception as e:
         logger.error(f"❌ Error sending video: {e}")
         await safe_answer(call, "❌ Ошибка отправки видео. Попробуйте позже.", show_alert=True)
@@ -3641,6 +3553,9 @@ async def bonus(call: CallbackQuery, state: FSMContext, bot: Bot):
     cursor.execute("UPDATE users SET balance = balance + ?, last_bonus = ? WHERE user_id = ?", (BONUS_AMOUNT, now, user_id))
     conn.commit()
     await safe_answer(call, get_text(user_id, "bonus_received").format(BONUS_AMOUNT), show_alert=True)
+    
+    # Добавляем опыт в боевой пропуск за бонус
+    add_battlepass_exp_db(user_id, 10)
 
 
 # ================= ФЕЙК МЕНЮ =================

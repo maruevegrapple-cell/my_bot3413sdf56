@@ -353,17 +353,18 @@ def init_db():
     )
     """)
     
-    # ========== ТАБЛИЦА ИГР (КАЗИНО) ==========
+    # ========== ТАБЛИЦА БОЕВОГО ПРОПУСКА ==========
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS casino_games (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        game_type TEXT NOT NULL,
-        bet_amount INTEGER NOT NULL,
-        win_amount INTEGER DEFAULT 0,
-        is_win INTEGER DEFAULT 0,
-        result_data TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CREATE TABLE IF NOT EXISTS battlepass (
+        user_id INTEGER PRIMARY KEY,
+        level INTEGER DEFAULT 1,
+        exp INTEGER DEFAULT 0,
+        daily_exp INTEGER DEFAULT 0,
+        last_daily_reset TIMESTAMP,
+        claimed_rewards TEXT DEFAULT '[]',
+        premium INTEGER DEFAULT 0,
+        premium_purchased INTEGER DEFAULT 0,
+        last_hourly_claim TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(user_id)
     )
     """)
@@ -418,6 +419,199 @@ def set_user_language_db(user_id: int, language: str) -> bool:
         return True
     except Exception as e:
         print(f"❌ Ошибка set_user_language_db: {e}")
+        return False
+
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С БОЕВЫМ ПРОПУСКОМ ==========
+def get_battlepass(user_id: int):
+    """Получить данные боевого пропуска пользователя"""
+    try:
+        cursor.execute("SELECT * FROM battlepass WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"❌ Ошибка get_battlepass: {e}")
+        return None
+
+
+def update_battlepass(user_id: int, level: int = None, exp: int = None, daily_exp: int = None, 
+                     claimed_rewards: str = None, premium: int = None, last_hourly_claim: str = None,
+                     last_daily_reset: str = None):
+    """Обновить данные боевого пропуска"""
+    try:
+        updates = []
+        values = []
+        
+        if level is not None:
+            updates.append("level = ?")
+            values.append(level)
+        if exp is not None:
+            updates.append("exp = ?")
+            values.append(exp)
+        if daily_exp is not None:
+            updates.append("daily_exp = ?")
+            values.append(daily_exp)
+        if claimed_rewards is not None:
+            updates.append("claimed_rewards = ?")
+            values.append(claimed_rewards)
+        if premium is not None:
+            updates.append("premium = ?")
+            values.append(premium)
+        if last_hourly_claim is not None:
+            updates.append("last_hourly_claim = ?")
+            values.append(last_hourly_claim)
+        if last_daily_reset is not None:
+            updates.append("last_daily_reset = ?")
+            values.append(last_daily_reset)
+        
+        if not updates:
+            return False
+        
+        values.append(user_id)
+        query = f"UPDATE battlepass SET {', '.join(updates)} WHERE user_id = ?"
+        cursor.execute(query, values)
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка update_battlepass: {e}")
+        return False
+
+
+def create_battlepass(user_id: int):
+    """Создать новый боевой пропуск для пользователя"""
+    try:
+        cursor.execute("""
+            INSERT INTO battlepass (user_id, level, exp, daily_exp, last_daily_reset, claimed_rewards, last_hourly_claim)
+            VALUES (?, 1, 0, 0, ?, '[]', ?)
+        """, (user_id, datetime.now(), datetime.now()))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка create_battlepass: {e}")
+        return False
+
+
+def add_battlepass_exp_db(user_id: int, exp: int):
+    """Добавить опыт в боевой пропуск"""
+    try:
+        bp = get_battlepass(user_id)
+        if not bp:
+            if not create_battlepass(user_id):
+                return False
+            bp = get_battlepass(user_id)
+        
+        # Проверка дневного лимита
+        daily_exp = bp["daily_exp"]
+        if daily_exp + exp > 200:
+            exp = 200 - daily_exp
+            if exp <= 0:
+                return {"status": "limit_reached", "exp_gained": 0}
+        
+        new_daily_exp = daily_exp + exp
+        new_exp = bp["exp"] + exp
+        new_level = bp["level"]
+        
+        # Повышение уровня
+        from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL
+        leveled_up = False
+        while new_level < MAX_LEVEL and new_exp >= BATTLEPASS_LEVELS[new_level + 1]["exp"]:
+            new_level += 1
+            leveled_up = True
+        
+        update_battlepass(user_id, exp=new_exp, level=new_level, daily_exp=new_daily_exp)
+        
+        return {"status": "success", "exp_gained": exp, "leveled_up": leveled_up, "new_level": new_level}
+    except Exception as e:
+        print(f"❌ Ошибка add_battlepass_exp_db: {e}")
+        return {"status": "error", "exp_gained": 0}
+
+
+def claim_hourly_exp_db(user_id: int):
+    """Забрать ежечасный опыт"""
+    try:
+        bp = get_battlepass(user_id)
+        if not bp:
+            if not create_battlepass(user_id):
+                return {"status": "error", "message": "Не удалось создать пропуск"}
+            bp = get_battlepass(user_id)
+        
+        last_claim = bp.get("last_hourly_claim")
+        if last_claim:
+            last_time = datetime.fromisoformat(last_claim)
+            now = datetime.now()
+            hours_passed = (now - last_time).total_seconds() / 3600
+            
+            if hours_passed < 1:
+                minutes_left = int(60 - (now - last_time).total_seconds() / 60)
+                return {"status": "cooldown", "minutes_left": minutes_left}
+        
+        # Добавляем 5 XP
+        result = add_battlepass_exp_db(user_id, 5)
+        
+        if result["status"] == "success":
+            update_battlepass(user_id, last_hourly_claim=datetime.now())
+            return {"status": "success", "exp_gained": 5, "leveled_up": result.get("leveled_up", False), "new_level": result.get("new_level")}
+        
+        return {"status": "error", "message": "Ошибка при начислении опыта"}
+    except Exception as e:
+        print(f"❌ Ошибка claim_hourly_exp_db: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+def claim_battlepass_reward_db(user_id: int, level: int, is_premium: bool = False):
+    """Забрать награду уровня"""
+    try:
+        bp = get_battlepass(user_id)
+        if not bp:
+            return False
+        
+        if bp["level"] < level:
+            return False
+        
+        import json
+        claimed = json.loads(bp["claimed_rewards"])
+        
+        reward_key = f"level_{level}"
+        if is_premium:
+            if not bp.get("premium", 0):
+                return False
+            reward_key = f"premium_{level}"
+        
+        if reward_key in claimed:
+            return False
+        
+        from battlepass import BATTLEPASS_LEVELS
+        
+        if is_premium:
+            reward_amount = BATTLEPASS_LEVELS[level]["premium_reward"]
+        else:
+            reward_amount = BATTLEPASS_LEVELS[level]["reward"]
+        
+        # Начисляем награду
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward_amount, user_id))
+        
+        claimed.append(reward_key)
+        update_battlepass(user_id, claimed_rewards=json.dumps(claimed))
+        conn.commit()
+        
+        return {"reward": reward_amount, "level": level, "is_premium": is_premium}
+    except Exception as e:
+        print(f"❌ Ошибка claim_battlepass_reward_db: {e}")
+        return False
+
+
+def activate_premium_battlepass_db(user_id: int):
+    """Активировать премиум пропуск"""
+    try:
+        bp = get_battlepass(user_id)
+        if not bp:
+            if not create_battlepass(user_id):
+                return False
+        
+        update_battlepass(user_id, premium=1, premium_purchased=1)
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка activate_premium_battlepass_db: {e}")
         return False
 
 
