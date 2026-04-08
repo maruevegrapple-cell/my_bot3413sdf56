@@ -34,8 +34,15 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")
     ],
     [
-        InlineKeyboardButton(text="📢 Наш канал", url=CHANNEL_LINK)
+        InlineKeyboardButton(text="📢 Наш канал", url=CHANNEL_LINK),
+        InlineKeyboardButton(text="🌐 Language", callback_data="show_languages")
     ]
+])
+
+# ================= МЕНЮ ВЫБОРА ЯЗЫКА =================
+language_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru"),
+     InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en")]
 ])
 
 # ================= МЕНЮ ВИДЕО =================

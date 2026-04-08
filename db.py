@@ -129,7 +129,8 @@ def init_db():
         subscribe_bonus_received INTEGER DEFAULT 0,
         is_admin INTEGER DEFAULT 0,
         pending_referrer_bonus INTEGER DEFAULT NULL,
-        private_access INTEGER DEFAULT 0
+        private_access INTEGER DEFAULT 0,
+        language TEXT DEFAULT 'ru'
     )
     """)
     
@@ -149,6 +150,15 @@ def init_db():
         try:
             cursor.execute("ALTER TABLE users ADD COLUMN private_access INTEGER DEFAULT 0")
             print("✅ Добавлена колонка private_access")
+        except:
+            pass
+    
+    try:
+        cursor.execute("SELECT language FROM users LIMIT 1")
+    except:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'ru'")
+            print("✅ Добавлена колонка language в таблицу users")
         except:
             pass
 
@@ -387,6 +397,28 @@ def init_db():
         print(f"❌ Ошибка обновления схемы: {e}")
     
     fix_user_tasks_table()
+
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЯЗЫКОМ ==========
+def get_user_language_db(user_id: int) -> str:
+    """Получить язык пользователя из БД"""
+    try:
+        cursor.execute("SELECT language FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row["language"] if row and row["language"] else "ru"
+    except:
+        return "ru"
+
+
+def set_user_language_db(user_id: int, language: str) -> bool:
+    """Сохранить язык пользователя в БД"""
+    try:
+        cursor.execute("UPDATE users SET language = ? WHERE user_id = ?", (language, user_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка set_user_language_db: {e}")
+        return False
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ИГРАМИ ==========
