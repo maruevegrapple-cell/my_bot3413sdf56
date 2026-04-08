@@ -1338,6 +1338,7 @@ async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
         reply_markup=get_shop_menu(balance)
     )
 
+
 @router.callback_query(F.data.startswith("buy_pack_"))
 async def buy_pack(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1365,6 +1366,7 @@ async def buy_pack(call: CallbackQuery, state: FSMContext, bot: Bot):
         reply_markup=get_payment_methods_menu(pack_amount, usd_amount, stars_amount)
     )
 
+
 @router.callback_query(F.data.startswith("pay_method_"))
 async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1377,6 +1379,29 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
     parts = call.data.split("_")
     method = parts[2]
     pack_amount = int(parts[3])
+    
+    if method == "card":
+        # Оплата по карте (только для пака 180)
+        if pack_amount != 180:
+            await call.message.answer("❌ Оплата по карте доступна только для пака 180 🍬")
+            return
+        
+        await call.message.answer(
+            f"💳 <b>ОПЛАТА ПО КАРТЕ</b>\n\n"
+            f"Сумма: 180 ₽ 💸\n"
+            f"Вы получите: 180 🍬\n\n"
+            f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
+            f"2. Напишите: Хочу купить 180 🍬 за 180 ₽\n"
+            f"3. Укажите ваш ID: <code>5367482293</code> - Прям такой и кидайте, это ваш айди 👍\n"
+            f"4. Оплатите переводом, по карте которую вам скинут.\n"
+            f"5. Ожидайте зачисления!\n\n"
+            f"🔗 Ссылка: {ANON_CHAT_LINK}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Перейти к оплате", url=ANON_CHAT_LINK)],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
+            ])
+        )
+        return
     
     if method == "sbp":
         if not LOLZ_AVAILABLE:
@@ -1431,7 +1456,7 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
             f"Вы получите: {pack_amount} 🍬\n\n"
             f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
             f"2. Напишите: Хочу купить {pack_amount} 🍬 за {stars_amount} ⭐️\n"
-            f"3. Укажите ваш ID: <code>{user_id}</code>\n"
+            f"3. Укажите ваш ID: <code>5367482293</code> - Прям такой и кидайте, это ваш айди 👍\n"
             f"4. Оплатите гифтами (подарками)\n"
             f"5. Ожидайте зачисления!\n\n"
             f"🔗 Ссылка: {ANON_CHAT_LINK}",
@@ -1452,6 +1477,7 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
             f"Выберите валюту:",
             reply_markup=get_crypto_currency_menu(pack_amount, usd_amount, method)
         )
+
 
 @router.callback_query(F.data.startswith("check_sbp_"))
 async def check_sbp_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1475,6 +1501,7 @@ async def check_sbp_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"3. Обратитесь в поддержку\n\n"
         f"После подтверждения оплаты конфеты будут зачислены автоматически."
     )
+
 
 @router.callback_query(F.data.startswith("cryptobot_asset_"))
 async def cryptobot_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1523,6 +1550,7 @@ async def cryptobot_asset_selected(call: CallbackQuery, state: FSMContext, bot: 
         reply_markup=get_invoice_payment_menu(invoice['pay_url'], invoice_id, "cryptobot", pack_amount, crypto_amount, asset)
     )
 
+
 @router.callback_query(F.data.startswith("xrocket_asset_"))
 async def xrocket_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1569,6 +1597,7 @@ async def xrocket_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bo
         f"🔄 После оплаты нажмите \"Проверить оплату\"",
         reply_markup=get_invoice_payment_menu(invoice['pay_url'], invoice_id, "xrocket", pack_amount, crypto_amount, asset)
     )
+
 
 @router.callback_query(F.data.startswith("check_cryptobot_"))
 async def check_cryptobot_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1625,6 +1654,7 @@ async def check_cryptobot_payment(call: CallbackQuery, state: FSMContext, bot: B
     else:
         await call.message.answer("⏳ Платёж ещё не оплачен\n\nПожалуйста, оплатите счет и нажмите \"Проверить оплату\" снова.")
 
+
 @router.callback_query(F.data.startswith("check_xrocket_"))
 async def check_xrocket_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1680,6 +1710,7 @@ async def check_xrocket_payment(call: CallbackQuery, state: FSMContext, bot: Bot
     else:
         await call.message.answer("⏳ Платёж ещё не оплачен\n\nПожалуйста, оплатите счет и нажмите \"Проверить оплату\" снова.")
 
+
 @router.callback_query(F.data.startswith("back_to_payment_methods_"))
 async def back_to_payment_methods(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1702,6 +1733,7 @@ async def back_to_payment_methods(call: CallbackQuery, state: FSMContext, bot: B
         reply_markup=get_payment_methods_menu(pack_amount, usd_amount, stars_amount)
     )
 
+
 # ================= ПОДПИСКИ =================
 @router.callback_query(F.data == "subscriptions_menu")
 async def subscriptions_menu_handler(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1722,6 +1754,7 @@ async def subscriptions_menu_handler(call: CallbackQuery, state: FSMContext, bot
         f"{SUBSCRIPTIONS['newbie']['name']}: {SUBSCRIPTIONS['newbie']['stars']}⭐️ / {SUBSCRIPTIONS['newbie']['usd']}$"
     )
     await call.message.answer(text, reply_markup=subscriptions_menu)
+
 
 @router.callback_query(F.data.startswith("buy_subscription_"))
 async def buy_subscription(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1759,6 +1792,7 @@ async def buy_subscription(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"💳 Выберите способ оплаты:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
     )
+
 
 @router.callback_query(F.data.startswith("pay_subscription_asset_"))
 async def pay_subscription_asset(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1802,6 +1836,7 @@ async def pay_subscription_asset(call: CallbackQuery, state: FSMContext, bot: Bo
         ])
     )
 
+
 @router.callback_query(F.data.startswith("pay_subscription_stars_"))
 async def pay_subscription_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1825,7 +1860,7 @@ async def pay_subscription_stars(call: CallbackQuery, state: FSMContext, bot: Bo
         f"Для покупки {sub_texts.get(sub_type, sub['name'])}:\n\n"
         f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
         f"2. Напишите: Хочу купить {sub_texts.get(sub_type, sub['name'])} за {sub['stars']} ⭐️\n"
-        f"3. Укажите ваш ID: <code>{user_id}</code>\n"
+        f"3. Укажите ваш ID: <code>5367482293</code> - Прям такой и кидайте, это ваш айди 👍\n"
         f"4. Оплатите гифтами (подарками)\n"
         f"5. Ожидайте активации!\n\n"
         f"🔗 Ссылка: {ANON_CHAT_LINK}",
@@ -1834,6 +1869,7 @@ async def pay_subscription_stars(call: CallbackQuery, state: FSMContext, bot: Bo
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscriptions_menu")]
         ])
     )
+
 
 @router.callback_query(F.data.startswith("check_subscription_"))
 async def check_subscription_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1869,6 +1905,7 @@ async def check_subscription_payment(call: CallbackQuery, state: FSMContext, bot
     else:
         await call.message.answer("⏳ Платёж ещё не оплачен")
 
+
 # ================= ПРИВАТКА =================
 @router.callback_query(F.data == "buy_private")
 async def buy_private(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1891,6 +1928,7 @@ async def buy_private(call: CallbackQuery, state: FSMContext, bot: Bot):
         reply_markup=private_pay_menu
     )
 
+
 @router.callback_query(F.data == "private_crypto")
 async def private_crypto(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1903,6 +1941,7 @@ async def private_crypto(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"Выберите валюту:",
         reply_markup=get_private_crypto_menu(AVAILABLE_ASSETS)
     )
+
 
 @router.callback_query(F.data.startswith("private_asset_"))
 async def private_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1939,6 +1978,7 @@ async def private_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bo
         ])
     )
 
+
 @router.callback_query(F.data == "private_stars")
 async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1950,7 +1990,7 @@ async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"Для получения доступа к приватке:\n\n"
         f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
         f"2. Напишите: Хочу купить приватку за {PRIVATE_PRICE_STARS} ⭐️\n"
-        f"3. Укажите ваш ID: <code>{user_id}</code>\n"
+        f"3. Укажите ваш ID: <code>5367482293</code> - Прям такой и кидайте, это ваш айди 👍\n"
         f"4. Оплатите гифтами (подарками)\n"
         f"5. Ожидайте доступа!\n\n"
         f"🔗 Ссылка: {ANON_CHAT_LINK}",
@@ -1959,6 +1999,7 @@ async def private_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private")]
         ])
     )
+
 
 @router.callback_query(F.data.startswith("check_private_"))
 async def check_private_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1984,6 +2025,7 @@ async def check_private_payment(call: CallbackQuery, state: FSMContext, bot: Bot
         )
     else:
         await call.message.answer("⏳ Платёж ещё не оплачен")
+
 
 # ================= ЗАДАНИЯ =================
 @router.callback_query(F.data == "tasks")
@@ -2420,6 +2462,7 @@ async def cancel_task_by_user(call: CallbackQuery, state: FSMContext, bot: Bot):
             f"Вы можете выбрать другое задание в меню."
         )
 
+
 # ================= АДМИН - УПРАВЛЕНИЕ ЗАЯВКАМИ =================
 @router.callback_query(F.data == "admin_manage_requests")
 async def admin_manage_requests(call: CallbackQuery, state: FSMContext):
@@ -2624,6 +2667,7 @@ async def delete_specific_record(call: CallbackQuery, state: FSMContext, bot: Bo
         await call.message.edit_text("✅ Заявка успешно удалена")
     else:
         await safe_answer(call, "❌ Ошибка при удалении", show_alert=True)
+
 
 # ================= АДМИН - УПРАВЛЕНИЕ ЗАДАНИЯМИ (ОСНОВНОЕ МЕНЮ) =================
 @router.callback_query(F.data == "admin_tasks")
@@ -3322,6 +3366,7 @@ async def support_reply_start(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"Введите текст ответа:"
     )
 
+
 # ================= ВИДЕО =================
 @router.callback_query(F.data == "videos")
 async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -3454,6 +3499,7 @@ async def menu_back_handler(call: CallbackQuery, state: FSMContext):
         return
     await call.message.answer("🎥 Видео платформа", reply_markup=main_menu)
 
+
 # ================= ПРОМОКОД =================
 @router.callback_query(F.data == "promo")
 async def promo(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -3501,6 +3547,7 @@ async def process_promo_input(message: Message, state: FSMContext, bot: Bot):
     )
     await state.clear()
 
+
 # ================= ПРОФИЛЬ =================
 @router.callback_query(F.data == "profile")
 async def profile(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -3545,6 +3592,7 @@ async def profile(call: CallbackQuery, state: FSMContext, bot: Bot):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Главное меню", callback_data="menu")]])
     await call.message.answer(text, disable_web_page_preview=False, reply_markup=keyboard)
 
+
 # ================= БОНУС =================
 @router.callback_query(F.data == "bonus")
 async def bonus(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -3571,6 +3619,7 @@ async def bonus(call: CallbackQuery, state: FSMContext, bot: Bot):
     conn.commit()
     await safe_answer(call, f"🎁 +{BONUS_AMOUNT} 🍬", show_alert=True)
 
+
 # ================= ФЕЙК МЕНЮ =================
 @router.callback_query(F.data.startswith("fake_"))
 async def fake_menu_actions(call: CallbackQuery):
@@ -3589,6 +3638,7 @@ async def fake_menu_actions(call: CallbackQuery):
         dice = random.randint(1, 6)
         await safe_answer(call, f"🎲 Выпало: {dice}", show_alert=True)
 
+
 # ================= АДМИН-ПАНЕЛЬ =================
 @router.callback_query(F.data == "admin_panel")
 async def admin_panel(call: CallbackQuery):
@@ -3599,6 +3649,7 @@ async def admin_panel(call: CallbackQuery):
         return
     await safe_answer(call)
     await call.message.edit_text("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
+
 
 # ================= МЕНЮ =================
 @router.callback_query(F.data == "menu")
@@ -3611,6 +3662,7 @@ async def back_to_menu(call: CallbackQuery, state: FSMContext):
     if not await check_access(call.bot, user_id, state, call=call):
         return
     await call.message.edit_text("🎥 Видео платформа", reply_markup=main_menu)
+
 
 # ================= АДМИН - РАССЫЛКА =================
 @router.callback_query(F.data == "admin_broadcast")
@@ -3689,6 +3741,7 @@ async def cancel_broadcast(call: CallbackQuery, state: FSMContext):
     await call.message.answer("❌ Рассылка отменена")
     await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
 
+
 # ================= АДМИН - ПРОМОКОДЫ =================
 @router.callback_query(F.data == "admin_add_promo")
 async def admin_add_promo(call: CallbackQuery, state: FSMContext):
@@ -3759,6 +3812,7 @@ async def process_add_promo_uses(message: Message, state: FSMContext):
     )
     await state.clear()
     await message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
+
 
 # ================= АДМИН - БАЛАНС =================
 @router.callback_query(F.data == "admin_add_balance")
@@ -3879,6 +3933,7 @@ async def process_remove_balance_amount(message: Message, state: FSMContext, bot
         pass
     await state.clear()
     await message.answer("👑 Админ-панель", reply_markup=get_admin_menu())
+
 
 # ================= АДМИН - СТАТИСТИКА =================
 @router.callback_query(F.data == "admin_stats")
@@ -4121,6 +4176,7 @@ async def admin_search_users_result(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=keyboard)
     await state.clear()
 
+
 # ================= АДМИН - ПОДПИСКИ =================
 @router.callback_query(F.data == "admin_give_subscription")
 async def admin_give_subscription_start(call: CallbackQuery, state: FSMContext):
@@ -4331,6 +4387,7 @@ async def admin_top_balance(call: CallbackQuery, state: FSMContext):
     
     await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
+
 # ================= АДМИН - УПРАВЛЕНИЕ ОП =================
 @router.callback_query(F.data == "admin_op")
 async def admin_op_menu(call: CallbackQuery):
@@ -4457,6 +4514,7 @@ async def op_list(call: CallbackQuery):
             text += f"• <b>{ch['channel_name']}</b>\n  ID: <code>{ch['channel_id']}</code>\n  {ch['channel_link']}\n\n"
     keyboard = [[InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_op")]]
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
 
 # ================= АДМИН - УПРАВЛЕНИЕ АДМИНАМИ =================
 @router.callback_query(F.data == "admin_manage")
@@ -4600,6 +4658,7 @@ async def admin_delete(call: CallbackQuery, state: FSMContext):
         await call.message.edit_text("❌ Ошибка при удалении админа")
     await admin_remove_menu(call, state)
 
+
 # ================= КОМАНДЫ ДЛЯ УДАЛЕНИЯ ВИДЕО =================
 @router.message(Command("delete_200"))
 async def delete_first_200_command(message: Message):
@@ -4681,6 +4740,7 @@ async def confirm_delete_58(call: CallbackQuery):
 async def cancel_delete(call: CallbackQuery):
     await safe_answer(call)
     await call.message.edit_text("❌ Удаление отменено")
+
 
 # ================= ТЕСТОВЫЕ КОМАНДЫ =================
 @router.message(Command("test_captcha"))
