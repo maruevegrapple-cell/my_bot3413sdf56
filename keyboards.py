@@ -99,13 +99,17 @@ def get_shop_menu(balance: int = 0):
 
 def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: int):
     """Меню выбора способа оплаты после выбора пака"""
-    keyboard = [
-        # [InlineKeyboardButton(text="🏦 СБП (Lolz)", callback_data=f"pay_method_sbp_{pack_amount}_{usd_amount}")],  # Временно отключено
-        [InlineKeyboardButton(text="🪙 CryptoBot", callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")],
-        [InlineKeyboardButton(text="💎 xRocket", callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")],
-        [InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
-    ]
+    keyboard = []
+    
+    # Для пака 180 добавляем оплату по карте
+    if pack_amount == 180:
+        keyboard.append([InlineKeyboardButton(text="💳 Оплата по карте (180 ₽)", callback_data=f"pay_method_card_{pack_amount}")])
+    
+    keyboard.append([InlineKeyboardButton(text="🪙 CryptoBot", callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")])
+    keyboard.append([InlineKeyboardButton(text="💎 xRocket", callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")])
+    keyboard.append([InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")])
+    
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 

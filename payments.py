@@ -349,8 +349,8 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
             logging.warning("⚠️ LOLZ_MERCHANT_ID не задан")
             return None
         
-        # Формируем URL для редиректа после оплаты
-        url_success = f"{BOT_LINK}?start=payment_{order_id}"
+        bot_link = f"https://t.me/{BOT_USERNAME}"
+        url_success = f"{bot_link}?start=payment_{order_id}"
         
         payload = {
             "currency": "rub",
@@ -364,7 +364,6 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
             "lifetime": 3600
         }
         
-        # Убираем None значения
         payload = {k: v for k, v in payload.items() if v is not None}
         
         headers = {
@@ -373,8 +372,6 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
             "Accept": "application/json"
         }
         
-        logging.info(f"💰 Lolz payload: {payload}")
-        
         response = requests.post(
             LOLZ_API_URL,
             json=payload,
@@ -382,11 +379,8 @@ def create_lolz_invoice(amount_rub: float, order_id: str, user_id: int, username
             timeout=30
         )
         
-        logging.info(f"💰 Lolz response status: {response.status_code}")
-        
         if response.status_code == 200:
             result = response.json()
-            logging.info(f"💰 Lolz response: {result}")
             
             invoice_data = result.get("data", result) if isinstance(result, dict) else {}
             invoice_id = invoice_data.get("id")
@@ -423,13 +417,26 @@ def check_lolz_invoice(order_id: str) -> dict:
         if not LOLZ_MERCHANT_SECRET_KEY:
             return {"status": "error", "paid": False}
         
-        # TODO: Реализовать полноценную проверку через API Lolz
-        # Пока возвращаем pending - пользователь должен нажать кнопку проверки
         return {"status": "pending", "paid": False}
         
     except Exception as e:
         logging.error(f"Lolz check payment error: {e}")
         return {"status": "error", "paid": False}
+
+
+# ================= ОПЛАТА ПО КАРТЕ (ТОЛЬКО ДЛЯ ПАКА 180) =================
+def create_card_payment_info(pack_amount: int, user_id: int) -> dict:
+    """
+    Создание информации для оплаты по карте
+    Только для пака 180 конфет
+    """
+    return {
+        "status": "success",
+        "pack_amount": pack_amount,
+        "amount_rub": 180,
+        "user_id": user_id,
+        "method": "card"
+    }
 
 
 # ================= УНИВЕРСАЛЬНЫЕ ФУНКЦИИ =================
