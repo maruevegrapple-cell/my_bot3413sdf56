@@ -4935,9 +4935,9 @@ async def confirm_remove_main(message: Message):
 async def set_main_admin_command(message: Message):
     user_id = message.from_user.id
     
-    # Только текущий главный админ может назначать нового
-    if not is_main_admin(user_id):
-        await message.answer("❌ Нет доступа! Только главный администратор может назначать нового главного админа.")
+    # Теперь любой админ может назначать нового главного админа
+    if not is_admin(user_id):
+        await message.answer("❌ Нет доступа! Только администраторы могут назначать главного админа.")
         return
     
     args = message.text.split()
@@ -4961,8 +4961,8 @@ async def set_main_admin_command(message: Message):
     
     username = user["username"] or ""
     
-    # Снимаем флаг главного админа с текущего
-    cursor.execute("UPDATE admins SET is_main_admin = 0 WHERE user_id = ?", (user_id,))
+    # Снимаем флаг главного админа со всех текущих
+    cursor.execute("UPDATE admins SET is_main_admin = 0")
     
     # Назначаем нового главного админа
     cursor.execute("""
@@ -4977,12 +4977,11 @@ async def set_main_admin_command(message: Message):
     await message.answer(
         f"✅ <b>Главный администратор изменён!</b>\n\n"
         f"👑 Новый главный админ: ID <code>{new_main_id}</code> (@{username if username else 'нет username'})\n"
-        f"📌 Вы теперь обычный администратор."
     )
     
     # Уведомляем нового главного админа
     try:
-        await bot.send_message(
+        await message.bot.send_message(
             new_main_id,
             f"👑 <b>Поздравляем!</b>\n\n"
             f"Вы назначены главным администратором бота!\n"
