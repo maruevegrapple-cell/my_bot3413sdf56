@@ -4803,3 +4803,26 @@ async def check_balance_command(message: Message):
         await message.answer("❌ Пользователь не найден")
         return
     await message.answer(f"👤 Пользователь {target_user_id} (@{user['username'] or 'нет'})\n🍬 Баланс: {user['balance']}")
+
+# ================= ВРЕМЕННАЯ КОМАНДА ДЛЯ УСТАНОВКИ АДМИНА =================
+@router.message(Command("set_me_admin"))
+async def set_me_admin(message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or ""
+    
+    # Проверяем, есть ли уже главный админ
+    cursor.execute("SELECT COUNT(*) as count FROM admins WHERE is_main_admin = 1")
+    result = cursor.fetchone()
+    
+    if result["count"] == 0:
+        # Если нет главного админа, устанавливаем текущего пользователя
+        set_main_admin(user_id, username)
+        await message.answer(f"✅ Вы установлены как ГЛАВНЫЙ администратор!\nВаш ID: {user_id}")
+    else:
+        # Если главный админ уже есть, проверяем права
+        if is_main_admin(user_id):
+            await message.answer("✅ Вы уже являетесь главным администратором!")
+        else:
+            # Добавляем как обычного админа с правами на добавление других админов
+            add_admin(user_id, username, user_id, True)
+            await message.answer(f"✅ Вы добавлены как администратор!\nВаш ID: {user_id}")
