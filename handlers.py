@@ -4832,9 +4832,9 @@ async def set_me_admin(message: Message):
 async def remove_admin_by_id(message: Message):
     user_id = message.from_user.id
     
-    # Проверяем, что текущий пользователь - главный админ
-    if not is_main_admin(user_id):
-        await message.answer("❌ Нет доступа! Только главный администратор может удалять админов.")
+    # Проверяем, что текущий пользователь - админ (не обязательно главный)
+    if not is_admin(user_id):
+        await message.answer("❌ Нет доступа! Только администраторы могут удалять админов.")
         return
     
     args = message.text.split()
@@ -4859,6 +4859,11 @@ async def remove_admin_by_id(message: Message):
     
     if not admin:
         await message.answer(f"❌ Пользователь с ID {target_id} не является админом!")
+        return
+    
+    # Нельзя удалить главного админа (только если ты сам главный)
+    if admin["is_main_admin"] == 1 and not is_main_admin(user_id):
+        await message.answer("❌ Вы не можете удалить ГЛАВНОГО администратора! Только главный админ может это сделать.")
         return
     
     # Удаляем админа
