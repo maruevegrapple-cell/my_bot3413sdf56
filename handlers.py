@@ -192,6 +192,9 @@ class AdminStates(StatesGroup):
 class CaptchaStates(StatesGroup):
     waiting_for_captcha = State()
 
+class MathCaptchaStates(StatesGroup):
+    waiting_for_math_captcha = State()
+
 class SubscribeStates(StatesGroup):
     waiting_for_subscribe = State()
     waiting_for_support_message = State()
@@ -227,6 +230,8 @@ class FakeChatStates(StatesGroup):
 
 captcha_data = {}
 captcha_attempts = {}
+math_captcha_data = {}
+math_captcha_attempts = {}
 banned_users = {}
 broadcast_mode = set()
 custom_pay_wait = set()
@@ -379,6 +384,29 @@ def generate_captcha_image() -> tuple:
     image.save(bio, 'PNG', quality=95)
     bio.seek(0)
     return bio.getvalue(), code
+
+def generate_math_captcha() -> tuple:
+    """Генерирует математический пример и возвращает (текст_примера, правильный_ответ)"""
+    operations = ['+', '-', '*']
+    op = random.choice(operations)
+    
+    if op == '+':
+        a = random.randint(10, 50)
+        b = random.randint(5, 30)
+        answer = a + b
+        text = f"{a} + {b} = ?"
+    elif op == '-':
+        a = random.randint(20, 60)
+        b = random.randint(5, a - 5)
+        answer = a - b
+        text = f"{a} - {b} = ?"
+    else:  # '*'
+        a = random.randint(2, 10)
+        b = random.randint(2, 10)
+        answer = a * b
+        text = f"{a} × {b} = ?"
+    
+    return text, answer
 
 @router.message(F.forward_from | F.forward_from_chat)
 async def block_forward(message: Message):
@@ -783,13 +811,15 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         if not is_verified(user_id):
             if user_id in captcha_attempts:
                 del captcha_attempts[user_id]
+            if user_id in math_captcha_attempts:
+                del math_captcha_attempts[user_id]
             image_bytes, captcha_code = generate_captcha_image()
             captcha_data[user_id] = captcha_code
             await state.update_data(captcha_code=captcha_code)
             await state.set_state(CaptchaStates.waiting_for_captcha)
             await message.answer_photo(
                 photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
-                caption="🔐 <b>ПОДТВЕРЖДЕНИЕ</b>\n\n"
+                caption="🔐 <b>ПОДТВЕРЖДЕНИЕ (ШАГ 1/2)</b>\n\n"
                         "Введите код с картинки:\n"
                         "⚠️ Только заглавные буквы и цифры\n"
                         "📊 Осталось попыток: 3/3"
@@ -839,13 +869,15 @@ async def start(message: Message, state: FSMContext, bot: Bot):
     if not is_verified(user_id):
         if user_id in captcha_attempts:
             del captcha_attempts[user_id]
+        if user_id in math_captcha_attempts:
+            del math_captcha_attempts[user_id]
         image_bytes, captcha_code = generate_captcha_image()
         captcha_data[user_id] = captcha_code
         await state.update_data(captcha_code=captcha_code)
         await state.set_state(CaptchaStates.waiting_for_captcha)
         await message.answer_photo(
             photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
-            caption="🔐 <b>ПОДТВЕРЖДЕНИЕ</b>\n\n"
+            caption="🔐 <b>ПОДТВЕРЖДЕНИЕ (ШАГ 1/2)</b>\n\n"
                     "Введите код с картинки:\n"
                     "⚠️ Только заглавные буквы и цифры\n"
                     "📊 Осталось попыток: 3/3"
@@ -885,26 +917,26 @@ async def process_captcha(message: Message, state: FSMContext, bot: Bot):
         await state.clear()
         return
     if user_input == correct_code:
-        cursor.execute("UPDATE users SET is_verified = 1 WHERE user_id = ?", (user_id,))
-        conn.commit()
+        # Графическая капча пройдена, очищаем данные
         if user_id in captcha_data:
             del captcha_data[user_id]
         if user_id in captcha_attempts:
             del captcha_attempts[user_id]
-        await state.clear()
-        first_name = message.from_user.first_name or "Пользователь"
-        is_subscribed = await check_subscription(bot, user_id)
-        if not is_subscribed:
-            await state.set_state(SubscribeStates.waiting_for_subscribe)
-            await message.answer(
-                get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
-                reply_markup=subscribe_menu
-            )
-        else:
-            await message.answer(
-                f"✅ <b>Верификация пройдена!</b>\n\nДобро пожаловать!",
-                reply_markup=main_menu
-            )
+        
+        # Генерируем математическую капчу
+        math_text, math_answer = generate_math_captcha()
+        math_captcha_data[user_id] = math_answer
+        await state.update_data(math_answer=math_answer)
+        await state.set_state(MathCaptchaStates.waiting_for_math_captcha)
+        
+        await message.answer(
+            f"✅ <b>Первый шаг пройден!</b>\n\n"
+            f"🔢 <b>МАТЕМАТИЧЕСКАЯ ПРОВЕРКА (ШАГ 2/2)</b>\n\n"
+            f"Решите пример:\n"
+            f"<b>{math_text}</b>\n\n"
+            f"Введите только число:\n"
+            f"📊 Осталось попыток: 3/3"
+        )
     else:
         attempts = captcha_attempts.get(user_id, 0) + 1
         captcha_attempts[user_id] = attempts
@@ -935,6 +967,101 @@ async def process_captcha(message: Message, state: FSMContext, bot: Bot):
                     f"📊 Осталось попыток: {remaining_attempts}/3"
         )
 
+@router.message(MathCaptchaStates.waiting_for_math_captcha)
+async def process_math_captcha(message: Message, state: FSMContext, bot: Bot):
+    user_id = message.from_user.id
+    user_input = message.text.strip()
+    logger.info(f"🔢 Math captcha input: {user_input}")
+    
+    banned, ban_until = is_banned(user_id)
+    if banned:
+        remaining = ban_until - datetime.now()
+        minutes = remaining.seconds // 60
+        seconds = remaining.seconds % 60
+        await message.answer(
+            f"🚫 <b>ДОСТУП ЗАБЛОКИРОВАН</b>\n\n"
+            f"⏳ Осталось: {minutes} мин {seconds} сек"
+        )
+        await state.clear()
+        return
+    
+    data = await state.get_data()
+    correct_answer = data.get('math_answer') or math_captcha_data.get(user_id)
+    
+    if correct_answer is None:
+        await message.answer("❌ Ошибка верификации. Нажми /start заново")
+        await state.clear()
+        return
+    
+    try:
+        user_answer = int(user_input)
+    except ValueError:
+        user_answer = None
+    
+    if user_answer == correct_answer:
+        # Математическая капча пройдена!
+        if user_id in math_captcha_data:
+            del math_captcha_data[user_id]
+        if user_id in math_captcha_attempts:
+            del math_captcha_attempts[user_id]
+        
+        # Отмечаем пользователя как верифицированного
+        cursor.execute("UPDATE users SET is_verified = 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        await state.clear()
+        
+        await message.answer(
+            f"🎉 <b>ВЕРИФИКАЦИЯ ПРОЙДЕНА!</b>\n\n"
+            f"✅ Вы успешно прошли обе проверки!"
+        )
+        
+        # Проверяем подписку на канал
+        is_subscribed = await check_subscription(bot, user_id)
+        if not is_subscribed:
+            await state.set_state(SubscribeStates.waiting_for_subscribe)
+            await message.answer(
+                get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
+                reply_markup=subscribe_menu
+            )
+        else:
+            await message.answer(
+                get_text(user_id, "welcome"),
+                reply_markup=main_menu
+            )
+    else:
+        attempts = math_captcha_attempts.get(user_id, 0) + 1
+        math_captcha_attempts[user_id] = attempts
+        
+        if attempts >= 3:
+            ban_time = datetime.now() + timedelta(minutes=10)
+            banned_users[user_id] = ban_time
+            if user_id in math_captcha_data:
+                del math_captcha_data[user_id]
+            if user_id in math_captcha_attempts:
+                del math_captcha_attempts[user_id]
+            await state.clear()
+            await message.answer(
+                f"🚫 <b>ДОСТУП ЗАБЛОКИРОВАН</b>\n\n"
+                f"❌ Вы исчерпали все попытки (3/3)\n"
+                f"⏳ Блокировка на 10 минут\n"
+                f"🕐 Разблокировка: {ban_time.strftime('%H:%M:%S')}"
+            )
+            return
+        
+        # Генерируем новый пример
+        math_text, math_answer = generate_math_captcha()
+        math_captcha_data[user_id] = math_answer
+        await state.update_data(math_answer=math_answer)
+        remaining_attempts = 3 - attempts
+        
+        await message.answer(
+            f"❌ <b>НЕПРАВИЛЬНЫЙ ОТВЕТ!</b>\n\n"
+            f"Попробуйте еще раз:\n"
+            f"<b>{math_text}</b>\n\n"
+            f"Введите только число:\n"
+            f"📊 Осталось попыток: {remaining_attempts}/3"
+        )
+
 @router.callback_query(F.data == "check_subscribe")
 async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -942,6 +1069,12 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
     print(f"🔍 check_subscribe: user {user_id} нажал кнопку")
     
     if not is_verified(user_id):
+        # Очищаем старые данные капчи
+        if user_id in captcha_attempts:
+            del captcha_attempts[user_id]
+        if user_id in math_captcha_attempts:
+            del math_captcha_attempts[user_id]
+        
         image_bytes, captcha_code = generate_captcha_image()
         captcha_data[user_id] = captcha_code
         await state.update_data(captcha_code=captcha_code)
@@ -952,7 +1085,7 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
             pass
         await call.message.answer_photo(
             photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
-            caption="🔐 <b>ПОДТВЕРЖДЕНИЕ</b>\n\n"
+            caption="🔐 <b>ПОДТВЕРЖДЕНИЕ (ШАГ 1/2)</b>\n\n"
                     "Сначала пройдите верификацию.\n"
                     "Введите код с картинки:\n"
                     "⚠️ Только заглавные буквы и цифры"
@@ -1749,18 +1882,14 @@ async def back_to_payment_methods(call: CallbackQuery, state: FSMContext, bot: B
         return
     
     parts = call.data.split("_")
-    # Формат: back_to_payment_methods_{pack_amount}_{usd_amount}
-    # или back_to_payment_methods_{pack_amount} (если нет usd_amount)
     
     if len(parts) >= 5:
         pack_amount = int(parts[4])
         if len(parts) >= 6:
             usd_amount = float(parts[5])
         else:
-            # Если нет usd_amount, получаем из CANDY_PACKS
             usd_amount = CANDY_PACKS.get(pack_amount, {}).get("usd", 0)
     else:
-        # Fallback
         pack_amount = 35
         usd_amount = CANDY_PACKS.get(pack_amount, {}).get("usd", 0.30)
     
@@ -2149,7 +2278,6 @@ async def tasks_refresh(call: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("task_"))
 async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
-    # Пропускаем если это task_category_ или tasks_category_ или admin_task_category_
     if call.data.startswith("task_category_") or call.data.startswith("tasks_category_") or call.data.startswith("admin_task_category_"):
         return
     
@@ -2300,7 +2428,6 @@ async def submit_task_photo(message: Message, state: FSMContext, bot: Bot):
             except Exception as e:
                 print(f"Ошибка отправки админу: {e}")
         
-        # Добавляем опыт в боевой пропуск за выполнение задания
         add_battlepass_exp_db(user_id, task["reward"] // 2)
     else:
         await message.answer("❌ Ошибка при отправке задания. Попробуйте позже.")
@@ -2347,7 +2474,6 @@ async def approve_task_admin(call: CallbackQuery, state: FSMContext, bot: Bot):
         except:
             pass
         
-        # Добавляем опыт в боевой пропуск за одобренное задание
         add_battlepass_exp_db(user_id, task["reward"] // 2)
     else:
         await safe_answer(call, "❌ Ошибка при одобрении", show_alert=True)
@@ -3421,7 +3547,6 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
     bonus = check_and_give_daily_bonus(user_id)
     if bonus:
         await call.message.answer(get_text(user_id, "bonus_received").format(bonus))
-        # Добавляем опыт в боевой пропуск за бонус
         add_battlepass_exp_db(user_id, 10)
     
     subscription = get_user_subscription(user_id)
@@ -3467,7 +3592,6 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
         cursor.execute("INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)", (user_id, video["id"]))
         conn.commit()
         
-        # Добавляем опыт в боевой пропуск за просмотр видео
         add_battlepass_exp_db(user_id, 5)
     except Exception as e:
         logger.error(f"❌ Error sending video: {e}")
@@ -3667,7 +3791,6 @@ async def bonus(call: CallbackQuery, state: FSMContext, bot: Bot):
     conn.commit()
     await safe_answer(call, get_text(user_id, "bonus_received").format(BONUS_AMOUNT), show_alert=True)
     
-    # Добавляем опыт в боевой пропуск за бонус
     add_battlepass_exp_db(user_id, 10)
 
 
@@ -3702,7 +3825,6 @@ async def fake_menu_actions(call: CallbackQuery, state: FSMContext):
                 [InlineKeyboardButton(text="🚪 Выйти из чата", callback_data="fake_exit_chat")]
             ])
         )
-        # Добавляем пользователя в активные сессии чата
         anon_chat_sessions[user_id] = True
 
 
@@ -3725,7 +3847,6 @@ async def process_anon_message(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user_text = message.text
     
-    # Проверка на команду выхода
     if user_text and user_text.startswith('/exit'):
         await state.clear()
         if user_id in anon_chat_sessions:
@@ -3741,17 +3862,13 @@ async def process_anon_message(message: Message, state: FSMContext):
         await message.answer("❌ Отправьте текстовое сообщение!")
         return
     
-    # Имитация "печатания"
     await message.bot.send_chat_action(chat_id=user_id, action="typing")
     await asyncio.sleep(random.uniform(1.5, 3.5))
     
-    # Выбираем случайный ответ
     response = random.choice(ANON_CHAT_RESPONSES)
     
-    # Отправляем ответ
     await message.answer(response)
     
-    # Предлагаем продолжить или выйти
     await message.answer(
         "💭 <i>Продолжить общение? Напишите ещё сообщение или нажмите кнопку для выхода.</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -3760,7 +3877,6 @@ async def process_anon_message(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     
-    # Оставляем пользователя в состоянии чата
     anon_chat_sessions[user_id] = True
 
 
@@ -4939,20 +5055,16 @@ async def set_me_admin(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or ""
     
-    # Проверяем, есть ли уже главный админ
     cursor.execute("SELECT COUNT(*) as count FROM admins WHERE is_main_admin = 1")
     result = cursor.fetchone()
     
     if result["count"] == 0:
-        # Если нет главного админа, устанавливаем текущего пользователя
         set_main_admin(user_id, username)
         await message.answer(f"✅ Вы установлены как ГЛАВНЫЙ администратор!\nВаш ID: {user_id}")
     else:
-        # Если главный админ уже есть, проверяем права
         if is_main_admin(user_id):
             await message.answer("✅ Вы уже являетесь главным администратором!")
         else:
-            # Добавляем как обычного админа с правами на добавление других админов
             add_admin(user_id, username, user_id, True)
             await message.answer(f"✅ Вы добавлены как администратор!\nВаш ID: {user_id}")
 
@@ -4961,7 +5073,6 @@ async def set_me_admin(message: Message):
 async def remove_admin_by_id(message: Message):
     user_id = message.from_user.id
     
-    # Проверяем, что текущий пользователь - админ
     if not is_admin(user_id):
         await message.answer("❌ Нет доступа! Только администраторы могут удалять админов.")
         return
@@ -4977,12 +5088,10 @@ async def remove_admin_by_id(message: Message):
         await message.answer("❌ ID должен быть числом!")
         return
     
-    # Нельзя удалить самого себя
     if target_id == user_id:
         await message.answer("❌ Вы не можете удалить сами себя!")
         return
     
-    # Проверяем, существует ли такой админ
     cursor.execute("SELECT user_id, username, is_main_admin FROM admins WHERE user_id = ?", (target_id,))
     admin = cursor.fetchone()
     
@@ -4990,9 +5099,7 @@ async def remove_admin_by_id(message: Message):
         await message.answer(f"❌ Пользователь с ID {target_id} не является админом!")
         return
     
-    # Если удаляем главного админа
     if admin["is_main_admin"] == 1:
-        # Проверяем, есть ли другой главный админ
         cursor.execute("SELECT COUNT(*) as count FROM admins WHERE is_main_admin = 1")
         main_admins_count = cursor.fetchone()["count"]
         
@@ -5006,21 +5113,18 @@ async def remove_admin_by_id(message: Message):
             )
             return
         else:
-            # Удаляем главного админа (есть другие)
             cursor.execute("DELETE FROM admins WHERE user_id = ?", (target_id,))
             cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (target_id,))
             conn.commit()
             await message.answer(f"✅ Главный админ с ID {target_id} удалён!")
         return
     
-    # Удаляем обычного админа
     cursor.execute("DELETE FROM admins WHERE user_id = ?", (target_id,))
     cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (target_id,))
     conn.commit()
     await message.answer(f"✅ Админ с ID {target_id} удалён!")
 
 
-# ================= ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ ГЛАВНОГО АДМИНА =================
 @router.message(Command("confirm_remove_main"))
 async def confirm_remove_main(message: Message):
     user_id = message.from_user.id
@@ -5040,7 +5144,6 @@ async def confirm_remove_main(message: Message):
         await message.answer("❌ ID должен быть числом!")
         return
     
-    # Проверяем, существует ли такой админ и является ли он главным
     cursor.execute("SELECT user_id, username FROM admins WHERE user_id = ? AND is_main_admin = 1", (target_id,))
     admin = cursor.fetchone()
     
@@ -5048,23 +5151,20 @@ async def confirm_remove_main(message: Message):
         await message.answer(f"❌ Пользователь с ID {target_id} не является главным админом!")
         return
     
-    # Удаляем главного админа
     cursor.execute("DELETE FROM admins WHERE user_id = ?", (target_id,))
     cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (target_id,))
     conn.commit()
     
-    # Если удалил сам себя, то снимаем флаги
     if target_id == user_id:
         await message.answer(f"✅ Вы удалили себя как главного администратора!\nТеперь вы не админ.")
     else:
         await message.answer(f"✅ Главный админ с ID {target_id} удалён!")
 
-# ================= КОМАНДА ДЛЯ УСТАНОВКИ НОВОГО ГЛАВНОГО АДМИНА =================
+
 @router.message(Command("set_main_admin"))
 async def set_main_admin_command(message: Message):
     user_id = message.from_user.id
     
-    # Теперь любой админ может назначать нового главного админа
     if not is_admin(user_id):
         await message.answer("❌ Нет доступа! Только администраторы могут назначать главного админа.")
         return
@@ -5080,7 +5180,6 @@ async def set_main_admin_command(message: Message):
         await message.answer("❌ ID должен быть числом!")
         return
     
-    # Проверяем, существует ли пользователь
     cursor.execute("SELECT user_id, username FROM users WHERE user_id = ?", (new_main_id,))
     user = cursor.fetchone()
     
@@ -5090,16 +5189,13 @@ async def set_main_admin_command(message: Message):
     
     username = user["username"] or ""
     
-    # Снимаем флаг главного админа со всех текущих
     cursor.execute("UPDATE admins SET is_main_admin = 0")
     
-    # Назначаем нового главного админа
     cursor.execute("""
         INSERT OR REPLACE INTO admins (user_id, username, added_by, added_at, is_main_admin, can_add_admins)
         VALUES (?, ?, ?, datetime('now'), 1, 1)
     """, (new_main_id, username, user_id))
     
-    # Обновляем users
     cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (new_main_id,))
     conn.commit()
     
@@ -5108,7 +5204,6 @@ async def set_main_admin_command(message: Message):
         f"👑 Новый главный админ: ID <code>{new_main_id}</code> (@{username if username else 'нет username'})\n"
     )
     
-    # Уведомляем нового главного админа
     try:
         await message.bot.send_message(
             new_main_id,
