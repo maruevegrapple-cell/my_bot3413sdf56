@@ -4832,7 +4832,7 @@ async def set_me_admin(message: Message):
 async def remove_admin_by_id(message: Message):
     user_id = message.from_user.id
     
-    # Проверяем, что текущий пользователь - админ (не обязательно главный)
+    # Проверяем, что текущий пользователь - админ
     if not is_admin(user_id):
         await message.answer("❌ Нет доступа! Только администраторы могут удалять админов.")
         return
@@ -4861,14 +4861,71 @@ async def remove_admin_by_id(message: Message):
         await message.answer(f"❌ Пользователь с ID {target_id} не является админом!")
         return
     
-    # Нельзя удалить главного админа (только если ты сам главный)
-    if admin["is_main_admin"] == 1 and not is_main_admin(user_id):
-        await message.answer("❌ Вы не можете удалить ГЛАВНОГО администратора! Только главный админ может это сделать.")
+    # Если удаляем главного админа
+    if admin["is_main_admin"] == 1:
+        # Проверяем, есть ли другой главный админ
+        cursor.execute("SELECT COUNT(*) as count FROM admins WHERE is_main_admin = 1")
+        main_admins_count = cursor.fetchone()["count"]
+        
+        if main_admins_count == 1:
+            await message.answer(
+                f"⚠️ <b>ВНИМАНИЕ!</b>\n\n"
+                f"Вы собираетесь удалить ЕДИНСТВЕННОГО главного администратора.\n"
+                f"После этого в системе не останется главных админов.\n\n"
+                f"Для подтверждения отправьте: `/confirm_remove_main {target_id}`",
+                parse_mode="Markdown"
+            )
+            return
+        else:
+            # Удаляем главного админа (есть другие)
+            cursor.execute("DELETE FROM admins WHERE user_id = ?", (target_id,))
+            cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (target_id,))
+            conn.commit()
+            await message.answer(f"✅ Главный админ с ID {target_id} удалён!")
         return
     
-    # Удаляем админа
+    # Удаляем обычного админа
+    cursor.execute("DELETE FROM admins WHERE user_id = ?", (target_id,))
+    cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (target_id,))
+    conn.commit()
+    await message.answer(f"✅ Админ с ID {target_id} удалён!")
+
+
+# ================= ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ ГЛАВНОГО АДМИНА =================
+@router.message(Command("confirm_remove_main"))
+async def confirm_remove_main(message: Message):
+    user_id = message.from_user.id
+    
+    if not is_admin(user_id):
+        await message.answer("❌ Нет доступа!")
+        return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите ID главного админа для удаления.")
+        return
+    
+    try:
+        target_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом!")
+        return
+    
+    # Проверяем, существует ли такой админ и является ли он главным
+    cursor.execute("SELECT user_id, username FROM admins WHERE user_id = ? AND is_main_admin = 1", (target_id,))
+    admin = cursor.fetchone()
+    
+    if not admin:
+        await message.answer(f"❌ Пользователь с ID {target_id} не является главным админом!")
+        return
+    
+    # Удаляем главного админа
     cursor.execute("DELETE FROM admins WHERE user_id = ?", (target_id,))
     cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (target_id,))
     conn.commit()
     
-    await message.answer(f"✅ Админ с ID {target_id} удалён!")
+    # Если удалил сам себя, то снимаем флаги
+    if target_id == user_id:
+        await message.answer(f"✅ Вы удалили себя как главного администратора!\nТеперь вы не админ.")
+    else:
+        await message.answer(f"✅ Главный админ с ID {target_id} удалён!")
