@@ -4929,3 +4929,64 @@ async def confirm_remove_main(message: Message):
         await message.answer(f"✅ Вы удалили себя как главного администратора!\nТеперь вы не админ.")
     else:
         await message.answer(f"✅ Главный админ с ID {target_id} удалён!")
+
+# ================= КОМАНДА ДЛЯ УСТАНОВКИ НОВОГО ГЛАВНОГО АДМИНА =================
+@router.message(Command("set_main_admin"))
+async def set_main_admin_command(message: Message):
+    user_id = message.from_user.id
+    
+    # Только текущий главный админ может назначать нового
+    if not is_main_admin(user_id):
+        await message.answer("❌ Нет доступа! Только главный администратор может назначать нового главного админа.")
+        return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите ID нового главного админа.\nПример: `/set_main_admin 993076067`", parse_mode="Markdown")
+        return
+    
+    try:
+        new_main_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом!")
+        return
+    
+    # Проверяем, существует ли пользователь
+    cursor.execute("SELECT user_id, username FROM users WHERE user_id = ?", (new_main_id,))
+    user = cursor.fetchone()
+    
+    if not user:
+        await message.answer(f"❌ Пользователь с ID {new_main_id} не найден в базе!")
+        return
+    
+    username = user["username"] or ""
+    
+    # Снимаем флаг главного админа с текущего
+    cursor.execute("UPDATE admins SET is_main_admin = 0 WHERE user_id = ?", (user_id,))
+    
+    # Назначаем нового главного админа
+    cursor.execute("""
+        INSERT OR REPLACE INTO admins (user_id, username, added_by, added_at, is_main_admin, can_add_admins)
+        VALUES (?, ?, ?, datetime('now'), 1, 1)
+    """, (new_main_id, username, user_id))
+    
+    # Обновляем users
+    cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (new_main_id,))
+    conn.commit()
+    
+    await message.answer(
+        f"✅ <b>Главный администратор изменён!</b>\n\n"
+        f"👑 Новый главный админ: ID <code>{new_main_id}</code> (@{username if username else 'нет username'})\n"
+        f"📌 Вы теперь обычный администратор."
+    )
+    
+    # Уведомляем нового главного админа
+    try:
+        await bot.send_message(
+            new_main_id,
+            f"👑 <b>Поздравляем!</b>\n\n"
+            f"Вы назначены главным администратором бота!\n"
+            f"Вам доступны все функции управления."
+        )
+    except:
+        pass
