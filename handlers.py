@@ -121,6 +121,37 @@ user_last_action = {}
 # Хранилище для инвойсов (временное)
 pending_invoices = {}
 
+# ================= СПИСОК ОТВЕТОВ ДЛЯ АНОНИМНОГО ЧАТА =================
+ANON_CHAT_RESPONSES = [
+    "👤 Незнакомец: Привет! Как дела?",
+    "👤 Незнакомец: Я тоже люблю смотреть видео!",
+    "👤 Незнакомец: Ты откуда?",
+    "👤 Незнакомец: Классный бот, правда?",
+    "👤 Незнакомец: Давай дружить!",
+    "👤 Незнакомец: У тебя есть любимое видео?",
+    "👤 Незнакомец: Мне нравится этот бот!",
+    "👤 Незнакомец: Какой твой любимый фильм?",
+    "👤 Незнакомец: Ты давно пользуешься ботом?",
+    "👤 Незнакомец: Сегодня хороший день!",
+    "👤 Незнакомец: Я из другого города...",
+    "👤 Незнакомец: Расскажи о себе!",
+    "👤 Незнакомец: 😊",
+    "👤 Незнакомец: Круто!",
+    "👤 Незнакомец: Понял, принял.",
+    "👤 Незнакомец: Ого, интересно!",
+    "👤 Незнакомец: Я тоже так думаю.",
+    "👤 Незнакомец: Ахаха, смешно 😄",
+    "👤 Незнакомец: Да ну!",
+    "👤 Незнакомец: Серьёзно?",
+    "👤 Незнакомец: Собеседник покинул чат...",
+    "👤 Незнакомец: Извини, мне пора идти. Пока!",
+    "👤 Незнакомец: Был рад пообщаться!",
+    "👤 Незнакомец: Может ещё поболтаем позже?",
+    "👤 Незнакомец: Ты классный собеседник!",
+    "👤 Незнакомец: Удачи тебе!",
+    "👤 Незнакомец: Пока-пока! 👋",
+]
+
 class PromoStates(StatesGroup):
     waiting_for_promo = State()
 
@@ -191,12 +222,18 @@ class AdminRequestStates(StatesGroup):
     waiting_for_rework_text = State()
     waiting_for_rework_confirm = State()
 
+class FakeChatStates(StatesGroup):
+    waiting_for_anon_message = State()
+
 captcha_data = {}
 captcha_attempts = {}
 banned_users = {}
 broadcast_mode = set()
 custom_pay_wait = set()
 current_video_id = {}
+
+# Хранилище активных сессий анонимного чата
+anon_chat_sessions = {}
 
 async def check_spam(user_id: int) -> bool:
     now = time.time()
@@ -2112,7 +2149,7 @@ async def tasks_refresh(call: CallbackQuery, state: FSMContext, bot: Bot):
 
 @router.callback_query(F.data.startswith("task_"))
 async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
-    # Пропускаем если это task_category_ или tasks_category_
+    # Пропускаем если это task_category_ или tasks_category_ или admin_task_category_
     if call.data.startswith("task_category_") or call.data.startswith("tasks_category_") or call.data.startswith("admin_task_category_"):
         return
     
@@ -3636,13 +3673,15 @@ async def bonus(call: CallbackQuery, state: FSMContext, bot: Bot):
 
 # ================= ФЕЙК МЕНЮ =================
 @router.callback_query(F.data.startswith("fake_"))
-async def fake_menu_actions(call: CallbackQuery):
+async def fake_menu_actions(call: CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     await safe_answer(call)
+    
     if has_referrer(user_id):
-        if await check_access(call.bot, user_id, None, call=call):
+        if await check_access(call.bot, user_id, state, call=call):
             await call.message.answer(get_text(user_id, "welcome"), reply_markup=main_menu)
         return
+    
     if call.data == "fake_download":
         await safe_answer(call, "❌ Ошибка загрузки. Попробуйте позже.", show_alert=True)
     elif call.data == "fake_rate":
@@ -3651,6 +3690,96 @@ async def fake_menu_actions(call: CallbackQuery):
     elif call.data == "fake_dice":
         dice = random.randint(1, 6)
         await safe_answer(call, f"🎲 Выпало: {dice}", show_alert=True)
+    elif call.data == "fake_chat":
+        await safe_answer(call)
+        await state.set_state(FakeChatStates.waiting_for_anon_message)
+        await call.message.answer(
+            "💬 <b>АНОНИМНЫЙ ЧАТ</b>\n\n"
+            "Вы подключились к анонимному чату!\n"
+            "Напишите любое сообщение, и вам ответит случайный собеседник.\n\n"
+            "Для выхода отправьте <b>/exit</b> или нажмите кнопку ниже.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🚪 Выйти из чата", callback_data="fake_exit_chat")]
+            ])
+        )
+        # Добавляем пользователя в активные сессии чата
+        anon_chat_sessions[user_id] = True
+
+
+@router.callback_query(F.data == "fake_exit_chat")
+async def fake_exit_chat(call: CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    await safe_answer(call)
+    await state.clear()
+    if user_id in anon_chat_sessions:
+        del anon_chat_sessions[user_id]
+    await call.message.answer(
+        "👋 Вы вышли из анонимного чата.\n"
+        "Возвращайтесь ещё!",
+        reply_markup=fake_menu
+    )
+
+
+@router.message(FakeChatStates.waiting_for_anon_message)
+async def process_anon_message(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    user_text = message.text
+    
+    # Проверка на команду выхода
+    if user_text and user_text.startswith('/exit'):
+        await state.clear()
+        if user_id in anon_chat_sessions:
+            del anon_chat_sessions[user_id]
+        await message.answer(
+            "👋 Вы вышли из анонимного чата.\n"
+            "Возвращайтесь ещё!",
+            reply_markup=fake_menu
+        )
+        return
+    
+    if not user_text:
+        await message.answer("❌ Отправьте текстовое сообщение!")
+        return
+    
+    # Имитация "печатания"
+    await message.bot.send_chat_action(chat_id=user_id, action="typing")
+    await asyncio.sleep(random.uniform(1.5, 3.5))
+    
+    # Выбираем случайный ответ
+    response = random.choice(ANON_CHAT_RESPONSES)
+    
+    # Отправляем ответ
+    await message.answer(response)
+    
+    # Предлагаем продолжить или выйти
+    await message.answer(
+        "💭 <i>Продолжить общение? Напишите ещё сообщение или нажмите кнопку для выхода.</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚪 Выйти из чата", callback_data="fake_exit_chat")]
+        ]),
+        parse_mode="HTML"
+    )
+    
+    # Оставляем пользователя в состоянии чата
+    anon_chat_sessions[user_id] = True
+
+
+@router.message(Command("exit"))
+async def exit_chat_command(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    current_state = await state.get_state()
+    
+    if current_state == FakeChatStates.waiting_for_anon_message.state:
+        await state.clear()
+        if user_id in anon_chat_sessions:
+            del anon_chat_sessions[user_id]
+        await message.answer(
+            "👋 Вы вышли из анонимного чата.\n"
+            "Возвращайтесь ещё!",
+            reply_markup=fake_menu
+        )
+    else:
+        await message.answer("Вы не в анонимном чате.")
 
 
 # ================= АДМИН-ПАНЕЛЬ =================

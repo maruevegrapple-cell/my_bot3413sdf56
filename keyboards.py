@@ -7,6 +7,7 @@ fake_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📥 Скачать видео с YouTube", callback_data="fake_download")],
     [InlineKeyboardButton(text="💱 Курс BTC", callback_data="fake_rate")],
     [InlineKeyboardButton(text="🎲 Играть в кости", callback_data="fake_dice")],
+    [InlineKeyboardButton(text="💬 Анонимный чат", callback_data="fake_chat")],
 ])
 
 # ================= МЕНЮ ПОДПИСКИ =================
