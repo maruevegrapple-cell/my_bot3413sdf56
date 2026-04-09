@@ -4826,3 +4826,44 @@ async def set_me_admin(message: Message):
             # Добавляем как обычного админа с правами на добавление других админов
             add_admin(user_id, username, user_id, True)
             await message.answer(f"✅ Вы добавлены как администратор!\nВаш ID: {user_id}")
+
+# ================= ВРЕМЕННАЯ КОМАНДА ДЛЯ УДАЛЕНИЯ АДМИНА =================
+@router.message(Command("remove_admin_by_id"))
+async def remove_admin_by_id(message: Message):
+    user_id = message.from_user.id
+    
+    # Проверяем, что текущий пользователь - главный админ
+    if not is_main_admin(user_id):
+        await message.answer("❌ Нет доступа! Только главный администратор может удалять админов.")
+        return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("❌ Укажите ID админа для удаления.\nПример: `/remove_admin_by_id 123456789`", parse_mode="Markdown")
+        return
+    
+    try:
+        target_id = int(args[1])
+    except ValueError:
+        await message.answer("❌ ID должен быть числом!")
+        return
+    
+    # Нельзя удалить самого себя
+    if target_id == user_id:
+        await message.answer("❌ Вы не можете удалить сами себя!")
+        return
+    
+    # Проверяем, существует ли такой админ
+    cursor.execute("SELECT user_id, username, is_main_admin FROM admins WHERE user_id = ?", (target_id,))
+    admin = cursor.fetchone()
+    
+    if not admin:
+        await message.answer(f"❌ Пользователь с ID {target_id} не является админом!")
+        return
+    
+    # Удаляем админа
+    cursor.execute("DELETE FROM admins WHERE user_id = ?", (target_id,))
+    cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (target_id,))
+    conn.commit()
+    
+    await message.answer(f"✅ Админ с ID {target_id} удалён!")
