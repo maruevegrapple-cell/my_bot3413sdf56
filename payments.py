@@ -4,7 +4,7 @@ from datetime import datetime
 from config import CRYPTOBOT_API, CRYPTOBOT_TOKEN, XROCKET_API_KEY, LOLZ_MERCHANT_SECRET_KEY, LOLZ_MERCHANT_ID
 
 # Ссылка на бота
-BOT_LINK = "https://t.me/AnonkaBot34bot"
+BOT_LINK = "https://t.me/AnonChatkarobot"
 
 # CryptoBot headers
 CRYPTOBOT_HEADERS = {
@@ -513,3 +513,13 @@ def reject_stars_payment(request_id: int) -> bool:
 
 
 print("✅ payments.py загружен")
+
+# ================= АКТИВАЦИЯ ПРЕМИУМ ПРОПУСКА ПОСЛЕ ОПЛАТЫ =================
+def activate_premium_battlepass_payment(user_id: int) -> bool:
+    """Активировать премиум пропуск после успешной оплаты"""
+    try:
+        from battlepass import activate_premium_battlepass_db
+        return activate_premium_battlepass_db(user_id)
+    except Exception as e:
+        print(f"❌ Ошибка activate_premium_battlepass_payment: {e}")
+        return False
