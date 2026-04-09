@@ -3,34 +3,34 @@ import json
 from datetime import datetime, timedelta
 from db import cursor, conn
 
-# Уровни боевого пропуска
+# Уровни боевого пропуска с повышенными наградами
 BATTLEPASS_LEVELS = {
-    1: {"exp": 0, "reward": 5, "premium_reward": 5},
-    2: {"exp": 50, "reward": 5, "premium_reward": 5},
-    3: {"exp": 100, "reward": 5, "premium_reward": 5},
-    4: {"exp": 150, "reward": 5, "premium_reward": 5},
-    5: {"exp": 200, "reward": 10, "premium_reward": 10},
-    6: {"exp": 250, "reward": 5, "premium_reward": 5},
-    7: {"exp": 300, "reward": 5, "premium_reward": 5},
-    8: {"exp": 350, "reward": 5, "premium_reward": 5},
-    9: {"exp": 400, "reward": 5, "premium_reward": 5},
-    10: {"exp": 450, "reward": 15, "premium_reward": 15},
-    11: {"exp": 500, "reward": 5, "premium_reward": 5},
-    12: {"exp": 550, "reward": 5, "premium_reward": 5},
-    13: {"exp": 600, "reward": 5, "premium_reward": 5},
-    14: {"exp": 650, "reward": 5, "premium_reward": 5},
-    15: {"exp": 700, "reward": 20, "premium_reward": 20},
-    16: {"exp": 750, "reward": 5, "premium_reward": 5},
-    17: {"exp": 800, "reward": 5, "premium_reward": 5},
-    18: {"exp": 850, "reward": 5, "premium_reward": 5},
-    19: {"exp": 900, "reward": 5, "premium_reward": 5},
-    20: {"exp": 950, "reward": 30, "premium_reward": 30},
+    1: {"exp": 0, "reward": 10, "premium_reward": 130},
+    2: {"exp": 50, "reward": 10, "premium_reward": 130},
+    3: {"exp": 100, "reward": 10, "premium_reward": 130},
+    4: {"exp": 150, "reward": 10, "premium_reward": 130},
+    5: {"exp": 200, "reward": 20, "premium_reward": 130},
+    6: {"exp": 250, "reward": 10, "premium_reward": 130},
+    7: {"exp": 300, "reward": 10, "premium_reward": 130},
+    8: {"exp": 350, "reward": 10, "premium_reward": 130},
+    9: {"exp": 400, "reward": 10, "premium_reward": 130},
+    10: {"exp": 450, "reward": 30, "premium_reward": 130},
+    11: {"exp": 500, "reward": 10, "premium_reward": 130},
+    12: {"exp": 550, "reward": 10, "premium_reward": 130},
+    13: {"exp": 600, "reward": 10, "premium_reward": 130},
+    14: {"exp": 650, "reward": 10, "premium_reward": 130},
+    15: {"exp": 700, "reward": 40, "premium_reward": 130},
+    16: {"exp": 750, "reward": 10, "premium_reward": 130},
+    17: {"exp": 800, "reward": 10, "premium_reward": 130},
+    18: {"exp": 850, "reward": 10, "premium_reward": 130},
+    19: {"exp": 900, "reward": 10, "premium_reward": 130},
+    20: {"exp": 950, "reward": 60, "premium_reward": 260},  # Последний уровень двойная награда
 }
 
 MAX_LEVEL = 20
 DAILY_EXP_LIMIT = 200
 PREMIUM_PRICE_STARS = 400
-PREMIUM_PRICE_USD = 5.0  # Цена в USD для криптооплаты
+PREMIUM_PRICE_USD = 5.0
 
 
 def init_battlepass_table():

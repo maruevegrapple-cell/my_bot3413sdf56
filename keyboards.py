@@ -55,7 +55,7 @@ video_menu = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # ================= МЕНЮ БОЕВОГО ПРОПУСКА =================
-def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, premium: bool, claimed_rewards: list, next_hourly_seconds: int = 0):
+def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, premium: bool, claimed_rewards: list, next_hourly_seconds: int = 0, total_earned: int = 0):
     from locales import get_text
     
     keyboard = []
@@ -66,7 +66,7 @@ def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, prem
     else:
         minutes = next_hourly_seconds // 60
         seconds = next_hourly_seconds % 60
-        keyboard.append([InlineKeyboardButton(text=f"⏰ 5 XP (через {minutes}:{seconds:02d})", callback_data="bp_hourly_disabled")])
+        keyboard.append([InlineKeyboardButton(text=f"⏰ 5 XP (через {minutes:02d}:{seconds:02d})", callback_data="bp_hourly_disabled")])
     
     # Кнопки для каждого уровня (1-20)
     row = []
@@ -99,53 +99,57 @@ def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, prem
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_battlepass_info_text(user_id: int, level: int, exp: int, daily_exp: int, premium: bool, claimed_rewards: list, next_hourly_seconds: int = 0):
+def get_battlepass_info_text(user_id: int, level: int, exp: int, daily_exp: int, premium: bool, claimed_rewards: list, next_hourly_seconds: int = 0, total_earned: int = 0):
     from locales import get_text
+    from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL
     
     next_level_exp = BATTLEPASS_LEVELS.get(level + 1, {}).get("exp", BATTLEPASS_LEVELS[level]["exp"])
     exp_to_next = next_level_exp - exp
-    
-    # Подсчёт доступных наград
-    available_rewards = 0
-    available_premium = 0
-    for lvl in range(1, level + 1):
-        if f"level_{lvl}" not in claimed_rewards:
-            available_rewards += BATTLEPASS_LEVELS[lvl]["reward"]
-        if premium and f"premium_{lvl}" not in claimed_rewards:
-            available_premium += BATTLEPASS_LEVELS[lvl]["premium_reward"]
     
     # Время до следующего бонуса
     hourly_text = ""
     if next_hourly_seconds > 0:
         minutes = next_hourly_seconds // 60
         seconds = next_hourly_seconds % 60
-        hourly_text = f"\n⏰ Следующий бонус: {minutes}:{seconds:02d}"
+        hourly_text = f"⏰ Следующий бонус: {minutes:02d}:{seconds:02d}"
+    else:
+        hourly_text = "⏰ Бонус доступен!"
     
-    text = f"🎖 <b>{get_text(user_id, 'battlepass_title')}</b>\n\n"
-    text += f"📊 {get_text(user_id, 'battlepass_level')}: {level}/{MAX_LEVEL}\n"
-    text += f"⭐️ {get_text(user_id, 'battlepass_exp')}: {exp}/{next_level_exp}\n"
-    text += f"📈 {get_text(user_id, 'battlepass_next')}: {exp_to_next} XP\n"
-    text += f"📅 {get_text(user_id, 'battlepass_daily')}: {daily_exp}/{DAILY_EXP_LIMIT} XP{hourly_text}\n\n"
+    # Подсчёт заработанных конфет
+    earned_from_free = 0
+    earned_from_premium = 0
+    for lvl in range(1, level + 1):
+        if f"level_{lvl}" in claimed_rewards:
+            earned_from_free += BATTLEPASS_LEVELS[lvl]["reward"]
+        if premium and f"premium_{lvl}" in claimed_rewards:
+            earned_from_premium += BATTLEPASS_LEVELS[lvl]["premium_reward"]
+    
+    total_candies = earned_from_free + earned_from_premium
+    
+    text = f"🎖 <b>Боевой пропуск!</b>\n\n"
+    text += f"📊 <b>Твой уровень сейчас:</b> {level}/20\n"
+    text += f"📈 <b>До следующего уровня:</b> {exp_to_next} XP\n"
+    text += f"{hourly_text}\n\n"
+    text += f"🍬 <b>Ты заработал конфет с пропуском:</b> {total_candies} 🍬\n"
     
     if premium:
-        text += f"💎 {get_text(user_id, 'battlepass_premium_active')}\n"
-        text += f"🎁 {get_text(user_id, 'battlepass_available')}: {available_rewards + available_premium} 🍬\n"
-    else:
-        text += f"🔓 {get_text(user_id, 'battlepass_premium_buy')}\n"
-        text += f"🎁 {get_text(user_id, 'battlepass_available')}: {available_rewards} 🍬\n"
+        text += f"\n💎 <b>Премиум пропуск активен!</b>\n"
+        text += f"🎁 Доступно премиум наград: {sum(BATTLEPASS_LEVELS[lvl]['premium_reward'] for lvl in range(1, level + 1) if f'premium_{lvl}' not in claimed_rewards)} 🍬"
     
     return text
 
 
-def get_battlepass_premium_menu(user_id: int):
+def get_battlepass_premium_menu(user_id: int, pack_amount: int = 0, usd_amount: float = PREMIUM_PRICE_USD, stars_amount: int = PREMIUM_PRICE_STARS):
     """Меню выбора способа оплаты премиум пропуска"""
     from locales import get_text
     
     keyboard = [
-        [InlineKeyboardButton(text="⭐️ Оплатить звездами (400 ⭐️)", callback_data="bp_pay_stars")],
-        [InlineKeyboardButton(text="💰 Оплатить криптовалютой ($5)", callback_data="bp_pay_crypto")],
+        [InlineKeyboardButton(text="🪙 CryptoBot", callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")],
+        [InlineKeyboardButton(text="💎 xRocket", callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")],
+        [InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="battlepass_menu")]
     ]
+    
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -164,6 +168,9 @@ def get_shop_menu(balance: int = 0):
         [
             InlineKeyboardButton(text="💎 Премиум Подписки", callback_data="subscriptions_menu"),
             InlineKeyboardButton(text="🔐 ПРИВАТКА", callback_data="buy_private")
+        ],
+        [
+            InlineKeyboardButton(text="🎖 Боевой пропуск", callback_data="battlepass_menu")
         ],
         [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
     ]
@@ -343,7 +350,7 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
             InlineKeyboardButton(text="🔐 Управление ОП", callback_data="admin_op")
         ],
         [
-            InlineKeyboardButton(text="📹 Загрузить видео", callback_data="admin_upload_url"),
+            InlineKeyboardButton(text="🎖 Выдать пропуск", callback_data="admin_give_battlepass"),
             InlineKeyboardButton(text="📋 Управление заданиями", callback_data="admin_tasks")
         ],
         [

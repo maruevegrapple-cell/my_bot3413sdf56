@@ -90,7 +90,8 @@ from payments import (
     add_stars_payment_request,
     get_stars_payment_request,
     approve_stars_payment,
-    reject_stars_payment
+    reject_stars_payment,
+    activate_premium_battlepass_payment
 )
 from locales import get_text, set_user_language, get_user_language
 from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL, PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD
@@ -1118,7 +1119,7 @@ async def battlepass_buy_premium(call: CallbackQuery, state: FSMContext, bot: Bo
     
     await call.message.answer(
         f"💎 <b>ПРЕМИУМ БОЕВОЙ ПРОПУСК</b>\n\n"
-        f"Премиум пропуск даёт двойные награды за каждый уровень!\n\n"
+        f"Премиум пропуск даёт 130 🍬 за каждый уровень!\n"
         f"💰 Стоимость: {PREMIUM_PRICE_STARS} ⭐️ или ${PREMIUM_PRICE_USD}\n\n"
         f"Выберите способ оплаты:",
         reply_markup=get_battlepass_premium_menu(user_id)
@@ -1134,6 +1135,12 @@ async def battlepass_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot)
         return
     if not await check_access(bot, user_id, state, call=call):
         return
+    
+    # Создаём заявку на оплату звёздами
+    from db import add_stars_payment_request_db
+    request_id = add_stars_payment_request_db(user_id, "", 0, PREMIUM_PRICE_STARS, None)
+    
+    await state.update_data(pending_premium_request_id=request_id)
     
     await call.message.answer(
         f"⭐️ <b>ОПЛАТА ПРЕМИУМ ПРОПУСКА ЗВЕЗДАМИ</b>\n\n"
@@ -1202,11 +1209,11 @@ async def check_premium_payment(call: CallbackQuery, state: FSMContext, bot: Bot
     result = check_invoice(invoice_id, method="cryptobot")
     
     if result.get("paid", False):
-        if activate_premium_battlepass_db(user_id):
+        if activate_premium_battlepass_payment(user_id):
             await safe_answer(call, "✅ Премиум пропуск активирован!", show_alert=True)
             await call.message.answer(
                 f"🎉 <b>ПРЕМИУМ ПРОПУСК АКТИВИРОВАН!</b>\n\n"
-                f"Теперь вы получаете двойные награды за каждый уровень!\n"
+                f"Теперь вы получаете 130 🍬 за каждый уровень!\n"
                 f"Заберите свои награды в меню боевого пропуска."
             )
             
@@ -1230,6 +1237,63 @@ async def check_premium_payment(call: CallbackQuery, state: FSMContext, bot: Bot
             await call.message.answer("❌ Ошибка при активации пропуска")
     else:
         await call.message.answer("⏳ Платёж ещё не оплачен")
+
+
+# ================= АДМИН - ВЫДАТЬ ПРОПУСК =================
+@router.callback_query(F.data == "admin_give_battlepass")
+async def admin_give_battlepass(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    if not check_admin_access(user_id)[0]:
+        await safe_answer(call, "❌ Нет доступа", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    await state.set_state(AdminStates.waiting_for_user_info)
+    await call.message.answer("👤 Введите ID пользователя для выдачи премиум пропуска:")
+
+
+@router.message(AdminStates.waiting_for_user_info)
+async def admin_give_battlepass_user(message: Message, state: FSMContext, bot: Bot):
+    admin_id = message.from_user.id
+    if not check_admin_access(admin_id)[0]:
+        return
+    
+    try:
+        target_user_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ Введите корректный ID пользователя (число)")
+        return
+    
+    # Проверяем существование пользователя
+    cursor.execute("SELECT user_id, username FROM users WHERE user_id = ?", (target_user_id,))
+    user = cursor.fetchone()
+    
+    if not user:
+        await message.answer(f"❌ Пользователь с ID {target_user_id} не найден")
+        await state.clear()
+        return
+    
+    # Активируем премиум пропуск
+    if activate_premium_battlepass_db(target_user_id):
+        await message.answer(
+            f"✅ Премиум пропуск выдан пользователю @{user['username'] or 'нет username'} (ID: {target_user_id})!\n\n"
+            f"Теперь он получает 130 🍬 за каждый уровень боевого пропуска."
+        )
+        
+        # Уведомляем пользователя
+        try:
+            await bot.send_message(
+                target_user_id,
+                f"🎉 <b>Вам выдан премиум боевой пропуск!</b>\n\n"
+                f"Теперь вы получаете 130 🍬 за каждый уровень!\n"
+                f"Заберите свои награды в меню боевого пропуска."
+            )
+        except:
+            pass
+    else:
+        await message.answer("❌ Ошибка при выдаче пропуска")
+    
+    await state.clear()
 
 
 # ================= МАГАЗИН =================
@@ -1648,11 +1712,23 @@ async def back_to_payment_methods(call: CallbackQuery, state: FSMContext, bot: B
         return
     
     parts = call.data.split("_")
-    pack_amount = int(parts[4])
-    usd_amount = float(parts[5])
+    # Формат: back_to_payment_methods_{pack_amount}_{usd_amount}
+    # или back_to_payment_methods_{pack_amount} (если нет usd_amount)
+    
+    if len(parts) >= 5:
+        pack_amount = int(parts[4])
+        if len(parts) >= 6:
+            usd_amount = float(parts[5])
+        else:
+            # Если нет usd_amount, получаем из CANDY_PACKS
+            usd_amount = CANDY_PACKS.get(pack_amount, {}).get("usd", 0)
+    else:
+        # Fallback
+        pack_amount = 35
+        usd_amount = CANDY_PACKS.get(pack_amount, {}).get("usd", 0.30)
     
     pack_info = CANDY_PACKS.get(pack_amount)
-    stars_amount = pack_info["stars"]
+    stars_amount = pack_info["stars"] if pack_info else 0
     
     await call.message.edit_text(
         f"{get_text(user_id, 'selected_candies').format(pack_amount)}\n\n"
