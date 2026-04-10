@@ -1,5 +1,5 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import SPONSOR_SERVICE_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD, CANDY_PACKS
+from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD, CANDY_PACKS
 from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL, DAILY_EXP_LIMIT, PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD
 
 # ================= ФЕЙК МЕНЮ =================
@@ -12,8 +12,8 @@ fake_menu = InlineKeyboardMarkup(inline_keyboard=[
 
 # ================= МЕНЮ ПОДПИСКИ =================
 subscribe_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="📢 ССЫЛКА, ПОДПИШИСЬ НА ВСЕХ!", url=SPONSOR_SERVICE_LINK)],
-    [InlineKeyboardButton(text="✅ Я ПОДПИСАЛСЯ", callback_data="check_subscribe")]
+    [InlineKeyboardButton(text="📢 Подписаться на канал", url=CHANNEL_LINK)],
+    [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_subscribe")]
 ])
 
 # ================= ОСНОВНОЕ МЕНЮ =================
@@ -36,7 +36,7 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")
     ],
     [
-        InlineKeyboardButton(text="📢 Наш канал", url=SPONSOR_SERVICE_LINK),
+        InlineKeyboardButton(text="📢 Наш канал", url=CHANNEL_LINK),
         InlineKeyboardButton(text="🌐 Language", callback_data="show_languages")
     ]
 ])
