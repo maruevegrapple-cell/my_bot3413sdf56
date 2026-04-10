@@ -34,7 +34,7 @@ SUBSCRIBE_BONUS = int(os.environ.get("SUBSCRIBE_BONUS", "20"))  # Изменен
 
 # ================= CHANNEL (PIARFLOW ИНТЕГРАЦИЯ) =================
 # Ссылка на сервис PiarFlow со спонсорами (показываем пользователю)
-SPONSOR_SERVICE_LINK = "https://t.me/PiarFlowBot?start=tl_L4YjJXWEWN"
+SPONSOR_SERVICE_LINK = "https://t.me/PiarFlowBot?start=tl_bhRsNENYWu"
 
 # Конечный канал для проверки подписки (куда ведет PiarFlow после подписки на всех)
 # !!! ВАЖНО: Это ваш целевой канал, на который проверяется подписка !!!
