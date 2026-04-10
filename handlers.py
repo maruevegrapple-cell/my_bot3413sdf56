@@ -26,7 +26,8 @@ from config import (
     BONUS_COOLDOWN,
     REF_BONUS,
     REF_PERCENT,
-    CHANNEL_ID,
+    TARGET_CHANNEL_ID,       # ИЗМЕНЕНО: проверяем подписку на целевой канал
+    SPONSOR_SERVICE_LINK,    # ИЗМЕНЕНО: ссылка на PiarFlow
     SUBSCRIBE_BONUS,
     ANON_CHAT_LINK,
     PRIVATE_PRICE_USD,
@@ -258,8 +259,9 @@ def is_banned(user_id: int) -> tuple:
     return False, None
 
 async def check_subscription(bot, user_id: int) -> bool:
+    """Проверяет подписку на ЦЕЛЕВОЙ канал (куда ведет PiarFlow)"""
     try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        member = await bot.get_chat_member(chat_id=TARGET_CHANNEL_ID, user_id=user_id)
         return member.status not in ["left", "kicked"]
     except:
         return False
@@ -318,12 +320,16 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
         await state.set_state(SubscribeStates.waiting_for_subscribe)
         if message:
             await message.answer(
-                get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
+                "👋 <b>Привет, для доступа к выпечке нажми на кнопку ниже</b> 👇\n\n"
+                "📢 <b>ССЫЛКА, ПОДПИШИСЬ НА ВСЕХ!</b>\n\n"
+                f"🎁 <b>Бонус за подписку:</b> +{SUBSCRIBE_BONUS} 🍬",
                 reply_markup=subscribe_menu
             )
         elif call:
             await call.message.answer(
-                get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
+                "👋 <b>Привет, для доступа к выпечке нажми на кнопку ниже</b> 👇\n\n"
+                "📢 <b>ССЫЛКА, ПОДПИШИСЬ НА ВСЕХ!</b>\n\n"
+                f"🎁 <b>Бонус за подписку:</b> +{SUBSCRIBE_BONUS} 🍬",
                 reply_markup=subscribe_menu
             )
         return False
@@ -830,7 +836,9 @@ async def start(message: Message, state: FSMContext, bot: Bot):
             if not is_subscribed:
                 await state.set_state(SubscribeStates.waiting_for_subscribe)
                 await message.answer(
-                    get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
+                    "👋 <b>Привет, для доступа к выпечке нажми на кнопку ниже</b> 👇\n\n"
+                    "📢 <b>ССЫЛКА, ПОДПИШИСЬ НА ВСЕХ!</b>\n\n"
+                    f"🎁 <b>Бонус за подписку:</b> +{SUBSCRIBE_BONUS} 🍬",
                     reply_markup=subscribe_menu
                 )
                 return
@@ -888,7 +896,9 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         if not is_subscribed:
             await state.set_state(SubscribeStates.waiting_for_subscribe)
             await message.answer(
-                get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
+                "👋 <b>Привет, для доступа к выпечке нажми на кнопку ниже</b> 👇\n\n"
+                "📢 <b>ССЫЛКА, ПОДПИШИСЬ НА ВСЕХ!</b>\n\n"
+                f"🎁 <b>Бонус за подписку:</b> +{SUBSCRIBE_BONUS} 🍬",
                 reply_markup=subscribe_menu
             )
             return
@@ -1020,7 +1030,9 @@ async def process_math_captcha(message: Message, state: FSMContext, bot: Bot):
         if not is_subscribed:
             await state.set_state(SubscribeStates.waiting_for_subscribe)
             await message.answer(
-                get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
+                "👋 <b>Привет, для доступа к выпечке нажми на кнопку ниже</b> 👇\n\n"
+                "📢 <b>ССЫЛКА, ПОДПИШИСЬ НА ВСЕХ!</b>\n\n"
+                f"🎁 <b>Бонус за подписку:</b> +{SUBSCRIBE_BONUS} 🍬",
                 reply_markup=subscribe_menu
             )
         else:
@@ -1063,7 +1075,7 @@ async def process_math_captcha(message: Message, state: FSMContext, bot: Bot):
         )
 
 @router.callback_query(F.data == "check_subscribe")
-async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
+async def check_subscribe_handler(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
     
     print(f"🔍 check_subscribe: user {user_id} нажал кнопку")
@@ -1118,7 +1130,7 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
         else:
             await call.message.answer(get_text(user_id, "welcome"), reply_markup=main_menu)
     else:
-        await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
+        await safe_answer(call, "❌ Вы не подписались на спонсоров! Подпишитесь на всех и нажмите кнопку снова.", show_alert=True)
 
 # ================= ВЫБОР ЯЗЫКА =================
 @router.callback_query(F.data == "show_languages")

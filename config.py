@@ -30,11 +30,22 @@ BONUS_AMOUNT = int(os.environ.get("BONUS_AMOUNT", "3"))
 BONUS_COOLDOWN = 10800  # 3 часа
 REF_BONUS = int(os.environ.get("REF_BONUS", "6"))
 REF_PERCENT = int(os.environ.get("REF_PERCENT", "10"))
-SUBSCRIBE_BONUS = int(os.environ.get("SUBSCRIBE_BONUS", "6"))
+SUBSCRIBE_BONUS = int(os.environ.get("SUBSCRIBE_BONUS", "20"))  # Изменено на 20
 
-# ================= CHANNEL =================
-CHANNEL_LINK = os.environ.get("CHANNEL_LINK", "https://t.me/+Dn7pNdHVYPM4ODgx")
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003707313473"))
+# ================= CHANNEL (PIARFLOW ИНТЕГРАЦИЯ) =================
+# Ссылка на сервис PiarFlow со спонсорами (показываем пользователю)
+SPONSOR_SERVICE_LINK = "https://t.me/PiarFlowBot?start=tl_L4YjJXWEWN"
+
+# Конечный канал для проверки подписки (куда ведет PiarFlow после подписки на всех)
+# !!! ВАЖНО: Это ваш целевой канал, на который проверяется подписка !!!
+TARGET_CHANNEL_ID = int(os.environ.get("TARGET_CHANNEL_ID", "-1003707313473"))
+TARGET_CHANNEL_LINK = os.environ.get("TARGET_CHANNEL_LINK", "https://t.me/+Dn7pNdHVYPM4ODgx")
+
+# Для обратной совместимости (используется в коде бота)
+CHANNEL_LINK = SPONSOR_SERVICE_LINK  # Пользователю показываем ссылку на PiarFlow
+CHANNEL_ID = TARGET_CHANNEL_ID  # Проверяем подписку на целевой канал
+
+# ================= ANON CHAT (ДЛЯ ОПЛАТ) =================
 ANON_CHAT_LINK = os.environ.get("ANON_CHAT_LINK", "https://t.me/anonaskbot?start=f21rnoq")
 
 # ================= PRIVATE (ПРИВАТКА) =================
@@ -134,7 +145,9 @@ SPAM_COOLDOWN = int(os.environ.get("SPAM_COOLDOWN", "3"))
 print("✅ Конфигурация загружена!")
 print(f"🤖 BOT_TOKEN: {BOT_TOKEN[:10]}...")
 print(f"👑 MAIN_ADMIN_ID: {MAIN_ADMIN_ID}")
-print(f"📢 Канал: {CHANNEL_LINK}")
+print(f"🔗 PiarFlow ссылка: {SPONSOR_SERVICE_LINK}")
+print(f"📢 Целевой канал: {TARGET_CHANNEL_LINK} (ID: {TARGET_CHANNEL_ID})")
+print(f"🎁 Бонус за подписку: {SUBSCRIBE_BONUS} 🍬")
 print(f"⭐️ Оплата звездами: через {ANON_CHAT_LINK}")
 print(f"💰 Оплата криптовалютой: через CryptoBot")
 print(f"💎 Оплата xRocket: {'включена' if XROCKET_API_KEY else 'выключена'}")
