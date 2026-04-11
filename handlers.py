@@ -188,6 +188,13 @@ class AdminStates(StatesGroup):
     waiting_for_user_subscriptions = State()
     waiting_for_rework_confirm = State()
     waiting_for_task_category = State()
+    waiting_for_auto_edit_task_id = State()
+    waiting_for_auto_edit_task_title = State()
+    waiting_for_auto_edit_task_description = State()
+    waiting_for_auto_edit_task_reward = State()
+    waiting_for_auto_edit_task_max_completions = State()
+    waiting_for_auto_edit_task_category = State()
+    waiting_for_mirror_token = State()  # <--- ЭТУ СТРОКУ ДОБАВИТЬ
 
 class CaptchaStates(StatesGroup):
     waiting_for_captcha = State()
