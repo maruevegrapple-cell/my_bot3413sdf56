@@ -96,6 +96,27 @@ from payments import (
 from locales import get_text, set_user_language, get_user_language
 from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL, PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD
 
+from config import MAX_MIRRORS_PER_USER
+from db import (
+    get_user_mirror_bots_db, add_mirror_bot_db, remove_mirror_bot_db, toggle_mirror_bot_db,
+    get_mirror_bot_by_token_db, get_mirror_bot_by_id,
+    get_auto_tasks, get_auto_task, add_auto_task, remove_auto_task, update_auto_task,
+    get_user_auto_task_status, submit_auto_task, get_pending_auto_tasks,
+    approve_auto_task, reject_auto_task, get_auto_tasks_by_category,
+    get_auto_task_record_by_id, delete_auto_task_record_by_id
+)
+from keyboards import (
+    get_auto_categories_menu, get_auto_tasks_menu_by_category, get_auto_task_action_menu,
+    admin_auto_tasks_keyboard, get_auto_category_management_menu, get_auto_tasks_by_category_menu,
+    get_move_auto_category_menu, auto_task_category_keyboard, get_auto_requests_menu, get_auto_request_action_menu,
+    get_mirror_menu, get_my_mirrors_keyboard, get_mirror_details_keyboard, get_mirror_info_text, get_mirror_create_instruction,
+    get_mirrors_admin_menu
+)
+from mirrors import (
+    start_mirror_bot, stop_mirror_bot, add_mirror_bot_by_user, remove_mirror_bot_by_user,
+    get_all_mirror_bots, remove_mirror_bot, stop_all_mirror_bots, start_all_mirror_bots
+)
+
 # Импорт Lolz платежей
 try:
     from lolz_payments import create_lolz_invoice, check_lolz_payment
@@ -5789,3 +5810,233 @@ def get_main_router_for_mirror():
             continue
         mirror_router.include_router(handler)
     return mirror_router
+
+# ================= ЗЕРКАЛА ДЛЯ ПОЛЬЗОВАТЕЛЕЙ =================
+@router.callback_query(F.data == "mirror_menu")
+async def mirror_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    if await check_spam(user_id):
+        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    await safe_answer(call)
+    await call.message.answer(
+        "🪞 <b>БОТ-ЗЕРКАЛО</b>\n\n"
+        "Создайте копию бота для себя и друзей!\n"
+        "Все данные синхронизируются.\n\n"
+        "• Если основной бот заблокируют — вы продолжите пользоваться зеркалом\n"
+        "• Вы можете приглашать друзей через своё зеркало\n"
+        "• Все данные синхронизируются\n"
+        "• Ваш баланс и прогресс сохраняются",
+        reply_markup=get_mirror_menu(user_id)
+    )
+
+@router.callback_query(F.data == "mirror_info")
+async def mirror_info(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    if await check_spam(user_id):
+        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    await safe_answer(call)
+    await call.message.answer(get_mirror_info_text())
+
+@router.callback_query(F.data == "mirror_create")
+async def mirror_create_start(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    if await check_spam(user_id):
+        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    user_mirrors = get_user_mirror_bots_db(user_id)
+    if len(user_mirrors) >= MAX_MIRRORS_PER_USER:
+        await safe_answer(call, "❌ Вы достигли лимита зеркал (3 шт.)", show_alert=True)
+        return
+    
+    await state.set_state(MirrorStates.waiting_for_token)
+    await safe_answer(call)
+    await call.message.answer(
+        "🪞 <b>СОЗДАНИЕ ЗЕРКАЛА</b>\n\n"
+        "1. Напишите @BotFather\n"
+        "2. Отправьте /newbot\n"
+        "3. Придумайте имя и username\n"
+        "4. Скопируйте токен\n"
+        "5. Вставьте токен сюда:\n\n"
+        "Пример: <code>1234567890:ABCdefGHIjklMNOpqrsTUVwxyz</code>"
+    )
+
+@router.message(MirrorStates.waiting_for_token)
+async def mirror_create_token(message: Message, state: FSMContext, bot: Bot):
+    user_id = message.from_user.id
+    token = message.text.strip()
+    
+    if len(get_user_mirror_bots_db(user_id)) >= MAX_MIRRORS_PER_USER:
+        await message.answer("❌ Лимит зеркал (3 шт.)")
+        await state.clear()
+        return
+    
+    existing = get_mirror_bot_by_token_db(token)
+    if existing:
+        await message.answer("❌ Этот бот уже зарегистрирован как зеркало!")
+        await state.clear()
+        return
+    
+    status_msg = await message.answer("🔄 Проверяю токен...")
+    
+    try:
+        from aiogram import Bot
+        test_bot = Bot(token=token)
+        me = await test_bot.get_me()
+        await test_bot.session.close()
+        
+        success, result = add_mirror_bot_by_user(token, me.username, user_id)
+        if success:
+            await start_mirror_bot(token, me.username)
+            await status_msg.delete()
+            await message.answer(
+                f"✅ <b>Зеркало создано!</b>\n\n"
+                f"🤖 @{me.username}\n"
+                f"🆔 ID: {result}\n\n"
+                f"Теперь вы можете приглашать друзей через своего бота!\n"
+                f"🔗 https://t.me/{me.username}"
+            )
+        else:
+            await status_msg.edit_text(f"❌ Ошибка: {result}")
+    except Exception as e:
+        await status_msg.edit_text("❌ Неверный токен. Проверьте и попробуйте снова.")
+    
+    await state.clear()
+
+@router.callback_query(F.data == "mirror_my_list")
+async def mirror_my_list(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    if await check_spam(user_id):
+        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    mirrors = get_user_mirror_bots_db(user_id)
+    if not mirrors:
+        await safe_answer(call, "📭 У вас нет созданных зеркал", show_alert=True)
+        return
+    
+    await safe_answer(call)
+    
+    keyboard = []
+    for m in mirrors:
+        status = "✅" if m["is_active"] else "❌"
+        username = m.get("bot_username") or "без юзернейма"
+        keyboard.append([InlineKeyboardButton(text=f"{status} @{username}", callback_data=f"mirror_details_{m['id']}")])
+    
+    keyboard.append([InlineKeyboardButton(text="➕ Создать новое зеркало", callback_data="mirror_create")])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="menu")])
+    
+    await call.message.answer("🪞 <b>ВАШИ ЗЕРКАЛА</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+@router.callback_query(F.data.startswith("mirror_details_"))
+async def mirror_details(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    mirror_id = int(call.data.replace("mirror_details_", ""))
+    mirror = get_mirror_bot_by_id(mirror_id)
+    
+    if not mirror or mirror["added_by"] != user_id:
+        await safe_answer(call, "❌ Зеркало не найдено", show_alert=True)
+        return
+    
+    status_text = "✅ Активно" if mirror["is_active"] else "❌ Неактивно"
+    username = mirror["bot_username"] or "без юзернейма"
+    created_at = mirror["added_at"][:16] if mirror["added_at"] else "неизвестно"
+    
+    text = (
+        f"🪞 <b>ДЕТАЛИ ЗЕРКАЛА</b>\n\n"
+        f"{status_text}\n"
+        f"🤖 Username: @{username}\n"
+        f"🆔 ID: {mirror['id']}\n"
+        f"📅 Создано: {created_at}\n"
+        f"🔗 Ссылка: https://t.me/{username}"
+    )
+    
+    keyboard = []
+    if mirror["is_active"]:
+        keyboard.append([InlineKeyboardButton(text="⏸ Остановить зеркало", callback_data=f"mirror_stop_{mirror['id']}")])
+    else:
+        keyboard.append([InlineKeyboardButton(text="▶️ Запустить зеркало", callback_data=f"mirror_start_{mirror['id']}")])
+    
+    keyboard.append([InlineKeyboardButton(text="🔄 Перезапустить", callback_data=f"mirror_restart_{mirror['id']}")])
+    keyboard.append([InlineKeyboardButton(text="🗑 Удалить зеркало", callback_data=f"mirror_delete_{mirror['id']}")])
+    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="mirror_my_list")])
+    
+    await safe_answer(call)
+    await call.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
+
+@router.callback_query(F.data.startswith("mirror_start_"))
+async def mirror_start(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    mirror_id = int(call.data.replace("mirror_start_", ""))
+    mirror = get_mirror_bot_by_id(mirror_id)
+    
+    if not mirror or mirror["added_by"] != user_id:
+        await safe_answer(call, "❌ Зеркало не найдено", show_alert=True)
+        return
+    
+    if toggle_mirror_bot_db(mirror_id, True):
+        await start_mirror_bot(mirror["bot_token"], mirror["bot_username"])
+        await safe_answer(call, "✅ Зеркало запущено", show_alert=True)
+        await mirror_details(call, state, bot)
+    else:
+        await safe_answer(call, "❌ Ошибка", show_alert=True)
+
+@router.callback_query(F.data.startswith("mirror_stop_"))
+async def mirror_stop(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    mirror_id = int(call.data.replace("mirror_stop_", ""))
+    mirror = get_mirror_bot_by_id(mirror_id)
+    
+    if not mirror or mirror["added_by"] != user_id:
+        await safe_answer(call, "❌ Зеркало не найдено", show_alert=True)
+        return
+    
+    if toggle_mirror_bot_db(mirror_id, False):
+        await stop_mirror_bot(mirror["bot_token"])
+        await safe_answer(call, "⏸ Зеркало остановлено", show_alert=True)
+        await mirror_details(call, state, bot)
+    else:
+        await safe_answer(call, "❌ Ошибка", show_alert=True)
+
+@router.callback_query(F.data.startswith("mirror_restart_"))
+async def mirror_restart(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    mirror_id = int(call.data.replace("mirror_restart_", ""))
+    mirror = get_mirror_bot_by_id(mirror_id)
+    
+    if not mirror or mirror["added_by"] != user_id:
+        await safe_answer(call, "❌ Зеркало не найдено", show_alert=True)
+        return
+    
+    await stop_mirror_bot(mirror["bot_token"])
+    await asyncio.sleep(1)
+    await start_mirror_bot(mirror["bot_token"], mirror["bot_username"])
+    await safe_answer(call, "🔄 Зеркало перезапущено", show_alert=True)
+
+@router.callback_query(F.data.startswith("mirror_delete_"))
+async def mirror_delete(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    mirror_id = int(call.data.replace("mirror_delete_", ""))
+    mirror = get_mirror_bot_by_id(mirror_id)
+    
+    if not mirror or mirror["added_by"] != user_id:
+        await safe_answer(call, "❌ Зеркало не найдено", show_alert=True)
+        return
+    
+    await stop_mirror_bot(mirror["bot_token"])
+    
+    if remove_mirror_bot_by_user(mirror_id, user_id):
+        await safe_answer(call, "✅ Зеркало удалено", show_alert=True)
+        await call.message.delete()
+    else:
+        await safe_answer(call, "❌ Ошибка", show_alert=True)
