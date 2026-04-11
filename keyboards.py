@@ -36,7 +36,7 @@ main_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")
     ],
     [
-        InlineKeyboardButton(text="📢 Наш канал", url=CHANNEL_LINK),
+        InlineKeyboardButton(text="🔗 Резерв", url="https://t.me/+gx5QzOgi-Ro3Nzdl"),
         InlineKeyboardButton(text="🌐 Language", callback_data="show_languages")
     ]
 ])
@@ -63,11 +63,11 @@ def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, prem
     
     # Кнопка ежечасного бонуса
     if next_hourly_seconds == 0:
-        keyboard.append([InlineKeyboardButton(text="⏰ Забрать 5 XP", callback_data="bp_hourly")])
+        keyboard.append([InlineKeyboardButton(text=get_text(user_id, "battlepass_claim_hourly"), callback_data="bp_hourly")])
     else:
         minutes = next_hourly_seconds // 60
         seconds = next_hourly_seconds % 60
-        keyboard.append([InlineKeyboardButton(text=f"⏰ 5 XP (через {minutes:02d}:{seconds:02d})", callback_data="bp_hourly_disabled")])
+        keyboard.append([InlineKeyboardButton(text=get_text(user_id, "battlepass_claim_hourly_wait").format(f"{minutes:02d}", f"{seconds:02d}"), callback_data="bp_hourly_disabled")])
     
     # Кнопки для каждого уровня (1-20)
     row = []
@@ -91,11 +91,14 @@ def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, prem
     if row:
         keyboard.append(row)
     
+    # Кнопка заданий боевого пропуска
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "battlepass_tasks"), callback_data="bp_tasks_menu")])
+    
     # Кнопка покупки премиум пропуска (если ещё не куплен)
     if not premium:
-        keyboard.append([InlineKeyboardButton(text="💎 Купить премиум пропуск", callback_data="bp_buy_premium")])
+        keyboard.append([InlineKeyboardButton(text=get_text(user_id, "battlepass_buy_premium"), callback_data="bp_buy_premium")])
     
-    keyboard.append([InlineKeyboardButton(text="🏠 В меню", callback_data="menu")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")])
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -112,9 +115,9 @@ def get_battlepass_info_text(user_id: int, level: int, exp: int, daily_exp: int,
     if next_hourly_seconds > 0:
         minutes = next_hourly_seconds // 60
         seconds = next_hourly_seconds % 60
-        hourly_text = f"⏰ Следующий бонус: {minutes:02d}:{seconds:02d}"
+        hourly_text = get_text(user_id, "battlepass_bonus").format(f"{minutes:02d}:{seconds:02d}")
     else:
-        hourly_text = "⏰ Бонус доступен!"
+        hourly_text = get_text(user_id, "battlepass_bonus_available")
     
     # Подсчёт заработанных конфет
     earned_from_free = 0
@@ -127,15 +130,18 @@ def get_battlepass_info_text(user_id: int, level: int, exp: int, daily_exp: int,
     
     total_candies = earned_from_free + earned_from_premium
     
-    text = f"🎖 <b>Боевой пропуск!</b>\n\n"
-    text += f"📊 <b>Твой уровень сейчас:</b> {level}/20\n"
-    text += f"📈 <b>До следующего уровня:</b> {exp_to_next} XP\n"
-    text += f"{hourly_text}\n\n"
-    text += f"🍬 <b>Ты заработал конфет с пропуском:</b> {total_candies} 🍬\n"
+    text = get_text(user_id, "battlepass_title") + "\n\n"
+    text += get_text(user_id, "battlepass_level").format(level) + "\n"
+    text += get_text(user_id, "battlepass_next").format(exp_to_next) + "\n"
+    text += hourly_text + "\n"
+    text += get_text(user_id, "battlepass_how_get_xp") + "\n\n"
+    text += get_text(user_id, "battlepass_earned").format(total_candies) + "\n"
     
     if premium:
-        text += f"\n💎 <b>Премиум пропуск активен!</b>\n"
-        text += f"🎁 Доступно премиум наград: {sum(BATTLEPASS_LEVELS[lvl]['premium_reward'] for lvl in range(1, level + 1) if f'premium_{lvl}' not in claimed_rewards)} 🍬"
+        text += "\n" + get_text(user_id, "battlepass_premium_active") + "\n"
+        text += get_text(user_id, "battlepass_premium_available").format(
+            sum(BATTLEPASS_LEVELS[lvl]['premium_reward'] for lvl in range(1, level + 1) if f'premium_{lvl}' not in claimed_rewards)
+        )
     
     return text
 
@@ -145,66 +151,83 @@ def get_battlepass_premium_menu(user_id: int, pack_amount: int = 0, usd_amount: 
     from locales import get_text
     
     keyboard = [
-        [InlineKeyboardButton(text="🪙 CryptoBot", callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")],
-        [InlineKeyboardButton(text="💎 xRocket", callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")],
-        [InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="battlepass_menu")]
+        [InlineKeyboardButton(text=get_text(user_id, "payment_crypto"), callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")],
+        [InlineKeyboardButton(text=get_text(user_id, "payment_xrocket"), callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")],
+        [InlineKeyboardButton(text=get_text(user_id, "payment_stars"), callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")],
+        [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="battlepass_menu")]
     ]
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 # ================= МЕНЮ МАГАЗИНА =================
-def get_shop_menu(balance: int = 0):
+def get_shop_menu(balance: int = 0, user_id: int = None):
     """Главное меню магазина с паками конфет, подписками и приваткой"""
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
     keyboard = [
         [
-            InlineKeyboardButton(text="20 🍬", callback_data="buy_pack_20"),
-            InlineKeyboardButton(text="35 🍬", callback_data="buy_pack_35"),
-            InlineKeyboardButton(text="70 🍬", callback_data="buy_pack_70")
+            InlineKeyboardButton(text=get_text(user_id, "pack_20"), callback_data="buy_pack_20"),
+            InlineKeyboardButton(text=get_text(user_id, "pack_35"), callback_data="buy_pack_35"),
+            InlineKeyboardButton(text=get_text(user_id, "pack_70"), callback_data="buy_pack_70")
         ],
         [
-            InlineKeyboardButton(text="180 🍬", callback_data="buy_pack_180")
+            InlineKeyboardButton(text=get_text(user_id, "pack_180"), callback_data="buy_pack_180")
         ],
         [
-            InlineKeyboardButton(text="💎 Премиум Подписки", callback_data="subscriptions_menu"),
-            InlineKeyboardButton(text="🔐 ПРИВАТКА", callback_data="buy_private")
+            InlineKeyboardButton(text=get_text(user_id, "premium_subscriptions"), callback_data="subscriptions_menu"),
+            InlineKeyboardButton(text=get_text(user_id, "private_access"), callback_data="buy_private")
         ],
         [
-            InlineKeyboardButton(text="🎖 Боевой пропуск", callback_data="battlepass_menu")
+            InlineKeyboardButton(text=get_text(user_id, "battlepass"), callback_data="battlepass_menu")
         ],
-        [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu")]
+        [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: int):
+def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: int, user_id: int = None):
     """Меню выбора способа оплаты после выбора пака"""
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
     keyboard = []
     
     # Для пака 180 добавляем оплату по карте
     if pack_amount == 180:
-        keyboard.append([InlineKeyboardButton(text="💳 Оплата по карте (180 ₽)", callback_data=f"pay_method_card_{pack_amount}")])
+        keyboard.append([InlineKeyboardButton(text=get_text(user_id, "payment_card"), callback_data=f"pay_method_card_{pack_amount}")])
     
-    keyboard.append([InlineKeyboardButton(text="🪙 CryptoBot", callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")])
-    keyboard.append([InlineKeyboardButton(text="💎 xRocket", callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")])
-    keyboard.append([InlineKeyboardButton(text="⭐️ Telegram Stars", callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")])
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "payment_crypto"), callback_data=f"pay_method_cryptobot_{pack_amount}_{usd_amount}")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "payment_xrocket"), callback_data=f"pay_method_xrocket_{pack_amount}_{usd_amount}")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "payment_stars"), callback_data=f"pay_method_stars_{pack_amount}_{stars_amount}")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="shop")])
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 def get_stars_payment_menu(pack_amount: int, stars_amount: int, user_id: int):
     """Меню для оплаты звездами"""
+    from locales import get_text
+    
     keyboard = [
-        [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}")]
+        [InlineKeyboardButton(text=get_text(user_id, "go_to_pay"), url=ANON_CHAT_LINK)],
+        [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data=f"back_to_payment_methods_{pack_amount}")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str):
+def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str, user_id: int = None):
     """Меню выбора валюты для CryptoBot или xRocket"""
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
     if method == "cryptobot":
         keyboard = [
             [
@@ -223,7 +246,7 @@ def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str):
                 InlineKeyboardButton(text="🌞 TRX", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TRX"),
                 InlineKeyboardButton(text="💲 USDC", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDC")
             ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
+            [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
         ]
     else:  # xrocket - только USDT и TONCOIN
         keyboard = [
@@ -231,17 +254,22 @@ def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str):
                 InlineKeyboardButton(text="💵 USDT", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDT"),
                 InlineKeyboardButton(text="💎 TON", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_TONCOIN")
             ],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
+            [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
         ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_invoice_payment_menu(pay_url: str, invoice_id: str, method: str, pack_amount: int, crypto_amount: float, asset: str):
+def get_invoice_payment_menu(pay_url: str, invoice_id: str, method: str, pack_amount: int, crypto_amount: float, asset: str, user_id: int = None):
     """Меню с кнопкой оплаты и проверки для CryptoBot/xRocket"""
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
     keyboard = [
-        [InlineKeyboardButton(text=f"💰 Оплатить {crypto_amount} {asset}", url=pay_url)],
-        [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{method}_{invoice_id}_{pack_amount}")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
+        [InlineKeyboardButton(text=get_text(user_id, "payment_pay").format(crypto_amount, asset), url=pay_url)],
+        [InlineKeyboardButton(text=get_text(user_id, "check_payment"), callback_data=f"check_{method}_{invoice_id}_{pack_amount}")],
+        [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="shop")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -259,19 +287,29 @@ def get_stars_approve_menu(request_id: int, pack_amount: int, user_id: int):
 
 
 # ================= МЕНЮ ЗАДАНИЙ С КАТЕГОРИЯМИ =================
-def get_categories_menu():
+def get_categories_menu(user_id: int = None):
     """Меню выбора категории заданий"""
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
     keyboard = [
-        [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="tasks_category_easy")],
-        [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="tasks_category_medium")],
-        [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="tasks_category_hard")],
-        [InlineKeyboardButton(text="🏠 В меню", callback_data="menu")]
+        [InlineKeyboardButton(text=get_text(user_id, "tasks_easy"), callback_data="tasks_category_easy")],
+        [InlineKeyboardButton(text=get_text(user_id, "tasks_medium"), callback_data="tasks_category_medium")],
+        [InlineKeyboardButton(text=get_text(user_id, "tasks_hard"), callback_data="tasks_category_hard")],
+        [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_tasks_menu_by_category(tasks, category: str):
+def get_tasks_menu_by_category(tasks, category: str, user_id: int = None):
     """Создает клавиатуру со списком заданий для конкретной категории"""
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
     keyboard = []
     
     for task in tasks:
@@ -281,10 +319,10 @@ def get_tasks_menu_by_category(tasks, category: str):
         
         if completed >= max_completions:
             emoji = "✅"
-            status_text = " (выполнено)"
+            status_text = ""
         elif status == "pending":
             emoji = "🔄"
-            status_text = " (на проверке)"
+            status_text = ""
         else:
             emoji = "📋"
             status_text = ""
@@ -299,14 +337,19 @@ def get_tasks_menu_by_category(tasks, category: str):
             callback_data=f"task_{task['id']}"
         )])
     
-    keyboard.append([InlineKeyboardButton(text="🔄 Обновить", callback_data=f"tasks_refresh_{category}")])
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад к категориям", callback_data="tasks")])
-    keyboard.append([InlineKeyboardButton(text="🏠 В меню", callback_data="menu")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_refresh"), callback_data=f"tasks_refresh_{category}")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_back_categories"), callback_data="tasks")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")])
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_type: str, task_data: str, task_status: str = None):
+def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_type: str, task_data: str, task_status: str = None, user_id: int = None):
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
     keyboard = []
     if task_status != "approved" and task_status != "pending":
         if task_type == "link":
@@ -315,12 +358,12 @@ def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_t
         elif task_type == "text":
             keyboard.append([InlineKeyboardButton(text="📝 Выполнить задание", callback_data=f"do_task_{task_id}")])
         elif task_type == "photo" or task_type == "video":
-            keyboard.append([InlineKeyboardButton(text="📤 Отправить доказательство", callback_data=f"do_task_{task_id}")])
+            keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_submit"), callback_data=f"do_task_{task_id}")])
     elif task_status == "pending":
-        keyboard.append([InlineKeyboardButton(text="⏳ На проверке", callback_data="nothing")])
+        keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_pending"), callback_data="nothing")])
     elif task_status == "approved":
         keyboard.append([InlineKeyboardButton(text="✅ Выполнено", callback_data="nothing")])
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад к заданиям", callback_data="tasks")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_back"), callback_data="tasks")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -470,25 +513,46 @@ op_menu = InlineKeyboardMarkup(inline_keyboard=[
 
 
 # ================= МЕНЮ ПОДПИСОК =================
-subscriptions_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=f"{SUBSCRIPTIONS['op']['name']} | {SUBSCRIPTIONS['op']['stars']}⭐️ / {SUBSCRIPTIONS['op']['usd']}$", callback_data="buy_subscription_op")],
-    [InlineKeyboardButton(text=f"{SUBSCRIPTIONS['base']['name']} | {SUBSCRIPTIONS['base']['stars']}⭐️ / {SUBSCRIPTIONS['base']['usd']}$", callback_data="buy_subscription_base")],
-    [InlineKeyboardButton(text=f"{SUBSCRIPTIONS['newbie']['name']} | {SUBSCRIPTIONS['newbie']['stars']}⭐️ / {SUBSCRIPTIONS['newbie']['usd']}$", callback_data="buy_subscription_newbie")],
-    [InlineKeyboardButton(text="⬅️ Назад в магазин", callback_data="shop")]
-])
+def get_subscriptions_menu(user_id: int = None):
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{get_text(user_id, 'op_status')} | {SUBSCRIPTIONS['op']['stars']}⭐️ / {SUBSCRIPTIONS['op']['usd']}$", callback_data="buy_subscription_op")],
+        [InlineKeyboardButton(text=f"{get_text(user_id, 'base_status')} | {SUBSCRIPTIONS['base']['stars']}⭐️ / {SUBSCRIPTIONS['base']['usd']}$", callback_data="buy_subscription_base")],
+        [InlineKeyboardButton(text=f"{get_text(user_id, 'newbie_status')} | {SUBSCRIPTIONS['newbie']['stars']}⭐️ / {SUBSCRIPTIONS['newbie']['usd']}$", callback_data="buy_subscription_newbie")],
+        [InlineKeyboardButton(text=get_text(user_id, "back_to_shop"), callback_data="shop")]
+    ])
+
+subscriptions_menu = get_subscriptions_menu()
 
 
 # ================= МЕНЮ ПРИВАТКИ =================
-private_pay_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=f"⭐️ {PRIVATE_PRICE_STARS} звезд", callback_data="private_stars")],
-    [InlineKeyboardButton(text=f"💰 Криптовалюта (${PRIVATE_PRICE_USD})", callback_data="private_crypto")],
-    [InlineKeyboardButton(text="⬅️ Назад в магазин", callback_data="shop")]
-])
+def get_private_pay_menu(user_id: int = None):
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=get_text(user_id, "private_stars").format(PRIVATE_PRICE_STARS), callback_data="private_stars")],
+        [InlineKeyboardButton(text=get_text(user_id, "private_crypto").format(PRIVATE_PRICE_USD), callback_data="private_crypto")],
+        [InlineKeyboardButton(text=get_text(user_id, "back_to_shop"), callback_data="shop")]
+    ])
+
+private_pay_menu = get_private_pay_menu()
 
 
 # ================= МЕНЮ ВЫБОРА ВАЛЮТЫ ДЛЯ ПРИВАТКИ =================
-def get_private_crypto_menu(assets):
+def get_private_crypto_menu(assets, user_id: int = None):
     from payments import get_asset_icon
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
     keyboard = []
     row = []
     for i, asset in enumerate(assets):
@@ -499,7 +563,7 @@ def get_private_crypto_menu(assets):
             row = []
     if row:
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_private")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="buy_private")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -510,3 +574,21 @@ confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
         InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_broadcast")
     ]
 ])
+
+
+# ================= МЕНЮ ЗАДАНИЙ БОЕВОГО ПРОПУСКА =================
+def get_battlepass_tasks_menu(tasks, user_id: int = None):
+    """Меню со списком заданий боевого пропуска"""
+    from locales import get_text
+    
+    if user_id is None:
+        user_id = 0
+    
+    keyboard = []
+    for task in tasks:
+        keyboard.append([InlineKeyboardButton(
+            text=f"📋 {task['title']} | +{task['reward_xp']} XP",
+            callback_data=f"bp_do_task_{task['id']}"
+        )])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="battlepass_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)

@@ -369,6 +369,31 @@ def init_db():
     )
     """)
     
+    # ========== ТАБЛИЦА ЗАДАНИЙ БОЕВОГО ПРОПУСКА ==========
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS battlepass_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT,
+        reward_xp INTEGER DEFAULT 10,
+        is_active INTEGER DEFAULT 1,
+        max_completions INTEGER DEFAULT 1,
+        task_type TEXT DEFAULT 'default',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    
+    # ========== ТАБЛИЦА ВЫПОЛНЕННЫХ ЗАДАНИЙ БОЕВОГО ПРОПУСКА ==========
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_battlepass_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        task_id INTEGER,
+        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, task_id)
+    )
+    """)
+    
     conn.commit()
     print("✅ База данных инициализирована")
     
@@ -497,7 +522,7 @@ def add_battlepass_exp_db(user_id: int, exp: int):
         bp = get_battlepass(user_id)
         if not bp:
             if not create_battlepass(user_id):
-                return False
+                return {"status": "error", "exp_gained": 0}
             bp = get_battlepass(user_id)
         
         # Проверка дневного лимита
@@ -619,6 +644,18 @@ def activate_premium_battlepass_db(user_id: int):
 def add_game_record(user_id: int, game_type: str, bet_amount: int, win_amount: int, is_win: int, result_data: str = None):
     """Добавить запись об игре в БД"""
     try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS casino_games (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                game_type TEXT,
+                bet_amount INTEGER,
+                win_amount INTEGER,
+                is_win INTEGER,
+                result_data TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         cursor.execute("""
             INSERT INTO casino_games (user_id, game_type, bet_amount, win_amount, is_win, result_data)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -1749,6 +1786,151 @@ def get_video_count_for_user(user_id: int):
         return row["count"] if row else 0
     except:
         return 0
+
+
+# ========== ФУНКЦИИ ДЛЯ ЗАДАНИЙ БОЕВОГО ПРОПУСКА ==========
+def get_battlepass_tasks():
+    """Получить все активные задания боевого пропуска"""
+    try:
+        cursor.execute("SELECT * FROM battlepass_tasks WHERE is_active = 1 ORDER BY id")
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+
+def get_battlepass_task(task_id: int):
+    """Получить задание боевого пропуска по ID"""
+    try:
+        cursor.execute("SELECT * FROM battlepass_tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+
+def add_battlepass_task(title: str, description: str, reward_xp: int, max_completions: int = 1, task_type: str = 'default'):
+    """Добавить новое задание боевого пропуска"""
+    try:
+        cursor.execute("""
+            INSERT INTO battlepass_tasks (title, description, reward_xp, max_completions, task_type)
+            VALUES (?, ?, ?, ?, ?)
+        """, (title, description, reward_xp, max_completions, task_type))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        print(f"❌ Ошибка add_battlepass_task: {e}")
+        return None
+
+
+def update_battlepass_task(task_id: int, **kwargs):
+    """Обновить задание боевого пропуска"""
+    try:
+        updates = []
+        values = []
+        for key, value in kwargs.items():
+            if value is not None:
+                updates.append(f"{key} = ?")
+                values.append(value)
+        
+        if not updates:
+            return False
+        
+        values.append(task_id)
+        query = f"UPDATE battlepass_tasks SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, values)
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка update_battlepass_task: {e}")
+        return False
+
+
+def remove_battlepass_task(task_id: int):
+    """Удалить задание боевого пропуска"""
+    try:
+        cursor.execute("DELETE FROM battlepass_tasks WHERE id = ?", (task_id,))
+        cursor.execute("DELETE FROM user_battlepass_tasks WHERE task_id = ?", (task_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+
+def get_user_battlepass_completed_count(user_id: int, task_id: int) -> int:
+    """Получить количество выполнений задания пользователем"""
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM user_battlepass_tasks 
+            WHERE user_id = ? AND task_id = ?
+        """, (user_id, task_id))
+        row = cursor.fetchone()
+        return row["count"] if row else 0
+    except:
+        return 0
+
+
+def can_complete_battlepass_task(user_id: int, task_id: int) -> bool:
+    """Проверить, может ли пользователь выполнить задание"""
+    try:
+        task = get_battlepass_task(task_id)
+        if not task:
+            return False
+        
+        completed = get_user_battlepass_completed_count(user_id, task_id)
+        return completed < task["max_completions"]
+    except:
+        return False
+
+
+def complete_battlepass_task(user_id: int, task_id: int) -> bool:
+    """Отметить задание как выполненное и начислить XP"""
+    try:
+        if not can_complete_battlepass_task(user_id, task_id):
+            return False
+        
+        task = get_battlepass_task(task_id)
+        if not task:
+            return False
+        
+        cursor.execute("""
+            INSERT INTO user_battlepass_tasks (user_id, task_id)
+            VALUES (?, ?)
+        """, (user_id, task_id))
+        
+        # Начисляем опыт
+        result = add_battlepass_exp_db(user_id, task["reward_xp"])
+        
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка complete_battlepass_task: {e}")
+        return False
+
+
+def get_user_battlepass_tasks_status(user_id: int):
+    """Получить статус всех заданий боевого пропуска для пользователя"""
+    try:
+        tasks = get_battlepass_tasks()
+        for task in tasks:
+            task["completed"] = get_user_battlepass_completed_count(user_id, task["id"])
+            task["can_complete"] = task["completed"] < task["max_completions"]
+        return tasks
+    except:
+        return []
+
+
+def admin_get_all_battlepass_tasks():
+    """Админка: получить все задания (включая неактивные)"""
+    try:
+        cursor.execute("SELECT * FROM battlepass_tasks ORDER BY id")
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+
+def admin_toggle_battlepass_task(task_id: int, is_active: bool):
+    """Админка: включить/выключить задание"""
+    return update_battlepass_task(task_id, is_active=1 if is_active else 0)
 
 
 # ========== ЗАПУСК ИНИЦИАЛИЗАЦИИ ==========

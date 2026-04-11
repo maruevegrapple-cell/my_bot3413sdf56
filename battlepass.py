@@ -29,6 +29,8 @@ BATTLEPASS_LEVELS = {
 
 MAX_LEVEL = 20
 DAILY_EXP_LIMIT = 200
+HOURLY_EXP = 5
+HOURLY_COOLDOWN = 3600  # 1 час в секундах
 PREMIUM_PRICE_STARS = 400
 PREMIUM_PRICE_USD = 5.0
 
@@ -92,6 +94,63 @@ def get_battlepass(user_id: int):
         return None
 
 
+def create_battlepass(user_id: int):
+    """Создать новый боевой пропуск для пользователя (для совместимости)"""
+    try:
+        cursor.execute("""
+            INSERT OR IGNORE INTO battlepass (user_id, level, exp, daily_exp, last_daily_reset, claimed_rewards, last_hourly_claim)
+            VALUES (?, 1, 0, 0, ?, '[]', ?)
+        """, (user_id, datetime.now(), datetime.now()))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка create_battlepass: {e}")
+        return False
+
+
+def update_battlepass(user_id: int, level: int = None, exp: int = None, daily_exp: int = None, 
+                     claimed_rewards: str = None, premium: int = None, last_hourly_claim: str = None,
+                     last_daily_reset: str = None):
+    """Обновить данные боевого пропуска"""
+    try:
+        updates = []
+        values = []
+        
+        if level is not None:
+            updates.append("level = ?")
+            values.append(level)
+        if exp is not None:
+            updates.append("exp = ?")
+            values.append(exp)
+        if daily_exp is not None:
+            updates.append("daily_exp = ?")
+            values.append(daily_exp)
+        if claimed_rewards is not None:
+            updates.append("claimed_rewards = ?")
+            values.append(claimed_rewards)
+        if premium is not None:
+            updates.append("premium = ?")
+            values.append(premium)
+        if last_hourly_claim is not None:
+            updates.append("last_hourly_claim = ?")
+            values.append(last_hourly_claim)
+        if last_daily_reset is not None:
+            updates.append("last_daily_reset = ?")
+            values.append(last_daily_reset)
+        
+        if not updates:
+            return False
+        
+        values.append(user_id)
+        query = f"UPDATE battlepass SET {', '.join(updates)} WHERE user_id = ?"
+        cursor.execute(query, values)
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка update_battlepass: {e}")
+        return False
+
+
 def add_battlepass_exp(user_id: int, exp: int, source: str = "unknown"):
     """Добавить опыт в боевой пропуск"""
     try:
@@ -128,6 +187,15 @@ def add_battlepass_exp(user_id: int, exp: int, source: str = "unknown"):
         return False
 
 
+def add_battlepass_exp_db(user_id: int, exp: int):
+    """Обёртка для add_battlepass_exp (для совместимости с handlers.py)"""
+    result = add_battlepass_exp(user_id, exp, "unknown")
+    if result:
+        return {"status": "success", "exp_gained": result["exp_gained"], 
+                "leveled_up": result["leveled_up"], "new_level": result["new_level"]}
+    return {"status": "error", "exp_gained": 0}
+
+
 def claim_hourly_exp(user_id: int) -> dict:
     """Забрать ежечасный опыт (5 XP в час)"""
     try:
@@ -146,18 +214,25 @@ def claim_hourly_exp(user_id: int) -> dict:
                 return {"status": "cooldown", "minutes_left": minutes_left}
         
         # Добавляем 5 XP
-        result = add_battlepass_exp(user_id, 5, "hourly")
+        result = add_battlepass_exp(user_id, HOURLY_EXP, "hourly")
         
         if result:
             cursor.execute("UPDATE battlepass SET last_hourly_claim = ? WHERE user_id = ?", 
                           (datetime.now(), user_id))
             conn.commit()
-            return {"status": "success", "exp_gained": 5, "leveled_up": result.get("leveled_up", False), "new_level": result.get("new_level")}
+            return {"status": "success", "exp_gained": HOURLY_EXP, 
+                    "leveled_up": result.get("leveled_up", False), 
+                    "new_level": result.get("new_level")}
         
         return {"status": "error", "message": "Ошибка при начислении опыта"}
     except Exception as e:
         print(f"❌ Ошибка claim_hourly_exp: {e}")
         return {"status": "error", "message": str(e)}
+
+
+def claim_hourly_exp_db(user_id: int):
+    """Обёртка для claim_hourly_exp (для совместимости с handlers.py)"""
+    return claim_hourly_exp(user_id)
 
 
 def claim_battlepass_reward(user_id: int, level: int, is_premium: bool = False):
@@ -200,6 +275,11 @@ def claim_battlepass_reward(user_id: int, level: int, is_premium: bool = False):
         return False
 
 
+def claim_battlepass_reward_db(user_id: int, level: int, is_premium: bool = False):
+    """Обёртка для claim_battlepass_reward (для совместимости с handlers.py)"""
+    return claim_battlepass_reward(user_id, level, is_premium)
+
+
 def buy_premium_battlepass(user_id: int):
     """Купить премиум боевой пропуск (создаёт заявку на оплату)"""
     try:
@@ -222,6 +302,11 @@ def activate_premium_battlepass(user_id: int):
     except Exception as e:
         print(f"❌ Ошибка activate_premium_battlepass: {e}")
         return False
+
+
+def activate_premium_battlepass_db(user_id: int):
+    """Обёртка для activate_premium_battlepass (для совместимости)"""
+    return activate_premium_battlepass(user_id)
 
 
 def can_claim_premium_rewards(user_id: int) -> bool:
@@ -264,9 +349,14 @@ def get_battlepass_stats(user_id: int):
         else:
             next_hourly_seconds = 0
     
+    # Опыт до следующего уровня
+    next_level_exp = BATTLEPASS_LEVELS.get(bp["level"] + 1, {}).get("exp", BATTLEPASS_LEVELS[bp["level"]]["exp"])
+    exp_to_next = next_level_exp - bp["exp"]
+    
     return {
         "level": bp["level"],
         "exp": bp["exp"],
+        "exp_to_next": exp_to_next,
         "daily_exp": bp["daily_exp"],
         "premium": bp.get("premium", 0),
         "total_rewards": total_rewards,
@@ -275,6 +365,53 @@ def get_battlepass_stats(user_id: int):
         "claimed_premium": claimed_premium,
         "next_hourly_seconds": next_hourly_seconds
     }
+
+
+def get_battlepass_info_text(user_id: int):
+    """Получить текст для отображения боевого пропуска"""
+    stats = get_battlepass_stats(user_id)
+    if not stats:
+        return "❌ Ошибка загрузки пропуска"
+    
+    bp = get_battlepass(user_id)
+    claimed = json.loads(bp["claimed_rewards"])
+    
+    # Время до следующего бонуса
+    hourly_text = ""
+    if stats["next_hourly_seconds"] > 0:
+        minutes = stats["next_hourly_seconds"] // 60
+        seconds = stats["next_hourly_seconds"] % 60
+        hourly_text = f"⏰ Следующий бонус: {minutes:02d}:{seconds:02d}"
+    else:
+        hourly_text = "⏰ Бонус доступен!"
+    
+    # Подсчёт заработанных конфет
+    earned_from_free = 0
+    earned_from_premium = 0
+    for lvl in range(1, stats["level"] + 1):
+        if f"level_{lvl}" in claimed:
+            earned_from_free += BATTLEPASS_LEVELS[lvl]["reward"]
+        if stats["premium"] and f"premium_{lvl}" in claimed:
+            earned_from_premium += BATTLEPASS_LEVELS[lvl]["premium_reward"]
+    
+    total_candies = earned_from_free + earned_from_premium
+    
+    text = f"🎖 <b>Боевой пропуск!</b>\n\n"
+    text += f"📊 <b>Твой уровень сейчас:</b> {stats['level']}/20\n"
+    text += f"📈 <b>До следующего уровня:</b> {stats['exp_to_next']} XP\n"
+    text += f"{hourly_text}\n"
+    text += f"Получить опыт можно выполняя задания, и забирая ежечасный бонус!\n\n"
+    text += f"🍬 <b>Ты заработал конфет с пропуском:</b> {total_candies} 🍬\n"
+    
+    if stats["premium"]:
+        text += f"\n💎 <b>Премиум пропуск активен!</b>\n"
+        available_premium = 0
+        for lvl in range(1, stats["level"] + 1):
+            if f"premium_{lvl}" not in claimed:
+                available_premium += BATTLEPASS_LEVELS[lvl]["premium_reward"]
+        text += f"🎁 Доступно премиум наград: {available_premium} 🍬"
+    
+    return text
 
 
 init_battlepass_table()

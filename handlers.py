@@ -27,6 +27,7 @@ from config import (
     REF_BONUS,
     REF_PERCENT,
     CHANNEL_ID,
+    CHANNEL_LINK,
     SUBSCRIBE_BONUS,
     ANON_CHAT_LINK,
     PRIVATE_PRICE_USD,
@@ -62,7 +63,10 @@ from db import (
     add_lolz_payment, mark_lolz_payment_paid, get_lolz_payment,
     get_user_language_db, set_user_language_db,
     get_battlepass, update_battlepass, create_battlepass, add_battlepass_exp_db,
-    claim_hourly_exp_db, claim_battlepass_reward_db, activate_premium_battlepass_db
+    claim_hourly_exp_db, claim_battlepass_reward_db, activate_premium_battlepass_db,
+    get_battlepass_tasks, get_battlepass_task, complete_battlepass_task,
+    get_user_battlepass_tasks_status, can_complete_battlepass_task,
+    add_stars_payment_request_db
 )
 from keyboards import (
     fake_menu, main_menu, video_menu, get_admin_menu, 
@@ -76,7 +80,8 @@ from keyboards import (
     get_shop_menu, get_payment_methods_menu, get_crypto_currency_menu,
     get_invoice_payment_menu, get_stars_payment_menu, get_stars_approve_menu,
     language_keyboard,
-    get_battlepass_menu, get_battlepass_info_text, get_battlepass_premium_menu
+    get_battlepass_menu, get_battlepass_info_text, get_battlepass_premium_menu,
+    get_battlepass_tasks_menu
 )
 from payments import (
     create_invoice, 
@@ -94,8 +99,13 @@ from payments import (
     activate_premium_battlepass_payment
 )
 from locales import get_text, set_user_language, get_user_language
-from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL, PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD
+from battlepass import (
+    BATTLEPASS_LEVELS, MAX_LEVEL, PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD,
+    add_battlepass_exp, claim_hourly_exp, claim_battlepass_reward,
+    activate_premium_battlepass, get_battlepass_stats
+)
 
+# Импорт Lolz платежей
 try:
     from lolz_payments import create_lolz_invoice, check_lolz_payment
     LOLZ_AVAILABLE = True
@@ -117,8 +127,10 @@ suggested_videos = {}
 suggestion_mode = set()
 user_last_action = {}
 
+# Хранилище для инвойсов (временное)
 pending_invoices = {}
 
+# ================= СПИСОК ОТВЕТОВ ДЛЯ АНОНИМНОГО ЧАТА =================
 ANON_CHAT_RESPONSES = [
     "👤 Незнакомец: Привет! Как дела?",
     "👤 Незнакомец: Я тоже люблю смотреть видео!",
@@ -233,6 +245,8 @@ banned_users = {}
 broadcast_mode = set()
 custom_pay_wait = set()
 current_video_id = {}
+
+# Хранилище активных сессий анонимного чата
 anon_chat_sessions = {}
 
 async def check_spam(user_id: int) -> bool:
@@ -381,8 +395,10 @@ def generate_captcha_image() -> tuple:
     return bio.getvalue(), code
 
 def generate_math_captcha() -> tuple:
+    """Генерирует математический пример и возвращает (текст_примера, правильный_ответ)"""
     operations = ['+', '-', '*']
     op = random.choice(operations)
+    
     if op == '+':
         a = random.randint(10, 50)
         b = random.randint(5, 30)
@@ -393,11 +409,12 @@ def generate_math_captcha() -> tuple:
         b = random.randint(5, a - 5)
         answer = a - b
         text = f"{a} - {b} = ?"
-    else:
+    else:  # '*'
         a = random.randint(2, 10)
         b = random.randint(2, 10)
         answer = a * b
         text = f"{a} × {b} = ?"
+    
     return text, answer
 
 @router.message(F.forward_from | F.forward_from_chat)
@@ -463,11 +480,7 @@ async def suggestion_start(call: CallbackQuery, state: FSMContext):
     await safe_answer(call)
     suggestion_mode.add(user_id)
     await call.message.answer(
-        "🎬 <b>ПРЕДЛОЖКА</b>\n\n"
-        "📹 Отправьте видео, которое хотите предложить для добавления в бота.\n\n"
-        "✅ Если видео одобрят, вы получите +3 🍬\n"
-        "❌ Если отклонят, вы получите уведомление\n\n"
-        "⏳ Режим предложки активен 5 минут"
+        get_text(user_id, "suggestion_title") + "\n\n" + get_text(user_id, "suggestion_desc")
     )
     async def exit_suggestion_mode():
         await asyncio.sleep(300)
@@ -716,6 +729,7 @@ async def start(message: Message, state: FSMContext, bot: Bot):
     first_name = message.from_user.first_name or "Пользователь"
     logger.info(f"🟢 START from {user_id} (@{username})")
     
+    # Загружаем язык пользователя из БД
     user_lang = get_user_language_db(user_id)
     set_user_language(user_id, user_lang)
     
@@ -1264,6 +1278,97 @@ async def battlepass_buy_premium(call: CallbackQuery, state: FSMContext, bot: Bo
         reply_markup=get_battlepass_premium_menu(user_id)
     )
 
+@router.callback_query(F.data == "bp_tasks_menu")
+async def bp_tasks_menu_handler(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    if await check_spam(user_id):
+        await safe_answer(call, get_text(user_id, "spam_warning"), show_alert=True)
+        return
+    if not await check_access(bot, user_id, state, call=call):
+        return
+    
+    tasks = get_user_battlepass_tasks_status(user_id)
+    
+    if not tasks:
+        await call.message.answer("📭 Нет активных заданий для получения XP")
+        return
+    
+    keyboard = []
+    for task in tasks:
+        if task["can_complete"]:
+            emoji = "📋"
+            status = ""
+        else:
+            emoji = "✅"
+            status = f" [{task['completed']}/{task['max_completions']}]"
+        
+        keyboard.append([InlineKeyboardButton(
+            text=f"{emoji} {task['title']}{status} | +{task['reward_xp']} XP",
+            callback_data=f"bp_do_task_{task['id']}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="battlepass_menu")])
+    
+    await call.message.answer(
+        "📋 <b>ЗАДАНИЯ БОЕВОГО ПРОПУСКА</b>\n\n"
+        "Выполняй задания и получай XP для повышения уровня!\n"
+        "Выбери задание:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)
+    )
+
+@router.callback_query(F.data.startswith("bp_do_task_"))
+async def bp_do_task_handler(call: CallbackQuery, state: FSMContext, bot: Bot):
+    user_id = call.from_user.id
+    task_id = int(call.data.replace("bp_do_task_", ""))
+    
+    task = get_battlepass_task(task_id)
+    if not task:
+        await safe_answer(call, "❌ Задание не найдено", show_alert=True)
+        return
+    
+    # Разная логика в зависимости от task_type
+    if task["task_type"] == "subscribe":
+        is_subscribed = await check_subscription(bot, user_id)
+        if is_subscribed:
+            if complete_battlepass_task(user_id, task_id):
+                await safe_answer(call, f"✅ Задание выполнено! +{task['reward_xp']} XP", show_alert=True)
+                add_battlepass_exp_db(user_id, task["reward_xp"])
+            else:
+                await safe_answer(call, "❌ Задание уже выполнено", show_alert=True)
+        else:
+            await safe_answer(call, "❌ Вы не подписаны на канал!", show_alert=True)
+    
+    elif task["task_type"] == "watch_video":
+        watched = get_user_watched_videos(user_id)
+        if len(watched) >= 3:
+            if complete_battlepass_task(user_id, task_id):
+                await safe_answer(call, f"✅ Задание выполнено! +{task['reward_xp']} XP", show_alert=True)
+                add_battlepass_exp_db(user_id, task["reward_xp"])
+            else:
+                await safe_answer(call, "❌ Задание уже выполнено", show_alert=True)
+        else:
+            await safe_answer(call, f"❌ Посмотрите ещё {3 - len(watched)} видео!", show_alert=True)
+    
+    elif task["task_type"] == "invite_friend":
+        refs = get_referrals_count(user_id)
+        if refs >= 1:
+            if complete_battlepass_task(user_id, task_id):
+                await safe_answer(call, f"✅ Задание выполнено! +{task['reward_xp']} XP", show_alert=True)
+                add_battlepass_exp_db(user_id, task["reward_xp"])
+            else:
+                await safe_answer(call, "❌ Задание уже выполнено", show_alert=True)
+        else:
+            await safe_answer(call, "❌ Пригласите хотя бы 1 друга!", show_alert=True)
+    
+    else:
+        if complete_battlepass_task(user_id, task_id):
+            await safe_answer(call, f"✅ Задание выполнено! +{task['reward_xp']} XP", show_alert=True)
+            add_battlepass_exp_db(user_id, task["reward_xp"])
+        else:
+            await safe_answer(call, "❌ Задание уже выполнено", show_alert=True)
+    
+    await bp_tasks_menu_handler(call, state, bot)
+
 @router.callback_query(F.data == "bp_pay_stars")
 async def battlepass_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot):
     user_id = call.from_user.id
@@ -1274,7 +1379,6 @@ async def battlepass_pay_stars(call: CallbackQuery, state: FSMContext, bot: Bot)
     if not await check_access(bot, user_id, state, call=call):
         return
     
-    from db import add_stars_payment_request_db
     request_id = add_stars_payment_request_db(user_id, "", 0, PREMIUM_PRICE_STARS, None)
     
     await state.update_data(pending_premium_request_id=request_id)
@@ -1343,7 +1447,7 @@ async def check_premium_payment(call: CallbackQuery, state: FSMContext, bot: Bot
     result = check_invoice(invoice_id, method="cryptobot")
     
     if result.get("paid", False):
-        if activate_premium_battlepass_payment(user_id):
+        if activate_premium_battlepass_db(user_id):
             await safe_answer(call, "✅ Премиум пропуск активирован!", show_alert=True)
             await call.message.answer(
                 f"🎉 <b>ПРЕМИУМ ПРОПУСК АКТИВИРОВАН!</b>\n\n"
@@ -1440,7 +1544,7 @@ async def shop(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"{get_text(user_id, 'your_balance').format(balance)}\n"
         f"{get_text(user_id, 'exchange_rate_info')}\n\n"
         f"{get_text(user_id, 'choose_pack')}",
-        reply_markup=get_shop_menu(balance)
+        reply_markup=get_shop_menu(balance, user_id)
     )
 
 @router.callback_query(F.data.startswith("buy_pack_"))
@@ -1467,7 +1571,7 @@ async def buy_pack(call: CallbackQuery, state: FSMContext, bot: Bot):
     await call.message.answer(
         f"{get_text(user_id, 'selected_candies').format(pack_amount)}\n\n"
         f"{get_text(user_id, 'choose_payment')}",
-        reply_markup=get_payment_methods_menu(pack_amount, usd_amount, stars_amount)
+        reply_markup=get_payment_methods_menu(pack_amount, usd_amount, stars_amount, user_id)
     )
 
 @router.callback_query(F.data.startswith("pay_method_"))
@@ -1489,18 +1593,14 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
             return
         
         await call.message.answer(
-            f"💳 <b>ОПЛАТА ПО КАРТЕ</b>\n\n"
-            f"Сумма: 180 ₽ 💸\n"
-            f"Вы получите: 180 🍬\n\n"
-            f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
-            f"2. Напишите: Хочу купить 180 🍬 за 180 ₽\n"
-            f"3. Укажите ваш ID: <code>{user_id}</code>\n"
-            f"4. Оплатите переводом, по карте которую вам скинут.\n"
-            f"5. Ожидайте зачисления!\n\n"
+            f"{get_text(user_id, 'card_payment')}\n\n"
+            f"{get_text(user_id, 'card_amount')}\n"
+            f"{get_text(user_id, 'card_get')}\n\n"
+            f"{get_text(user_id, 'card_instruction').format(ANON_CHAT_LINK)}\n\n"
             f"🔗 Ссылка: {ANON_CHAT_LINK}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💳 Перейти к оплате", url=ANON_CHAT_LINK)],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="shop")]
+                [InlineKeyboardButton(text=get_text(user_id, "pay_by_card"), url=ANON_CHAT_LINK)],
+                [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="shop")]
             ])
         )
         return
@@ -1540,12 +1640,12 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
         ])
         
         await call.message.answer(
-            f"🏦 <b>ОПЛАТА ЧЕРЕЗ Lolz Market (СБП)</b>\n\n"
+            f"{get_text(user_id, 'sbp_payment')}\n\n"
             f"🍬 Конфет: {pack_amount}\n"
-            f"💰 Сумма: {rub_amount} RUB\n\n"
+            f"{get_text(user_id, 'sbp_amount').format(rub_amount)}\n\n"
             f"🔗 Ссылка для оплаты:\n{invoice['pay_url']}\n\n"
             f"📱 {get_text(user_id, 'check_payment')}\n\n"
-            f"⏳ Счет действителен 1 час",
+            f"{get_text(user_id, 'sbp_valid')}",
             reply_markup=keyboard
         )
         return
@@ -1553,18 +1653,14 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
     if method == "stars":
         stars_amount = int(parts[4])
         await call.message.answer(
-            f"⭐️ <b>ОПЛАТА ЗВЕЗДАМИ</b>\n\n"
-            f"Сумма: {stars_amount} ⭐️\n"
-            f"Вы получите: {pack_amount} 🍬\n\n"
-            f"1. Перейдите по ссылке: {ANON_CHAT_LINK}\n"
-            f"2. Нажмите на текст и отправьте его в сообщения:\n"
-            f"<code>Хочу купить {pack_amount} 🍬 за {stars_amount} ⭐️\nмой id: {user_id}</code>\n"
-            f"3. Оплатите ОБЫЧНЫМИ подарками\n"
-            f"4. Ожидайте зачисления!\n\n"
+            f"{get_text(user_id, 'stars_payment')}\n\n"
+            f"{get_text(user_id, 'stars_amount').format(stars_amount)}\n"
+            f"{get_text(user_id, 'stars_get').format(pack_amount)}\n\n"
+            f"{get_text(user_id, 'stars_instruction').format(ANON_CHAT_LINK, pack_amount, stars_amount)}\n\n"
             f"🔗 Ссылка: {ANON_CHAT_LINK}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⭐️ Перейти к оплате", url=ANON_CHAT_LINK)],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_payment_methods_{pack_amount}")]
+                [InlineKeyboardButton(text=get_text(user_id, "go_to_pay"), url=ANON_CHAT_LINK)],
+                [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data=f"back_to_payment_methods_{pack_amount}")]
             ])
         )
         return
@@ -1574,10 +1670,10 @@ async def select_payment_method(call: CallbackQuery, state: FSMContext, bot: Bot
         await state.update_data(pending_method=method, pending_pack=pack_amount, pending_usd=usd_amount)
         
         await call.message.answer(
-            f"💎 <b>ВЫБЕРИТЕ ВАЛЮТУ ДЛЯ ОПЛАТЫ</b>\n\n"
-            f"🍬 Вы выбрали пак конфет: {pack_amount} 🍬\n\n"
-            f"Выберите валюту:",
-            reply_markup=get_crypto_currency_menu(pack_amount, usd_amount, method)
+            f"{get_text(user_id, 'payment_choose_currency')}\n\n"
+            f"{get_text(user_id, 'payment_selected_candies').format(pack_amount)}\n\n"
+            f"{get_text(user_id, 'payment_choose_asset')}",
+            reply_markup=get_crypto_currency_menu(pack_amount, usd_amount, method, user_id)
         )
 
 @router.callback_query(F.data.startswith("check_sbp_"))
@@ -1594,13 +1690,8 @@ async def check_sbp_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
     pack_amount = int(parts[3])
     
     await call.message.answer(
-        f"🔄 <b>ПРОВЕРКА ОПЛАТЫ</b>\n\n"
-        f"Если вы уже оплатили счет, подождите несколько минут и нажмите кнопку снова.\n\n"
-        f"Если оплата не прошла:\n"
-        f"1. Убедитесь, что вы перевели точную сумму\n"
-        f"2. Попробуйте оплатить снова\n"
-        f"3. Обратитесь в поддержку\n\n"
-        f"После подтверждения оплаты конфеты будут зачислены автоматически."
+        f"{get_text(user_id, 'sbp_checking')}\n\n"
+        f"{get_text(user_id, 'sbp_check_desc')}"
     )
 
 @router.callback_query(F.data.startswith("cryptobot_asset_"))
@@ -1643,13 +1734,13 @@ async def cryptobot_asset_selected(call: CallbackQuery, state: FSMContext, bot: 
     add_battlepass_exp_db(user_id, pack_amount // 10)
     
     await call.message.answer(
-        f"💳 <b>ОПЛАТА ЧЕРЕЗ CRYPTOBOT</b>\n\n"
+        f"{get_text(user_id, 'payment_cryptobot_title')}\n\n"
         f"🍬 Конфет: {pack_amount}\n"
         f"💱 Валюта: {asset}\n\n"
-        f"💰 К оплате: {crypto_amount} {asset}\n\n"
+        f"{get_text(user_id, 'payment_amount_crypto').format(crypto_amount, asset)}\n\n"
         f"🔗 Ссылка для оплаты:\n{invoice['pay_url']}\n\n"
         f"🔄 {get_text(user_id, 'check_payment')}",
-        reply_markup=get_invoice_payment_menu(invoice['pay_url'], invoice_id, "cryptobot", pack_amount, crypto_amount, asset)
+        reply_markup=get_invoice_payment_menu(invoice['pay_url'], invoice_id, "cryptobot", pack_amount, crypto_amount, asset, user_id)
     )
 
 @router.callback_query(F.data.startswith("xrocket_asset_"))
@@ -1692,13 +1783,13 @@ async def xrocket_asset_selected(call: CallbackQuery, state: FSMContext, bot: Bo
     add_battlepass_exp_db(user_id, pack_amount // 10)
     
     await call.message.answer(
-        f"💎 <b>ОПЛАТА ЧЕРЕЗ XROCKET</b>\n\n"
+        f"{get_text(user_id, 'payment_xrocket_title')}\n\n"
         f"🍬 Конфет: {pack_amount}\n"
         f"💱 Валюта: {asset}\n\n"
-        f"💰 К оплате: {crypto_amount} {asset}\n\n"
+        f"{get_text(user_id, 'payment_amount_crypto').format(crypto_amount, asset)}\n\n"
         f"🔗 Ссылка для оплаты:\n{invoice['pay_url']}\n\n"
         f"🔄 {get_text(user_id, 'check_payment')}",
-        reply_markup=get_invoice_payment_menu(invoice['pay_url'], invoice_id, "xrocket", pack_amount, crypto_amount, asset)
+        reply_markup=get_invoice_payment_menu(invoice['pay_url'], invoice_id, "xrocket", pack_amount, crypto_amount, asset, user_id)
     )
 
 @router.callback_query(F.data.startswith("check_cryptobot_"))
@@ -1720,7 +1811,7 @@ async def check_cryptobot_payment(call: CallbackQuery, state: FSMContext, bot: B
         cursor.execute("SELECT paid FROM payments WHERE invoice_id = ?", (invoice_id,))
         payment = cursor.fetchone()
         if payment and payment["paid"] == 1:
-            await call.message.answer("✅ Этот платёж уже был обработан")
+            await call.message.answer(get_text(user_id, "payment_already_processed"))
             return
         
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (pack_amount, user_id))
@@ -1749,14 +1840,14 @@ async def check_cryptobot_payment(call: CallbackQuery, state: FSMContext, bot: B
         new_balance = cursor.fetchone()["balance"]
         
         await call.message.answer(
-            f"✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>\n\n"
-            f"🍬 Начислено: +{pack_amount} конфет\n"
+            f"{get_text(user_id, 'payment_confirmed')}\n\n"
+            f"{get_text(user_id, 'payment_credited').format(pack_amount)}\n"
             f"💰 Текущий баланс: {new_balance} 🍬\n\n"
-            f"Спасибо за покупку! 🎉"
+            f"{get_text(user_id, 'payment_thanks')}"
         )
         await call.message.delete()
     else:
-        await call.message.answer("⏳ Платёж ещё не оплачен\n\nПожалуйста, оплатите счет и нажмите \"Проверить оплату\" снова.")
+        await call.message.answer(get_text(user_id, "payment_not_paid"))
 
 @router.callback_query(F.data.startswith("check_xrocket_"))
 async def check_xrocket_payment(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1777,7 +1868,7 @@ async def check_xrocket_payment(call: CallbackQuery, state: FSMContext, bot: Bot
         cursor.execute("SELECT paid FROM payments WHERE invoice_id = ?", (invoice_id,))
         payment = cursor.fetchone()
         if payment and payment["paid"] == 1:
-            await call.message.answer("✅ Этот платёж уже был обработан")
+            await call.message.answer(get_text(user_id, "payment_already_processed"))
             return
         
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (pack_amount, user_id))
@@ -1806,14 +1897,14 @@ async def check_xrocket_payment(call: CallbackQuery, state: FSMContext, bot: Bot
         new_balance = cursor.fetchone()["balance"]
         
         await call.message.answer(
-            f"✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>\n\n"
-            f"🍬 Начислено: +{pack_amount} конфет\n"
+            f"{get_text(user_id, 'payment_confirmed')}\n\n"
+            f"{get_text(user_id, 'payment_credited').format(pack_amount)}\n"
             f"💰 Текущий баланс: {new_balance} 🍬\n\n"
-            f"Спасибо за покупку! 🎉"
+            f"{get_text(user_id, 'payment_thanks')}"
         )
         await call.message.delete()
     else:
-        await call.message.answer("⏳ Платёж ещё не оплачен\n\nПожалуйста, оплатите счет и нажмите \"Проверить оплату\" снова.")
+        await call.message.answer(get_text(user_id, "payment_not_paid"))
 
 @router.callback_query(F.data.startswith("back_to_payment_methods_"))
 async def back_to_payment_methods(call: CallbackQuery, state: FSMContext, bot: Bot):
@@ -1842,7 +1933,7 @@ async def back_to_payment_methods(call: CallbackQuery, state: FSMContext, bot: B
     await call.message.edit_text(
         f"{get_text(user_id, 'selected_candies').format(pack_amount)}\n\n"
         f"{get_text(user_id, 'choose_payment')}",
-        reply_markup=get_payment_methods_menu(pack_amount, usd_amount, stars_amount)
+        reply_markup=get_payment_methods_menu(pack_amount, usd_amount, stars_amount, user_id)
     )
 
 @router.callback_query(F.data == "subscriptions_menu")
@@ -2132,10 +2223,9 @@ async def tasks_menu(call: CallbackQuery, state: FSMContext, bot: Bot):
         return
     await safe_answer(call)
     await call.message.answer(
-        "📋 <b>ВЫБЕРИТЕ КАТЕГОРИЮ ЗАДАНИЙ</b>\n\n"
-        "Выполняйте задания и получайте КОНФЕТКИ! 🍬\n"
-        "Снизу выбирай категорию, от сложности зависит лучше твоя награда, или хуже! 👇",
-        reply_markup=get_categories_menu()
+        f"{get_text(user_id, 'tasks_categories')}\n\n"
+        f"{get_text(user_id, 'tasks_description')}",
+        reply_markup=get_categories_menu(user_id)
     )
 
 @router.callback_query(F.data.startswith("tasks_category_"))
@@ -2167,7 +2257,7 @@ async def tasks_category(call: CallbackQuery, state: FSMContext, bot: Bot):
     await call.message.answer(
         f"📋 <b>ЗАДАНИЯ</b>\n\n"
         f"Категория: {TASK_CATEGORIES.get(category, {}).get('name', category)}",
-        reply_markup=get_tasks_menu_by_category(user_tasks, category)
+        reply_markup=get_tasks_menu_by_category(user_tasks, category, user_id)
     )
 
 @router.callback_query(F.data.startswith("tasks_refresh_"))
@@ -2199,7 +2289,7 @@ async def tasks_refresh(call: CallbackQuery, state: FSMContext, bot: Bot):
     await call.message.edit_text(
         f"📋 <b>ЗАДАНИЯ</b>\n\n"
         f"Категория: {TASK_CATEGORIES.get(category, {}).get('name', category)}",
-        reply_markup=get_tasks_menu_by_category(user_tasks, category)
+        reply_markup=get_tasks_menu_by_category(user_tasks, category, user_id)
     )
 
 @router.callback_query(F.data.startswith("task_"))
@@ -2228,20 +2318,20 @@ async def task_detail(call: CallbackQuery, state: FSMContext, bot: Bot):
         f"📝 {task['description']}\n\n"
         f"🎁 Награда: +{task['reward']} 🍬\n"
         f"📊 Выполнено: {completed} из {max_completions}\n\n"
-        f"📸 Отправьте скриншот выполнения задания!"
+        f"{get_text(user_id, 'tasks_send_screenshot')}"
     )
     
     if task_status == "pending":
-        text += "\n⏳ Задание на проверке у администратора"
+        text += f"\n{get_text(user_id, 'tasks_pending')}"
     elif task_status == "approved" and completed >= max_completions:
-        text += "\n✅ Все выполнения завершены!"
+        text += f"\n{get_text(user_id, 'tasks_completed')}"
     
     can_do = can_complete_task(user_id, task_id, max_completions)
     
     keyboard_buttons = []
     if can_do:
-        keyboard_buttons.append([InlineKeyboardButton(text="📸 Отправить скриншот", callback_data=f"do_task_{task_id}")])
-    keyboard_buttons.append([InlineKeyboardButton(text="⬅️ Назад к заданиям", callback_data="tasks")])
+        keyboard_buttons.append([InlineKeyboardButton(text=get_text(user_id, "tasks_submit"), callback_data=f"do_task_{task_id}")])
+    keyboard_buttons.append([InlineKeyboardButton(text=get_text(user_id, "tasks_back"), callback_data="tasks")])
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     await call.message.answer(text, reply_markup=keyboard)
@@ -3291,9 +3381,8 @@ async def support_start(call: CallbackQuery, state: FSMContext, bot: Bot):
     await safe_answer(call)
     await state.set_state(SubscribeStates.waiting_for_support_message)
     await call.message.answer(
-        "📝 <b>ПОДДЕРЖКА</b>\n\n"
-        "Напишите ваше сообщение или отправьте скриншот.\n"
-        "Администратор ответит вам в ближайшее время."
+        f"{get_text(user_id, 'support_title')}\n\n"
+        f"{get_text(user_id, 'support_desc')}"
     )
 
 @router.message(SubscribeStates.waiting_for_support_message, F.text)
@@ -3436,7 +3525,7 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
             return
     count = get_video_count_for_user(user_id)
     if count == 0:
-        await safe_answer(call, "🎉 Поздравляем! Вы посмотрели все видео!", show_alert=True)
+        await safe_answer(call, get_text(user_id, "video_all_watched"), show_alert=True)
         return
     videos_list = get_videos_sorted_by_rating(user_id, 1)
     if not videos_list:
@@ -3448,18 +3537,18 @@ async def videos(call: CallbackQuery, state: FSMContext, bot: Bot):
     rating_stats = get_video_rating(video["id"])
     like_emoji = "👍" if user_rating == 1 else "👍"
     dislike_emoji = "👎" if user_rating == -1 else "👎"
-    rating_text = f"⭐️ Рейтинг: {rating_stats['rating']:.1f}% ({rating_stats['likes']}👍 / {rating_stats['dislikes']}👎)"
+    rating_text = get_text(user_id, "video_rating").format(rating_stats['rating'], rating_stats['likes'], rating_stats['dislikes'])
     video_menu_with_rating = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"{like_emoji} {rating_stats['likes']}", callback_data=f"like_video_{video['id']}"),
          InlineKeyboardButton(text=f"{dislike_emoji} {rating_stats['dislikes']}", callback_data=f"dislike_video_{video['id']}")],
-        [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
-        [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
+        [InlineKeyboardButton(text=get_text(user_id, "video_next"), callback_data="videos")],
+        [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu_back")]
     ])
     try:
         await call.message.answer_video(video["file_id"], caption=f"🎥 <b>Видео</b>\n\n{rating_text}", reply_markup=video_menu_with_rating)
         if not has_op_subscription and not check_admin_access(user_id)[0]:
             cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (VIDEO_PRICE, user_id))
-            await safe_answer(call, f"🍬 Видео отправлено! Списана {VIDEO_PRICE} конфета", show_alert=True)
+            await safe_answer(call, get_text(user_id, "video_sent").format(VIDEO_PRICE), show_alert=True)
         cursor.execute("INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)", (user_id, video["id"]))
         conn.commit()
         
@@ -3486,13 +3575,14 @@ async def like_video(call: CallbackQuery, state: FSMContext, bot: Bot):
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=f"{like_emoji} {stats['likes']}", callback_data=f"like_video_{video_id}"),
              InlineKeyboardButton(text=f"{dislike_emoji} {stats['dislikes']}", callback_data=f"dislike_video_{video_id}")],
-            [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
+            [InlineKeyboardButton(text=get_text(user_id, "video_next"), callback_data="videos")],
+            [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu_back")]
         ])
-        rating_text = f"⭐️ Рейтинг: {stats['rating']:.1f}% ({stats['likes']}👍 / {stats['dislikes']}👎)"
+        rating_text = get_text(user_id, "video_rating").format(stats['rating'], stats['likes'], stats['dislikes'])
         try:
             await call.message.edit_caption(caption=f"🎥 <b>Видео</b>\n\n{rating_text}", reply_markup=new_keyboard)
             await safe_answer(call, "✅ Ваш голос учтен!", show_alert=False)
+            add_battlepass_exp_db(user_id, 2)
         except Exception as e:
             logger.error(f"Error updating caption: {e}")
     else:
@@ -3516,13 +3606,14 @@ async def dislike_video(call: CallbackQuery, state: FSMContext, bot: Bot):
         new_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=f"{like_emoji} {stats['likes']}", callback_data=f"like_video_{video_id}"),
              InlineKeyboardButton(text=f"{dislike_emoji} {stats['dislikes']}", callback_data=f"dislike_video_{video_id}")],
-            [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
+            [InlineKeyboardButton(text=get_text(user_id, "video_next"), callback_data="videos")],
+            [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu_back")]
         ])
-        rating_text = f"⭐️ Рейтинг: {stats['rating']:.1f}% ({stats['likes']}👍 / {stats['dislikes']}👎)"
+        rating_text = get_text(user_id, "video_rating").format(stats['rating'], stats['likes'], stats['dislikes'])
         try:
             await call.message.edit_caption(caption=f"🎥 <b>Видео</b>\n\n{rating_text}", reply_markup=new_keyboard)
             await safe_answer(call, "✅ Ваш голос учтен!", show_alert=False)
+            add_battlepass_exp_db(user_id, 2)
         except Exception as e:
             logger.error(f"Error updating caption: {e}")
     else:
@@ -3548,7 +3639,7 @@ async def promo(call: CallbackQuery, state: FSMContext, bot: Bot):
     if not await check_access(bot, user_id, state, call=call):
         return
     await state.set_state(PromoStates.waiting_for_promo)
-    await call.message.answer("🎟 Введите промокод:")
+    await call.message.answer(get_text(user_id, "promo_enter"))
 
 @router.message(PromoStates.waiting_for_promo)
 async def process_promo_input(message: Message, state: FSMContext, bot: Bot):
@@ -3559,16 +3650,16 @@ async def process_promo_input(message: Message, state: FSMContext, bot: Bot):
     cursor.execute("SELECT * FROM promocodes WHERE UPPER(code) = UPPER(?)", (code,))
     promo = cursor.fetchone()
     if not promo:
-        await message.answer(f"❌ Промокод '{code}' не найден")
+        await message.answer(get_text(user_id, "promo_not_found").format(code))
         await state.clear()
         return
     if promo["activations_left"] <= 0:
-        await message.answer("❌ Промокод закончился")
+        await message.answer(get_text(user_id, "promo_expired"))
         await state.clear()
         return
     cursor.execute("SELECT 1 FROM used_promocodes WHERE user_id = ? AND code = ?", (user_id, promo["code"]))
     if cursor.fetchone():
-        await message.answer("❌ Вы уже использовали этот промокод")
+        await message.answer(get_text(user_id, "promo_used"))
         await state.clear()
         return
     cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (promo["reward"], user_id))
@@ -3577,11 +3668,7 @@ async def process_promo_input(message: Message, state: FSMContext, bot: Bot):
     conn.commit()
     cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
     new_balance = cursor.fetchone()["balance"]
-    await message.answer(
-        f"✅ <b>Промокод активирован!</b>\n\n"
-        f"🎁 Начислено: +{promo['reward']} 🍬\n"
-        f"💰 Текущий баланс: {new_balance} 🍬"
-    )
+    await message.answer(get_text(user_id, "promo_activated").format(promo['reward'], new_balance))
     await state.clear()
 
 @router.callback_query(F.data == "profile")
@@ -3676,12 +3763,10 @@ async def fake_menu_actions(call: CallbackQuery, state: FSMContext):
         await safe_answer(call)
         await state.set_state(FakeChatStates.waiting_for_anon_message)
         await call.message.answer(
-            "💬 <b>АНОНИМНЫЙ ЧАТ</b>\n\n"
-            "Вы подключились к анонимному чату!\n"
-            "Напишите любое сообщение, и вам ответит случайный собеседник.\n\n"
-            "Для выхода отправьте <b>/exit</b> или нажмите кнопку ниже.",
+            f"{get_text(user_id, 'anon_chat_title')}\n\n"
+            f"{get_text(user_id, 'anon_chat_connected')}",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🚪 Выйти из чата", callback_data="fake_exit_chat")]
+                [InlineKeyboardButton(text=get_text(user_id, "anon_chat_exit"), callback_data="fake_exit_chat")]
             ])
         )
         anon_chat_sessions[user_id] = True
@@ -3694,8 +3779,7 @@ async def fake_exit_chat(call: CallbackQuery, state: FSMContext):
     if user_id in anon_chat_sessions:
         del anon_chat_sessions[user_id]
     await call.message.answer(
-        "👋 Вы вышли из анонимного чата.\n"
-        "Возвращайтесь ещё!",
+        get_text(user_id, "anon_chat_exited"),
         reply_markup=fake_menu
     )
 
@@ -3709,8 +3793,7 @@ async def process_anon_message(message: Message, state: FSMContext):
         if user_id in anon_chat_sessions:
             del anon_chat_sessions[user_id]
         await message.answer(
-            "👋 Вы вышли из анонимного чата.\n"
-            "Возвращайтесь ещё!",
+            get_text(user_id, "anon_chat_exited"),
             reply_markup=fake_menu
         )
         return
@@ -3727,9 +3810,9 @@ async def process_anon_message(message: Message, state: FSMContext):
     await message.answer(response)
     
     await message.answer(
-        "💭 <i>Продолжить общение? Напишите ещё сообщение или нажмите кнопку для выхода.</i>",
+        get_text(user_id, "anon_chat_continue"),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚪 Выйти из чата", callback_data="fake_exit_chat")]
+            [InlineKeyboardButton(text=get_text(user_id, "anon_chat_exit"), callback_data="fake_exit_chat")]
         ]),
         parse_mode="HTML"
     )
@@ -3746,8 +3829,7 @@ async def exit_chat_command(message: Message, state: FSMContext):
         if user_id in anon_chat_sessions:
             del anon_chat_sessions[user_id]
         await message.answer(
-            "👋 Вы вышли из анонимного чата.\n"
-            "Возвращайтесь ещё!",
+            get_text(user_id, "anon_chat_exited"),
             reply_markup=fake_menu
         )
     else:
