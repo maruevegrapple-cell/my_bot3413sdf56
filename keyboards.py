@@ -1,6 +1,7 @@
+# keyboards.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD, CANDY_PACKS
-from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL, DAILY_EXP_LIMIT, PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD
+from battlepass import PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD, BATTLEPASS_LEVELS, MAX_LEVEL, DAILY_EXP_LIMIT
 
 # ================= ФЕЙК МЕНЮ =================
 fake_menu = InlineKeyboardMarkup(inline_keyboard=[
@@ -17,29 +18,37 @@ subscribe_menu = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # ================= ОСНОВНОЕ МЕНЮ =================
-main_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="▶️ Смотреть видео", callback_data="videos")],
-    [
-        InlineKeyboardButton(text="🍬 Купить конфеты", callback_data="shop"),
-        InlineKeyboardButton(text="👤 Профиль", callback_data="profile")
-    ],
-    [
-        InlineKeyboardButton(text="🎖 Боевой пропуск", callback_data="battlepass_menu"),
-        InlineKeyboardButton(text="🎁 Бонус", callback_data="bonus")
-    ],
-    [
-        InlineKeyboardButton(text="🎟 Промокод", callback_data="promo"),
-        InlineKeyboardButton(text="📋 Задания", callback_data="tasks")
-    ],
-    [
-        InlineKeyboardButton(text="🎬 Предложка", callback_data="suggestion"),
-        InlineKeyboardButton(text="🆘 Поддержка", callback_data="support")
-    ],
-    [
-        InlineKeyboardButton(text="🔗 Резерв", url="https://t.me/+gx5QzOgi-Ro3Nzdl"),
-        InlineKeyboardButton(text="🌐 Language", callback_data="show_languages")
-    ]
-])
+def get_main_menu(user_id: int = None):
+    from locales import get_text
+    if user_id is None:
+        user_id = 0
+    
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=get_text(user_id, "watch_video"), callback_data="videos")],
+        [
+            InlineKeyboardButton(text=get_text(user_id, "buy_candies"), callback_data="shop"),
+            InlineKeyboardButton(text=get_text(user_id, "profile"), callback_data="profile")
+        ],
+        [
+            InlineKeyboardButton(text=get_text(user_id, "battlepass"), callback_data="battlepass_menu"),
+            InlineKeyboardButton(text=get_text(user_id, "bonus"), callback_data="bonus")
+        ],
+        [
+            InlineKeyboardButton(text=get_text(user_id, "promo"), callback_data="promo"),
+            InlineKeyboardButton(text=get_text(user_id, "tasks"), callback_data="tasks")
+        ],
+        [
+            InlineKeyboardButton(text=get_text(user_id, "suggestion"), callback_data="suggestion"),
+            InlineKeyboardButton(text=get_text(user_id, "support"), callback_data="support")
+        ],
+        [
+            InlineKeyboardButton(text=get_text(user_id, "reserve"), url="https://t.me/+gx5QzOgi-Ro3Nzdl"),
+            InlineKeyboardButton(text=get_text(user_id, "language"), callback_data="show_languages")
+        ],
+        [InlineKeyboardButton(text="🪞 Зеркало бота", callback_data="mirror_menu")]
+    ])
+
+main_menu = get_main_menu()
 
 # ================= МЕНЮ ВЫБОРА ЯЗЫКА =================
 language_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -61,7 +70,6 @@ def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, prem
     
     keyboard = []
     
-    # Кнопка ежечасного бонуса
     if next_hourly_seconds == 0:
         keyboard.append([InlineKeyboardButton(text=get_text(user_id, "battlepass_claim_hourly"), callback_data="bp_hourly")])
     else:
@@ -69,12 +77,10 @@ def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, prem
         seconds = next_hourly_seconds % 60
         keyboard.append([InlineKeyboardButton(text=get_text(user_id, "battlepass_claim_hourly_wait").format(f"{minutes:02d}", f"{seconds:02d}"), callback_data="bp_hourly_disabled")])
     
-    # Кнопки для каждого уровня (1-20)
     row = []
     for lvl in range(1, 21):
         can_claim = level >= lvl
         is_claimed = f"level_{lvl}" in claimed_rewards
-        is_premium_claimed = f"premium_{lvl}" in claimed_rewards if premium else False
         
         if can_claim and not is_claimed:
             emoji = "🎁"
@@ -91,10 +97,8 @@ def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, prem
     if row:
         keyboard.append(row)
     
-    # Кнопка заданий боевого пропуска
     keyboard.append([InlineKeyboardButton(text=get_text(user_id, "battlepass_tasks"), callback_data="bp_tasks_menu")])
     
-    # Кнопка покупки премиум пропуска (если ещё не куплен)
     if not premium:
         keyboard.append([InlineKeyboardButton(text=get_text(user_id, "battlepass_buy_premium"), callback_data="bp_buy_premium")])
     
@@ -105,12 +109,10 @@ def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, prem
 
 def get_battlepass_info_text(user_id: int, level: int, exp: int, daily_exp: int, premium: bool, claimed_rewards: list, next_hourly_seconds: int = 0, total_earned: int = 0):
     from locales import get_text
-    from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL
     
     next_level_exp = BATTLEPASS_LEVELS.get(level + 1, {}).get("exp", BATTLEPASS_LEVELS[level]["exp"])
     exp_to_next = next_level_exp - exp
     
-    # Время до следующего бонуса
     hourly_text = ""
     if next_hourly_seconds > 0:
         minutes = next_hourly_seconds // 60
@@ -119,7 +121,6 @@ def get_battlepass_info_text(user_id: int, level: int, exp: int, daily_exp: int,
     else:
         hourly_text = get_text(user_id, "battlepass_bonus_available")
     
-    # Подсчёт заработанных конфет
     earned_from_free = 0
     earned_from_premium = 0
     for lvl in range(1, level + 1):
@@ -139,15 +140,13 @@ def get_battlepass_info_text(user_id: int, level: int, exp: int, daily_exp: int,
     
     if premium:
         text += "\n" + get_text(user_id, "battlepass_premium_active") + "\n"
-        text += get_text(user_id, "battlepass_premium_available").format(
-            sum(BATTLEPASS_LEVELS[lvl]['premium_reward'] for lvl in range(1, level + 1) if f'premium_{lvl}' not in claimed_rewards)
-        )
+        available = sum(BATTLEPASS_LEVELS[lvl]['premium_reward'] for lvl in range(1, level + 1) if f'premium_{lvl}' not in claimed_rewards)
+        text += get_text(user_id, "battlepass_premium_available").format(available)
     
     return text
 
 
 def get_battlepass_premium_menu(user_id: int, pack_amount: int = 0, usd_amount: float = PREMIUM_PRICE_USD, stars_amount: int = PREMIUM_PRICE_STARS):
-    """Меню выбора способа оплаты премиум пропуска"""
     from locales import get_text
     
     keyboard = [
@@ -162,9 +161,7 @@ def get_battlepass_premium_menu(user_id: int, pack_amount: int = 0, usd_amount: 
 
 # ================= МЕНЮ МАГАЗИНА =================
 def get_shop_menu(balance: int = 0, user_id: int = None):
-    """Главное меню магазина с паками конфет, подписками и приваткой"""
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
@@ -174,31 +171,23 @@ def get_shop_menu(balance: int = 0, user_id: int = None):
             InlineKeyboardButton(text=get_text(user_id, "pack_35"), callback_data="buy_pack_35"),
             InlineKeyboardButton(text=get_text(user_id, "pack_70"), callback_data="buy_pack_70")
         ],
-        [
-            InlineKeyboardButton(text=get_text(user_id, "pack_180"), callback_data="buy_pack_180")
-        ],
+        [InlineKeyboardButton(text=get_text(user_id, "pack_180"), callback_data="buy_pack_180")],
         [
             InlineKeyboardButton(text=get_text(user_id, "premium_subscriptions"), callback_data="subscriptions_menu"),
             InlineKeyboardButton(text=get_text(user_id, "private_access"), callback_data="buy_private")
         ],
-        [
-            InlineKeyboardButton(text=get_text(user_id, "battlepass"), callback_data="battlepass_menu")
-        ],
+        [InlineKeyboardButton(text=get_text(user_id, "battlepass"), callback_data="battlepass_menu")],
         [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
 def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: int, user_id: int = None):
-    """Меню выбора способа оплаты после выбора пака"""
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
     keyboard = []
-    
-    # Для пака 180 добавляем оплату по карте
     if pack_amount == 180:
         keyboard.append([InlineKeyboardButton(text=get_text(user_id, "payment_card"), callback_data=f"pay_method_card_{pack_amount}")])
     
@@ -211,9 +200,7 @@ def get_payment_methods_menu(pack_amount: int, usd_amount: float, stars_amount: 
 
 
 def get_stars_payment_menu(pack_amount: int, stars_amount: int, user_id: int):
-    """Меню для оплаты звездами"""
     from locales import get_text
-    
     keyboard = [
         [InlineKeyboardButton(text=get_text(user_id, "go_to_pay"), url=ANON_CHAT_LINK)],
         [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data=f"back_to_payment_methods_{pack_amount}")]
@@ -222,9 +209,7 @@ def get_stars_payment_menu(pack_amount: int, stars_amount: int, user_id: int):
 
 
 def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str, user_id: int = None):
-    """Меню выбора валюты для CryptoBot или xRocket"""
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
@@ -248,7 +233,7 @@ def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str, u
             ],
             [InlineKeyboardButton(text=get_text(user_id, "back"), callback_data=f"back_to_payment_methods_{pack_amount}_{usd_amount}")]
         ]
-    else:  # xrocket - только USDT и TONCOIN
+    else:
         keyboard = [
             [
                 InlineKeyboardButton(text="💵 USDT", callback_data=f"{method}_asset_{pack_amount}_{usd_amount}_USDT"),
@@ -260,9 +245,7 @@ def get_crypto_currency_menu(pack_amount: int, usd_amount: float, method: str, u
 
 
 def get_invoice_payment_menu(pay_url: str, invoice_id: str, method: str, pack_amount: int, crypto_amount: float, asset: str, user_id: int = None):
-    """Меню с кнопкой оплаты и проверки для CryptoBot/xRocket"""
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
@@ -274,9 +257,7 @@ def get_invoice_payment_menu(pay_url: str, invoice_id: str, method: str, pack_am
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-# ================= АДМИН-МЕНЮ ДЛЯ ПОДТВЕРЖДЕНИЯ ЗВЕЗД =================
 def get_stars_approve_menu(request_id: int, pack_amount: int, user_id: int):
-    """Меню для админа с кнопками Одобрить/Отклонить"""
     keyboard = [
         [
             InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_stars_{request_id}_{pack_amount}_{user_id}"),
@@ -288,9 +269,7 @@ def get_stars_approve_menu(request_id: int, pack_amount: int, user_id: int):
 
 # ================= МЕНЮ ЗАДАНИЙ С КАТЕГОРИЯМИ =================
 def get_categories_menu(user_id: int = None):
-    """Меню выбора категории заданий"""
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
@@ -298,15 +277,28 @@ def get_categories_menu(user_id: int = None):
         [InlineKeyboardButton(text=get_text(user_id, "tasks_easy"), callback_data="tasks_category_easy")],
         [InlineKeyboardButton(text=get_text(user_id, "tasks_medium"), callback_data="tasks_category_medium")],
         [InlineKeyboardButton(text=get_text(user_id, "tasks_hard"), callback_data="tasks_category_hard")],
+        [InlineKeyboardButton(text="🤖 Авто-задания", callback_data="auto_tasks")],
         [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_tasks_menu_by_category(tasks, category: str, user_id: int = None):
-    """Создает клавиатуру со списком заданий для конкретной категории"""
+def get_auto_categories_menu(user_id: int = None):
     from locales import get_text
+    if user_id is None:
+        user_id = 0
     
+    keyboard = [
+        [InlineKeyboardButton(text=get_text(user_id, "tasks_easy"), callback_data="auto_tasks_category_easy")],
+        [InlineKeyboardButton(text=get_text(user_id, "tasks_medium"), callback_data="auto_tasks_category_medium")],
+        [InlineKeyboardButton(text=get_text(user_id, "tasks_hard"), callback_data="auto_tasks_category_hard")],
+        [InlineKeyboardButton(text=get_text(user_id, "tasks_back_categories"), callback_data="tasks")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_tasks_menu_by_category(tasks, category: str, user_id: int = None):
+    from locales import get_text
     if user_id is None:
         user_id = 0
     
@@ -344,9 +336,38 @@ def get_tasks_menu_by_category(tasks, category: str, user_id: int = None):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def get_auto_tasks_menu_by_category(tasks, category: str, user_id: int = None):
+    from locales import get_text
+    if user_id is None:
+        user_id = 0
+    
+    keyboard = []
+    
+    for task in tasks:
+        completed = task.get("completed", 0)
+        max_completions = task.get("max_completions", 1)
+        
+        if completed >= max_completions:
+            emoji = "✅"
+            counter = f" [{completed}/{max_completions}]"
+        else:
+            emoji = "🤖"
+            counter = f" [{completed}/{max_completions}]" if max_completions > 1 else ""
+        
+        keyboard.append([InlineKeyboardButton(
+            text=f"{emoji} {task['title']}{counter} | +{task['reward']} 🍬",
+            callback_data=f"auto_task_{task['id']}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_refresh"), callback_data=f"auto_tasks_refresh_{category}")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_back_categories"), callback_data="auto_tasks")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_type: str, task_data: str, task_status: str = None, user_id: int = None):
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
@@ -367,6 +388,18 @@ def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_t
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def get_auto_task_action_menu(task_id: int, task_title: str, task_reward: int, user_id: int = None):
+    from locales import get_text
+    if user_id is None:
+        user_id = 0
+    
+    keyboard = [
+        [InlineKeyboardButton(text="🤖 Выполнить задание", callback_data=f"do_auto_task_{task_id}")],
+        [InlineKeyboardButton(text=get_text(user_id, "tasks_back"), callback_data="auto_tasks")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 # ================= АДМИН-МЕНЮ =================
 def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False):
     buttons = [
@@ -378,9 +411,7 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
             InlineKeyboardButton(text="🎟 Создать промо", callback_data="admin_add_promo"),
             InlineKeyboardButton(text="🎁 Бонус", callback_data="bonus")
         ],
-        [
-            InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")
-        ],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
         [
             InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"),
             InlineKeyboardButton(text="🍬 Магазин", callback_data="shop")
@@ -397,16 +428,27 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
             InlineKeyboardButton(text="🎖 Выдать пропуск", callback_data="admin_give_battlepass"),
             InlineKeyboardButton(text="📋 Управление заданиями", callback_data="admin_tasks")
         ],
-        [
-            InlineKeyboardButton(text="🗑 Управление заявками", callback_data="admin_manage_requests")
-        ]
+        [InlineKeyboardButton(text="🤖 Управление авто-заданиями", callback_data="admin_auto_tasks")],
+        [InlineKeyboardButton(text="🗑 Управление заявками", callback_data="admin_manage_requests")],
+        [InlineKeyboardButton(text="🪞 Управление зеркалами", callback_data="admin_mirrors")],
+        [InlineKeyboardButton(text="🤖 Управление зеркалами", callback_data="admin_mirrors")]
     ]
     if is_main_admin or can_manage_admins:
         buttons.append([InlineKeyboardButton(text="👥 Управление админами", callback_data="admin_manage")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-# ================= АДМИН-МЕНЮ ЗАДАНИЙ (С КАТЕГОРИЯМИ) =================
+def get_mirrors_admin_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить зеркало", callback_data="mirror_add")],
+        [InlineKeyboardButton(text="📋 Список зеркал", callback_data="mirror_list")],
+        [InlineKeyboardButton(text="🗑 Удалить зеркало", callback_data="mirror_delete_select")],
+        [InlineKeyboardButton(text="🔄 Перезапустить зеркала", callback_data="mirror_restart")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
+    ])
+
+
+# ================= АДМИН-МЕНЮ ЗАДАНИЙ =================
 admin_tasks_keyboard = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="➕ Создать задание", callback_data="admin_task_add")],
     [InlineKeyboardButton(text="✏️ Редактировать задание", callback_data="admin_task_edit")],
@@ -418,8 +460,19 @@ admin_tasks_keyboard = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 
+# ================= АДМИН-МЕНЮ АВТО-ЗАДАНИЙ =================
+admin_auto_tasks_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="➕ Создать авто-задание", callback_data="admin_auto_task_add")],
+    [InlineKeyboardButton(text="✏️ Редактировать авто-задание", callback_data="admin_auto_task_edit")],
+    [InlineKeyboardButton(text="🗑 Удалить авто-задание", callback_data="admin_auto_task_remove")],
+    [InlineKeyboardButton(text="📋 Список авто-заданий", callback_data="admin_auto_task_list")],
+    [InlineKeyboardButton(text="📂 Управление категориями", callback_data="admin_auto_task_categories")],
+    [InlineKeyboardButton(text="⏳ На проверке", callback_data="admin_auto_task_pending")],
+    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
+])
+
+
 def get_category_management_menu():
-    """Меню управления категориями заданий"""
     keyboard = [
         [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="admin_category_easy")],
         [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="admin_category_medium")],
@@ -429,8 +482,17 @@ def get_category_management_menu():
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def get_auto_category_management_menu():
+    keyboard = [
+        [InlineKeyboardButton(text="🥉 ЛЕГКИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_category_easy")],
+        [InlineKeyboardButton(text="🥈 СРЕДНИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_category_medium")],
+        [InlineKeyboardButton(text="🥇 ЛУЧШИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_category_hard")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_auto_tasks")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 def get_tasks_by_category_menu(tasks, category: str):
-    """Меню со списком заданий для выбора (для переноса в другую категорию)"""
     keyboard = []
     for task in tasks:
         keyboard.append([InlineKeyboardButton(
@@ -441,8 +503,19 @@ def get_tasks_by_category_menu(tasks, category: str):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+def get_auto_tasks_by_category_menu(tasks, category: str):
+    keyboard = []
+    for task in tasks:
+        auto_verify = "✅ авто" if task.get("auto_verify", 1) else "⏳ проверка"
+        keyboard.append([InlineKeyboardButton(
+            text=f"{task['title']} | +{task['reward']} 🍬 | {auto_verify}",
+            callback_data=f"admin_auto_move_task_{task['id']}_{category}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_auto_task_categories")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 def get_move_category_menu(task_id: int):
-    """Меню выбора категории для переноса задания"""
     keyboard = [
         [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data=f"admin_move_to_easy_{task_id}")],
         [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data=f"admin_move_to_medium_{task_id}")],
@@ -452,11 +525,26 @@ def get_move_category_menu(task_id: int):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-# ================= КЛАВИАТУРА ВЫБОРА КАТЕГОРИИ ПРИ СОЗДАНИИ ЗАДАНИЯ =================
+def get_move_auto_category_menu(task_id: int):
+    keyboard = [
+        [InlineKeyboardButton(text="🥉 ЛЕГКИЕ АВТО-ЗАДАНИЯ", callback_data=f"admin_auto_move_to_easy_{task_id}")],
+        [InlineKeyboardButton(text="🥈 СРЕДНИЕ АВТО-ЗАДАНИЯ", callback_data=f"admin_auto_move_to_medium_{task_id}")],
+        [InlineKeyboardButton(text="🥇 ЛУЧШИЕ АВТО-ЗАДАНИЯ", callback_data=f"admin_auto_move_to_hard_{task_id}")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_auto_task_categories")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
 task_category_keyboard = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="admin_task_category_easy")],
     [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="admin_task_category_medium")],
     [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="admin_task_category_hard")]
+])
+
+auto_task_category_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🥉 ЛЕГКИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_task_category_easy")],
+    [InlineKeyboardButton(text="🥈 СРЕДНИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_task_category_medium")],
+    [InlineKeyboardButton(text="🥇 ЛУЧШИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_task_category_hard")]
 ])
 
 
@@ -467,6 +555,17 @@ def get_requests_menu(pending_tasks):
         keyboard.append([InlineKeyboardButton(
             text=f"⏳ {task['title']} | @{task['username']} | +{task['reward']}🍬",
             callback_data=f"admin_view_request_{task['id']}"
+        )])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_auto_requests_menu(pending_tasks):
+    keyboard = []
+    for task in pending_tasks:
+        keyboard.append([InlineKeyboardButton(
+            text=f"🤖 {task['title']} | @{task['username']} | +{task['reward']}🍬",
+            callback_data=f"admin_view_auto_request_{task['id']}"
         )])
     keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -485,12 +584,21 @@ def get_request_action_menu(record_id: int, task_title: str, username: str, user
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-# ================= МЕНЮ ПОДТВЕРЖДЕНИЯ ДОРАБОТКИ =================
-rework_confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="✅ Да, отправить", callback_data="confirm_rework"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_rework")
+def get_auto_request_action_menu(record_id: int, task_title: str, username: str, user_id: int, task_id: int, reward: int, proof: str):
+    keyboard = [
+        [
+            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"admin_approve_auto_request_{record_id}_{user_id}_{task_id}_{reward}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_auto_request_{record_id}_{user_id}_{task_id}")
+        ],
+        [InlineKeyboardButton(text="🗑 Удалить заявку", callback_data=f"admin_delete_auto_request_{record_id}_{user_id}_{task_id}")],
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_auto_tasks")]
     ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+rework_confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="✅ Да, отправить", callback_data="confirm_rework"),
+     InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_rework")]
 ])
 
 
@@ -515,7 +623,6 @@ op_menu = InlineKeyboardMarkup(inline_keyboard=[
 # ================= МЕНЮ ПОДПИСОК =================
 def get_subscriptions_menu(user_id: int = None):
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
@@ -532,7 +639,6 @@ subscriptions_menu = get_subscriptions_menu()
 # ================= МЕНЮ ПРИВАТКИ =================
 def get_private_pay_menu(user_id: int = None):
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
@@ -545,11 +651,9 @@ def get_private_pay_menu(user_id: int = None):
 private_pay_menu = get_private_pay_menu()
 
 
-# ================= МЕНЮ ВЫБОРА ВАЛЮТЫ ДЛЯ ПРИВАТКИ =================
 def get_private_crypto_menu(assets, user_id: int = None):
     from payments import get_asset_icon
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
@@ -567,28 +671,127 @@ def get_private_crypto_menu(assets, user_id: int = None):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-# ================= МЕНЮ ПОДТВЕРЖДЕНИЯ =================
+# ================= МЕНЮ ПОДТВЕРЖДЕНИЯ РАССЫЛКИ =================
 confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_broadcast"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_broadcast")
-    ]
+    [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_broadcast"),
+     InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_broadcast")]
 ])
 
 
 # ================= МЕНЮ ЗАДАНИЙ БОЕВОГО ПРОПУСКА =================
 def get_battlepass_tasks_menu(tasks, user_id: int = None):
-    """Меню со списком заданий боевого пропуска"""
     from locales import get_text
-    
     if user_id is None:
         user_id = 0
     
     keyboard = []
     for task in tasks:
+        if task.get("can_complete", True):
+            emoji = "📋"
+            status = ""
+        else:
+            emoji = "✅"
+            status = f" [{task.get('completed', 0)}/{task['max_completions']}]"
+        
         keyboard.append([InlineKeyboardButton(
-            text=f"📋 {task['title']} | +{task['reward_xp']} XP",
+            text=f"{emoji} {task['title']}{status} | +{task['reward_xp']} XP",
             callback_data=f"bp_do_task_{task['id']}"
         )])
     keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="battlepass_menu")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+# ================= МЕНЮ ЗЕРКАЛ ДЛЯ ПОЛЬЗОВАТЕЛЯ =================
+def get_mirror_menu(user_id: int = None):
+    from locales import get_text
+    if user_id is None:
+        user_id = 0
+    
+    keyboard = [
+        [InlineKeyboardButton(text="➕ Создать зеркало", callback_data="mirror_create")],
+        [InlineKeyboardButton(text="📋 Мои зеркала", callback_data="mirror_my_list")],
+        [InlineKeyboardButton(text="ℹ️ Что такое зеркало?", callback_data="mirror_info")],
+        [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_my_mirrors_keyboard(mirrors: list, user_id: int = None):
+    from locales import get_text
+    if user_id is None:
+        user_id = 0
+    
+    keyboard = []
+    for mirror in mirrors:
+        status = "✅" if mirror["is_active"] else "❌"
+        username = mirror.get("bot_username") or "без юзернейма"
+        keyboard.append([InlineKeyboardButton(
+            text=f"{status} @{username}",
+            callback_data=f"mirror_details_{mirror['id']}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton(text="➕ Создать новое зеркало", callback_data="mirror_create")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="mirror_menu")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_mirror_details_keyboard(mirror: dict, user_id: int = None):
+    from locales import get_text
+    if user_id is None:
+        user_id = 0
+    
+    keyboard = []
+    
+    if mirror["is_active"]:
+        keyboard.append([InlineKeyboardButton(text="🔄 Перезапустить зеркало", callback_data=f"mirror_restart_{mirror['id']}")])
+        keyboard.append([InlineKeyboardButton(text="⏸ Остановить зеркало", callback_data=f"mirror_stop_{mirror['id']}")])
+    else:
+        keyboard.append([InlineKeyboardButton(text="▶️ Запустить зеркало", callback_data=f"mirror_start_{mirror['id']}")])
+    
+    keyboard.append([InlineKeyboardButton(text="🗑 Удалить зеркало", callback_data=f"mirror_delete_{mirror['id']}")])
+    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="mirror_my_list")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_mirror_info_text() -> str:
+    return (
+        "🪞 <b>ЧТО ТАКОЕ БОТ-ЗЕРКАЛО?</b>\n\n"
+        "Бот-зеркало — это точная копия нашего основного бота, но со своим токеном.\n\n"
+        "<b>Зачем это нужно?</b>\n"
+        "• Если основной бот заблокируют — вы продолжите пользоваться зеркалом\n"
+        "• Вы можете приглашать друзей через своё зеркало\n"
+        "• Все данные синхронизируются между всеми зеркалами\n"
+        "• Ваш баланс и прогресс сохраняются\n\n"
+        "<b>Как создать зеркало?</b>\n"
+        "1. Создайте нового бота через @BotFather\n"
+        "2. Скопируйте токен бота\n"
+        "3. Нажмите «Создать зеркало» и вставьте токен\n"
+        "4. Готово! Ваше зеркало запущено\n\n"
+        "<b>Важно!</b>\n"
+        "• Вы можете создать до 3 зеркал\n"
+        "• Не передавайте токен бота никому\n"
+        "• Зеркало не имеет админ-функций"
+    )
+
+
+def get_mirror_create_instruction() -> str:
+    return (
+        "🪞 <b>СОЗДАНИЕ БОТА-ЗЕРКАЛА</b>\n\n"
+        "1️⃣ <b>Создайте нового бота</b>\n"
+        "   • Напишите @BotFather в Telegram\n"
+        "   • Отправьте команду /newbot\n"
+        "   • Придумайте имя и username для бота\n"
+        "   • Скопируйте полученный токен\n\n"
+        "2️⃣ <b>Отправьте токен сюда</b>\n"
+        "   • Токен выглядит так: <code>1234567890:ABCdefGHIjklMNOpqrsTUVwxyz</code>\n"
+        "   • Просто вставьте его в ответ на это сообщение\n\n"
+        "3️⃣ <b>Готово!</b>\n"
+        "   • Бот автоматически запустится\n"
+        "   • Вы можете приглашать друзей через своего бота\n"
+        "   • Все данные будут синхронизированы\n\n"
+        "⚠️ <b>Важно!</b>\n"
+        "• Никому не передавайте токен бота\n"
+        "• Вы можете создать не более 3 зеркал"
+    )

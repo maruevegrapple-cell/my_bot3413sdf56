@@ -1,10 +1,10 @@
 import requests
 import logging
 from datetime import datetime
-from config import CRYPTOBOT_API, CRYPTOBOT_TOKEN, XROCKET_API_KEY, LOLZ_MERCHANT_SECRET_KEY, LOLZ_MERCHANT_ID
+from config import CRYPTOBOT_API, CRYPTOBOT_TOKEN, XROCKET_API_KEY, LOLZ_MERCHANT_SECRET_KEY, LOLZ_MERCHANT_ID, BOT_USERNAME
 
 # Ссылка на бота
-BOT_LINK = "https://t.me/AnonChatkarobot"
+BOT_LINK = f"https://t.me/{BOT_USERNAME}"
 
 # CryptoBot headers
 CRYPTOBOT_HEADERS = {

@@ -130,7 +130,8 @@ def init_db():
         is_admin INTEGER DEFAULT 0,
         pending_referrer_bonus INTEGER DEFAULT NULL,
         private_access INTEGER DEFAULT 0,
-        language TEXT DEFAULT 'ru'
+        language TEXT DEFAULT 'ru',
+        last_mirror_used TEXT DEFAULT NULL
     )
     """)
     
@@ -159,6 +160,15 @@ def init_db():
         try:
             cursor.execute("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'ru'")
             print("✅ Добавлена колонка language в таблицу users")
+        except:
+            pass
+    
+    try:
+        cursor.execute("SELECT last_mirror_used FROM users LIMIT 1")
+    except:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_mirror_used TEXT DEFAULT NULL")
+            print("✅ Добавлена колонка last_mirror_used")
         except:
             pass
 
@@ -274,6 +284,52 @@ def init_db():
         completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         status TEXT DEFAULT 'pending',
         proof TEXT
+    )
+    """)
+    
+    # ========== ТАБЛИЦА АВТО-ЗАДАНИЙ (ВЫДАЮТ НАГРАДУ АВТОМАТИЧЕСКИ) ==========
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS auto_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT,
+        description TEXT,
+        reward INTEGER,
+        task_type TEXT DEFAULT 'text',
+        task_data TEXT,
+        max_completions INTEGER DEFAULT 1,
+        is_active INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        category TEXT DEFAULT 'easy',
+        auto_verify INTEGER DEFAULT 1
+    )
+    """)
+    
+    # ========== ТАБЛИЦА ВЫПОЛНЕНИЙ АВТО-ЗАДАНИЙ ==========
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_auto_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        task_id INTEGER,
+        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'pending',
+        proof TEXT,
+        reward_claimed INTEGER DEFAULT 0
+    )
+    """)
+    
+    # ========== ТАБЛИЦА ЗЕРКАЛ ==========
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS mirror_bots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bot_token TEXT NOT NULL UNIQUE,
+        bot_username TEXT,
+        is_active INTEGER DEFAULT 1,
+        added_by INTEGER,
+        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_health_check TIMESTAMP,
+        is_main INTEGER DEFAULT 0,
+        notes TEXT,
+        mirror_code TEXT UNIQUE
     )
     """)
     
@@ -421,6 +477,44 @@ def init_db():
         print("✅ Схема обновлена")
     except Exception as e:
         print(f"❌ Ошибка обновления схемы: {e}")
+    
+    # Обновляем схему auto_tasks
+    try:
+        cursor.execute("PRAGMA table_info(auto_tasks)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'auto_verify' not in columns:
+            cursor.execute("ALTER TABLE auto_tasks ADD COLUMN auto_verify INTEGER DEFAULT 1")
+            print("✅ Добавлена колонка auto_verify в таблицу auto_tasks")
+        
+        if 'category' not in columns:
+            cursor.execute("ALTER TABLE auto_tasks ADD COLUMN category TEXT DEFAULT 'easy'")
+            print("✅ Добавлена колонка category в таблицу auto_tasks")
+        
+        conn.commit()
+    except Exception as e:
+        print(f"❌ Ошибка обновления схемы auto_tasks: {e}")
+    
+    # Обновляем схему mirror_bots
+    try:
+        cursor.execute("PRAGMA table_info(mirror_bots)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        if 'is_main' not in columns:
+            cursor.execute("ALTER TABLE mirror_bots ADD COLUMN is_main INTEGER DEFAULT 0")
+            print("✅ Добавлена колонка is_main в таблицу mirror_bots")
+        
+        if 'notes' not in columns:
+            cursor.execute("ALTER TABLE mirror_bots ADD COLUMN notes TEXT")
+            print("✅ Добавлена колонка notes в таблицу mirror_bots")
+        
+        if 'mirror_code' not in columns:
+            cursor.execute("ALTER TABLE mirror_bots ADD COLUMN mirror_code TEXT UNIQUE")
+            print("✅ Добавлена колонка mirror_code в таблицу mirror_bots")
+        
+        conn.commit()
+    except Exception as e:
+        print(f"❌ Ошибка обновления схемы mirror_bots: {e}")
     
     fix_user_tasks_table()
 
@@ -937,6 +1031,234 @@ def delete_task_record_by_id(record_id: int):
     """Удалить запись по ID"""
     try:
         cursor.execute("DELETE FROM user_tasks WHERE id = ?", (record_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+
+# ========== АВТО-ЗАДАНИЯ (ВЫДАЮТ НАГРАДУ АВТОМАТИЧЕСКИ) ==========
+def get_auto_tasks():
+    """Получить все авто-задания"""
+    try:
+        cursor.execute("SELECT * FROM auto_tasks WHERE is_active = 1 ORDER BY category, id")
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+
+def get_auto_task(task_id: int):
+    """Получить авто-задание по ID"""
+    try:
+        cursor.execute("SELECT * FROM auto_tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+
+def add_auto_task(title: str, description: str, reward: int, category: str = 'easy', 
+                  task_type: str = "text", task_data: str = None, 
+                  max_completions: int = 1, auto_verify: bool = True):
+    """Добавить авто-задание (выдаёт награду автоматически)"""
+    try:
+        cursor.execute("""
+            INSERT INTO auto_tasks (title, description, reward, task_type, task_data, 
+                                   max_completions, category, is_active, created_at, auto_verify)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), ?)
+        """, (title, description, reward, task_type, task_data, max_completions, category, 1 if auto_verify else 0))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        print(f"❌ Ошибка add_auto_task: {e}")
+        return None
+
+
+def update_auto_task(task_id: int, **kwargs):
+    """Обновить авто-задание"""
+    try:
+        updates = []
+        values = []
+        for key, value in kwargs.items():
+            if value is not None:
+                updates.append(f"{key} = ?")
+                values.append(value)
+        
+        if not updates:
+            return False
+        
+        values.append(task_id)
+        query = f"UPDATE auto_tasks SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(query, values)
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка update_auto_task: {e}")
+        return False
+
+
+def remove_auto_task(task_id: int):
+    """Удалить авто-задание"""
+    try:
+        cursor.execute("DELETE FROM auto_tasks WHERE id = ?", (task_id,))
+        cursor.execute("DELETE FROM user_auto_tasks WHERE task_id = ?", (task_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+
+def get_user_auto_task_status(user_id: int, task_id: int):
+    """Получить статус выполнения авто-задания"""
+    try:
+        cursor.execute("SELECT status, completed_at, reward_claimed FROM user_auto_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC LIMIT 1", 
+                       (user_id, task_id))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+
+def get_user_auto_task_records(user_id: int, task_id: int):
+    """Получить записи выполнения авто-задания"""
+    try:
+        cursor.execute("SELECT * FROM user_auto_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC", 
+                       (user_id, task_id))
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+
+def submit_auto_task(user_id: int, task_id: int, proof: str = None) -> tuple:
+    """Отправить авто-задание и автоматически выдать награду"""
+    try:
+        task = get_auto_task(task_id)
+        if not task or not task.get("is_active", 0):
+            return False, "Задание не найдено или неактивно"
+        
+        max_completions = task.get("max_completions", 1)
+        
+        # Проверяем, сколько раз уже выполнено
+        cursor.execute("SELECT COUNT(*) as count FROM user_auto_tasks WHERE user_id = ? AND task_id = ? AND status = 'completed'", 
+                       (user_id, task_id))
+        completed = cursor.fetchone()["count"]
+        
+        if completed >= max_completions:
+            return False, f"Вы уже выполнили это задание {completed} раз из {max_completions}"
+        
+        # Проверяем, есть ли ожидающая заявка
+        cursor.execute("SELECT id FROM user_auto_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending'", 
+                       (user_id, task_id))
+        if cursor.fetchone():
+            return False, "У вас уже есть задание на проверке"
+        
+        # Создаём запись
+        cursor.execute("""
+            INSERT INTO user_auto_tasks (user_id, task_id, status, proof, completed_at, reward_claimed)
+            VALUES (?, ?, 'pending', ?, datetime('now'), 0)
+        """, (user_id, task_id, proof))
+        
+        record_id = cursor.lastrowid
+        
+        # Если задание авто-верифицируемое, сразу выдаём награду
+        if task.get("auto_verify", 1):
+            cursor.execute("UPDATE user_auto_tasks SET status = 'completed', reward_claimed = 1 WHERE id = ?", (record_id,))
+            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (task["reward"], user_id))
+            conn.commit()
+            return True, f"✅ Задание выполнено! Начислено +{task['reward']} 🍬"
+        
+        conn.commit()
+        return True, "Задание отправлено на проверку"
+        
+    except Exception as e:
+        print(f"❌ Ошибка submit_auto_task: {e}")
+        return False, f"Ошибка: {e}"
+
+
+def get_pending_auto_tasks():
+    """Получить ожидающие проверки авто-задания"""
+    try:
+        cursor.execute("""
+            SELECT ut.*, u.username, t.title, t.reward, t.max_completions, t.auto_verify
+            FROM user_auto_tasks ut
+            JOIN users u ON ut.user_id = u.user_id
+            JOIN auto_tasks t ON ut.task_id = t.id
+            WHERE ut.status = 'pending'
+            ORDER BY ut.completed_at
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+
+def approve_auto_task(record_id: int, reward: int) -> bool:
+    """Одобрить авто-задание и выдать награду"""
+    try:
+        cursor.execute("SELECT user_id, task_id, reward_claimed FROM user_auto_tasks WHERE id = ?", (record_id,))
+        record = cursor.fetchone()
+        
+        if not record or record["reward_claimed"]:
+            return False
+        
+        cursor.execute("UPDATE user_auto_tasks SET status = 'completed', reward_claimed = 1 WHERE id = ?", (record_id,))
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, record["user_id"]))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка approve_auto_task: {e}")
+        return False
+
+
+def reject_auto_task(record_id: int) -> bool:
+    """Отклонить авто-задание"""
+    try:
+        cursor.execute("UPDATE user_auto_tasks SET status = 'rejected' WHERE id = ?", (record_id,))
+        conn.commit()
+        return True
+    except:
+        return False
+
+
+def get_auto_tasks_by_category(category: str = None):
+    """Получить авто-задания по категории"""
+    try:
+        if category:
+            cursor.execute("SELECT * FROM auto_tasks WHERE is_active = 1 AND category = ? ORDER BY id", (category,))
+        else:
+            cursor.execute("SELECT * FROM auto_tasks WHERE is_active = 1 ORDER BY id")
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+
+def get_all_auto_tasks_by_category():
+    """Получить все авто-задания сгруппированные по категориям"""
+    result = {}
+    for cat_key in TASK_CATEGORIES.keys():
+        result[cat_key] = get_auto_tasks_by_category(cat_key)
+    return result
+
+
+def get_auto_task_record_by_id(record_id: int):
+    """Получить запись авто-задания по ID"""
+    try:
+        cursor.execute("""
+            SELECT ut.*, u.username, t.title, t.reward, t.max_completions, t.auto_verify
+            FROM user_auto_tasks ut
+            JOIN users u ON ut.user_id = u.user_id
+            JOIN auto_tasks t ON ut.task_id = t.id
+            WHERE ut.id = ?
+        """, (record_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+
+def delete_auto_task_record_by_id(record_id: int):
+    """Удалить запись авто-задания по ID"""
+    try:
+        cursor.execute("DELETE FROM user_auto_tasks WHERE id = ?", (record_id,))
         conn.commit()
         return True
     except:
@@ -1931,6 +2253,104 @@ def admin_get_all_battlepass_tasks():
 def admin_toggle_battlepass_task(task_id: int, is_active: bool):
     """Админка: включить/выключить задание"""
     return update_battlepass_task(task_id, is_active=1 if is_active else 0)
+
+
+# ========== ФУНКЦИИ ДЛЯ ЗЕРКАЛ ==========
+def get_mirror_bots(include_main: bool = False):
+    """Получить список зеркал"""
+    try:
+        if include_main:
+            cursor.execute("SELECT * FROM mirror_bots ORDER BY is_main DESC, id ASC")
+        else:
+            cursor.execute("SELECT * FROM mirror_bots WHERE is_main = 0 ORDER BY id ASC")
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+
+def get_active_mirror_bots_db(include_main: bool = False):
+    """Получить список активных зеркал"""
+    try:
+        if include_main:
+            cursor.execute("SELECT * FROM mirror_bots WHERE is_active = 1 ORDER BY is_main DESC, id ASC")
+        else:
+            cursor.execute("SELECT * FROM mirror_bots WHERE is_active = 1 AND is_main = 0 ORDER BY id ASC")
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+
+def get_user_mirror_bots_db(user_id: int):
+    """Получить зеркала пользователя"""
+    try:
+        cursor.execute("SELECT * FROM mirror_bots WHERE added_by = ? AND is_main = 0 ORDER BY id ASC", (user_id,))
+        return [dict(row) for row in cursor.fetchall()]
+    except:
+        return []
+
+
+def add_mirror_bot_db(token: str, username: str, added_by: int, notes: str = ""):
+    """Добавить зеркало в БД"""
+    try:
+        mirror_code = generate_ref_code(8)
+        cursor.execute("""
+            INSERT INTO mirror_bots (bot_token, bot_username, is_active, added_by, added_at, notes, is_main, mirror_code)
+            VALUES (?, ?, 1, ?, ?, ?, 0, ?)
+        """, (token, username, added_by, datetime.now(), notes, mirror_code))
+        conn.commit()
+        return True
+    except:
+        return False
+
+
+def remove_mirror_bot_db(bot_id: int):
+    """Удалить зеркало из БД"""
+    try:
+        cursor.execute("DELETE FROM mirror_bots WHERE id = ? AND is_main = 0", (bot_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except:
+        return False
+
+
+def toggle_mirror_bot_db(bot_id: int, is_active: bool):
+    """Включить/выключить зеркало в БД"""
+    try:
+        cursor.execute("UPDATE mirror_bots SET is_active = ? WHERE id = ? AND is_main = 0", (1 if is_active else 0, bot_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    except:
+        return False
+
+
+def update_mirror_username_db(bot_id: int, username: str):
+    """Обновить username зеркала в БД"""
+    try:
+        cursor.execute("UPDATE mirror_bots SET bot_username = ? WHERE id = ?", (username, bot_id))
+        conn.commit()
+        return True
+    except:
+        return False
+
+
+def get_mirror_bot_by_token_db(token: str):
+    """Получить зеркало по токену"""
+    try:
+        cursor.execute("SELECT * FROM mirror_bots WHERE bot_token = ?", (token,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+
+def get_mirror_bot_by_code_db(code: str):
+    """Получить зеркало по коду"""
+    try:
+        cursor.execute("SELECT * FROM mirror_bots WHERE mirror_code = ?", (code,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
 
 
 # ========== ЗАПУСК ИНИЦИАЛИЗАЦИИ ==========

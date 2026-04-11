@@ -43,7 +43,10 @@ from config import BOT_TOKEN, MAIN_ADMIN_ID
 from db import init_db
 
 # ИМПОРТИРУЕМ ВСЕ ХЭНДЛЕРЫ ИЗ ФАЙЛА handlers.py
-from handlers import router
+from handlers import router, get_main_router_for_mirror
+
+# ИМПОРТИРУЕМ ЗЕРКАЛА
+from mirrors import start_all_mirror_bots, stop_all_mirror_bots, set_main_bot, get_main_bot_token
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -70,9 +73,6 @@ async def run_web():
         sys.stderr.flush()
 
 # ================= ВОССТАНОВЛЕНИЕ БАЗЫ ИЗ JSON =================
-# Эти хэндлеры нужно добавить в router, но они сейчас в bot.py
-# Перенесем их в отдельные функции
-
 async def restore_db_handler(message: Message):
     user_id = message.from_user.id
     
@@ -205,6 +205,23 @@ async def backup_db_command_handler(message: Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {e}")
 
+
+async def create_bot_instance(token: str, bot_name: str = ""):
+    """Создать экземпляр бота (для основного бота и зеркал)"""
+    session = AiohttpSession(timeout=60)
+    
+    bot = Bot(
+        token=token,
+        session=session,
+        default=DefaultBotProperties(
+            parse_mode=ParseMode.HTML,
+            protect_content=True
+        )
+    )
+    
+    return bot
+
+
 async def main():
     try:
         print("🔵 Запускаем main()...", file=sys.stderr)
@@ -214,6 +231,13 @@ async def main():
         print("🟡 Инициализация БД...", file=sys.stderr)
         init_db()
         print("✅ БД инициализирована", file=sys.stderr)
+        
+        # Регистрируем текущего бота как главного в таблице зеркал
+        try:
+            set_main_bot(BOT_TOKEN, BOT_USERNAME, MAIN_ADMIN_ID)
+            print("✅ Главный бот зарегистрирован в таблице зеркал", file=sys.stderr)
+        except Exception as e:
+            print(f"⚠️ Ошибка регистрации главного бота: {e}", file=sys.stderr)
         
         # Создаем директорию для временных видео
         TEMP_DIR = "temp_videos"
@@ -260,6 +284,10 @@ async def main():
         print("✅ Бот запущен и готов к работе!", file=sys.stderr)
         sys.stderr.flush()
         
+        # Запускаем зеркала (после основного бота)
+        print("🔄 Запускаем ботов-зеркала...", file=sys.stderr)
+        asyncio.create_task(start_all_mirror_bots(dp))
+        
         await dp.start_polling(bot)
         
     except Exception as e:
@@ -276,6 +304,8 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("👋 Бот остановлен пользователем", file=sys.stderr)
         sys.stderr.flush()
+        # Останавливаем зеркала
+        asyncio.run(stop_all_mirror_bots())
     except Exception as e:
         print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
