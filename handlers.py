@@ -118,12 +118,6 @@ from mirrors import (
     get_all_mirror_bots, remove_mirror_bot, stop_all_mirror_bots, start_all_mirror_bots
 )
 
-# ========== ТЕСТОВЫЙ ХЭНДЛЕР ДЛЯ ДЕБАГА ==========
-@router.message(CommandStart())
-async def test_start_handler(message: Message):
-    await message.answer("✅ ТЕСТ: Бот получил команду /start и отвечает!")
-    logger.info(f"🔵🔵🔵 ТЕСТОВЫЙ ХЭНДЛЕР СРАБОТАЛ ДЛЯ {message.from_user.id}")
-
 try:
     from lolz_payments import create_lolz_invoice, check_lolz_payment
     LOLZ_AVAILABLE = True
@@ -135,6 +129,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+# ========== ТЕСТОВЫЙ ХЭНДЛЕР ДЛЯ ДЕБАГА ==========
+@router.message(CommandStart())
+async def test_start_handler(message: Message):
+    await message.answer("✅ ТЕСТ: Бот получил команду /start и отвечает!")
+    logger.info(f"🔵🔵🔵 ТЕСТОВЫЙ ХЭНДЛЕР СРАБОТАЛ ДЛЯ {message.from_user.id}")
+
 
 TEMP_DIR = "temp_videos"
 os.makedirs(TEMP_DIR, exist_ok=True)
