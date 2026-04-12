@@ -20,7 +20,6 @@ active_mirror_dispatchers: Dict[str, Dispatcher] = {}
 
 
 def init_mirrors_table():
-    """Инициализировать таблицу для зеркал"""
     try:
         from db import cursor, conn
         
@@ -235,17 +234,13 @@ def remove_mirror_bot_by_user(bot_id: int, user_id: int) -> bool:
 
 
 async def start_mirror_bot(token: str, username: str = ""):
-    """Запустить отдельного бота-зеркало с полным логированием"""
-    logger.info(f"🔵 [DEBUG] Начинаем запуск зеркала {username} с токеном {token[:10]}...")
+    """Запустить отдельного бота-зеркало"""
+    logger.info(f"🔵 Запуск зеркала {username}")
     
     try:
         from handlers import router
         
-        logger.info(f"🔵 [DEBUG] Импорт handlers успешен")
-        
         session = AiohttpSession(timeout=60)
-        logger.info(f"🔵 [DEBUG] Сессия создана")
-        
         bot = Bot(
             token=token,
             session=session,
@@ -254,82 +249,73 @@ async def start_mirror_bot(token: str, username: str = ""):
                 protect_content=True
             )
         )
-        logger.info(f"🔵 [DEBUG] Экземпляр Bot создан")
         
-        # Проверяем, что бот работает
         me = await bot.get_me()
         logger.info(f"✅ Зеркало @{me.username} (ID: {me.id}) запущено")
         
-        # Создаем диспетчер для зеркала
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
-        logger.info(f"🔵 [DEBUG] Диспетчер создан")
         
         # СОЗДАЕМ НОВЫЙ РОУТЕР
         mirror_router = Router()
-        logger.info(f"🔵 [DEBUG] Создан mirror_router")
         
-        # ТЕСТОВЫЙ ХЭНДЛЕР - ПРОВЕРЯЕМ, РАБОТАЕТ ЛИ /start
+        # ТЕСТОВЫЙ ХЭНДЛЕР - ПРОВЕРЯЕМ РАБОТУ /start
         @mirror_router.message(CommandStart())
         async def test_start(message: Message):
-            logger.info(f"🔵🔵🔵 [ВАЖНО] Зеркало ПОЛУЧИЛО /start от {message.from_user.id}!")
-            await message.answer("✅ Зеркало работает! Бот получил команду /start\n\nЭто тестовое сообщение. Если вы его видите - зеркало функционирует правильно.")
+            logger.info(f"🔵🔵🔵 ЗЕРКАЛО ПОЛУЧИЛО /start от {message.from_user.id}!")
+            await message.answer("✅ Зеркало работает! Тестовый хэндлер сработал.\n\nЕсли вы видите это сообщение - зеркало функционирует правильно.")
         
-        logger.info(f"🔵 [DEBUG] Тестовый хэндлер /start зарегистрирован")
-        
-        # Копируем все message handlers из основного роутера
-        logger.info(f"🔵 [DEBUG] Начинаем копирование message handlers. Всего: {len(router.message.handlers)}")
-        for idx, handler in enumerate(router.message.handlers):
+        # Копируем ТОЛЬКО message handlers
+        copied_msg = 0
+        for handler in router.message.handlers:
             try:
-                mirror_router.message.register(handler.callback, *handler.filters)
-                logger.info(f"🔵 [DEBUG] Скопирован message handler {idx}: {handler.callback}")
+                if hasattr(handler, 'callback') and callable(handler.callback):
+                    mirror_router.message.register(handler.callback, *handler.filters)
+                    copied_msg += 1
             except Exception as e:
-                logger.warning(f"⚠️ [DEBUG] Не удалось скопировать message handler {idx}: {e}")
+                pass
         
-        # Копируем все callback_query handlers
-        logger.info(f"🔵 [DEBUG] Начинаем копирование callback_query handlers. Всего: {len(router.callback_query.handlers)}")
-        for idx, handler in enumerate(router.callback_query.handlers):
+        logger.info(f"🔵 Скопировано message handlers: {copied_msg}")
+        
+        # Копируем ТОЛЬКО callback_query handlers
+        copied_cb = 0
+        for handler in router.callback_query.handlers:
             try:
-                mirror_router.callback_query.register(handler.callback, *handler.filters)
-                logger.info(f"🔵 [DEBUG] Скопирован callback handler {idx}: {handler.callback}")
+                if hasattr(handler, 'callback') and callable(handler.callback):
+                    mirror_router.callback_query.register(handler.callback, *handler.filters)
+                    copied_cb += 1
             except Exception as e:
-                logger.warning(f"⚠️ [DEBUG] Не удалось скопировать callback handler {idx}: {e}")
+                pass
+        
+        logger.info(f"🔵 Скопировано callback handlers: {copied_cb}")
         
         dp.include_router(mirror_router)
-        logger.info(f"🔵 [DEBUG] Роутер добавлен в диспетчер")
         
         # Блокировка пересылки
         @dp.message(F.forward_from | F.forward_from_chat)
         async def block_forward(message: Message):
             await message.delete()
         
-        # Сохраняем в глобальный словарь
         active_mirror_bots[token] = bot
         active_mirror_dispatchers[token] = dp
-        logger.info(f"🔵 [DEBUG] Бот сохранён в active_mirror_bots")
         
-        # Запускаем polling в отдельной задаче
-        polling_task = asyncio.create_task(dp.start_polling(bot))
-        logger.info(f"🔵 [DEBUG] Polling задача создана и запущена")
+        asyncio.create_task(dp.start_polling(bot))
         
-        # Обновляем username в БД
         mirror = get_mirror_bot_by_token_db(token)
         if mirror and me.username:
             update_mirror_username_db(mirror["id"], me.username)
-            logger.info(f"🔵 [DEBUG] Username в БД обновлён: {me.username}")
         
-        logger.info(f"✅ [УСПЕХ] Зеркало @{me.username} полностью запущено и готово к работе!")
+        logger.info(f"✅ Зеркало @{me.username} успешно запущено!")
         return bot
         
     except Exception as e:
-        logger.error(f"❌ [КРИТИЧЕСКАЯ ОШИБКА] Запуск зеркала @{username} провалился: {e}")
+        logger.error(f"❌ Ошибка запуска зеркала @{username}: {e}")
         import traceback
         traceback.print_exc()
         return None
 
 
 async def stop_mirror_bot(token: str):
-    """Остановить бота-зеркало"""
     if token in active_mirror_bots:
         bot = active_mirror_bots[token]
         try:
@@ -343,13 +329,11 @@ async def stop_mirror_bot(token: str):
 
 
 async def stop_all_mirror_bots():
-    """Остановить все зеркала"""
     for token in list(active_mirror_bots.keys()):
         await stop_mirror_bot(token)
 
 
 async def start_all_mirror_bots(dp_main=None):
-    """Запустить все активные зеркала"""
     from db import init_db
     init_db()
     init_mirrors_table()
@@ -360,7 +344,6 @@ async def start_all_mirror_bots(dp_main=None):
     logger.info(f"✅ Запущено {len(active_mirror_bots)} зеркал")
 
 
-# Инициализация при загрузке
 init_mirrors_table()
 
 print("✅ mirrors.py загружен")
