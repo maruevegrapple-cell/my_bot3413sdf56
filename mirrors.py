@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import copy
 from typing import Dict, Optional
 from datetime import datetime
 
@@ -270,8 +271,17 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
-        # ИСПОЛЬЗУЕМ ТОТ ЖЕ САМЫЙ РОУТЕР, ЧТО И ОСНОВНОЙ БОТ
-        dp.include_router(router)
+        # СОЗДАЕМ ГЛУБОКУЮ КОПИЮ РОУТЕРА
+        mirror_router = copy.deepcopy(router)
+        
+        # Очищаем parent_router у скопированного роутера
+        mirror_router.parent_router = None
+        
+        # Очищаем все вложенные роутеры
+        for sub_router in mirror_router.sub_routers:
+            sub_router.parent_router = None
+        
+        dp.include_router(mirror_router)
         
         # Блокировка пересылки
         @dp.message(F.forward_from | F.forward_from_chat)
