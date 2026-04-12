@@ -130,12 +130,6 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-# ========== ТЕСТОВЫЙ ХЭНДЛЕР ДЛЯ ДЕБАГА ==========
-@router.message(CommandStart())
-async def test_start_handler(message: Message):
-    await message.answer("✅ ТЕСТ: Бот получил команду /start и отвечает!")
-    logger.info(f"🔵🔵🔵 ТЕСТОВЫЙ ХЭНДЛЕР СРАБОТАЛ ДЛЯ {message.from_user.id}")
-
 
 TEMP_DIR = "temp_videos"
 os.makedirs(TEMP_DIR, exist_ok=True)
