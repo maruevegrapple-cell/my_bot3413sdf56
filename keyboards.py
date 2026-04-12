@@ -11,8 +11,9 @@ fake_menu = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # ================= МЕНЮ ПОДПИСКИ =================
+# ИЗМЕНЕНО: текст кнопки и ссылка на бота-агрегатора
 subscribe_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="📢 Подписаться на канал", url=CHANNEL_LINK)],
+    [InlineKeyboardButton(text="🔗 Перейти по ссылке", url=CHANNEL_LINK)],
     [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_subscribe")]
 ])
 
