@@ -1,7 +1,6 @@
-# keyboards.py
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import CHANNEL_LINK, ANON_CHAT_LINK, SUBSCRIPTIONS, PRIVATE_PRICE_STARS, PRIVATE_PRICE_USD, CANDY_PACKS
-from battlepass import PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD, BATTLEPASS_LEVELS, MAX_LEVEL, DAILY_EXP_LIMIT
+from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL, DAILY_EXP_LIMIT, PREMIUM_PRICE_STARS, PREMIUM_PRICE_USD
 
 # ================= ФЕЙК МЕНЮ =================
 fake_menu = InlineKeyboardMarkup(inline_keyboard=[
@@ -44,8 +43,7 @@ def get_main_menu(user_id: int = None):
         [
             InlineKeyboardButton(text=get_text(user_id, "reserve"), url="https://t.me/+gx5QzOgi-Ro3Nzdl"),
             InlineKeyboardButton(text=get_text(user_id, "language"), callback_data="show_languages")
-        ],
-        [InlineKeyboardButton(text="🪞 Зеркало бота", callback_data="mirror_menu")]
+        ]
     ])
 
 main_menu = get_main_menu()
@@ -57,12 +55,18 @@ language_keyboard = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # ================= МЕНЮ ВИДЕО =================
-video_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="👍 Лайк", callback_data="like_video"),
-     InlineKeyboardButton(text="👎 Дизлайк", callback_data="dislike_video")],
-    [InlineKeyboardButton(text="▶️ Следующее видео", callback_data="videos")],
-    [InlineKeyboardButton(text="🏠 В меню", callback_data="menu_back")]
-])
+def get_video_menu(user_id: int = None):
+    from locales import get_text
+    if user_id is None:
+        user_id = 0
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=get_text(user_id, "video_like"), callback_data="like_video"),
+         InlineKeyboardButton(text=get_text(user_id, "video_dislike"), callback_data="dislike_video")],
+        [InlineKeyboardButton(text=get_text(user_id, "video_next"), callback_data="videos")],
+        [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu_back")]
+    ])
+
+video_menu = get_video_menu()
 
 # ================= МЕНЮ БОЕВОГО ПРОПУСКА =================
 def get_battlepass_menu(user_id: int, level: int, exp: int, daily_exp: int, premium: bool, claimed_rewards: list, next_hourly_seconds: int = 0, total_earned: int = 0):
@@ -277,22 +281,7 @@ def get_categories_menu(user_id: int = None):
         [InlineKeyboardButton(text=get_text(user_id, "tasks_easy"), callback_data="tasks_category_easy")],
         [InlineKeyboardButton(text=get_text(user_id, "tasks_medium"), callback_data="tasks_category_medium")],
         [InlineKeyboardButton(text=get_text(user_id, "tasks_hard"), callback_data="tasks_category_hard")],
-        [InlineKeyboardButton(text="🤖 Авто-задания", callback_data="auto_tasks")],
         [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_auto_categories_menu(user_id: int = None):
-    from locales import get_text
-    if user_id is None:
-        user_id = 0
-    
-    keyboard = [
-        [InlineKeyboardButton(text=get_text(user_id, "tasks_easy"), callback_data="auto_tasks_category_easy")],
-        [InlineKeyboardButton(text=get_text(user_id, "tasks_medium"), callback_data="auto_tasks_category_medium")],
-        [InlineKeyboardButton(text=get_text(user_id, "tasks_hard"), callback_data="auto_tasks_category_hard")],
-        [InlineKeyboardButton(text=get_text(user_id, "tasks_back_categories"), callback_data="tasks")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -336,36 +325,6 @@ def get_tasks_menu_by_category(tasks, category: str, user_id: int = None):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_auto_tasks_menu_by_category(tasks, category: str, user_id: int = None):
-    from locales import get_text
-    if user_id is None:
-        user_id = 0
-    
-    keyboard = []
-    
-    for task in tasks:
-        completed = task.get("completed", 0)
-        max_completions = task.get("max_completions", 1)
-        
-        if completed >= max_completions:
-            emoji = "✅"
-            counter = f" [{completed}/{max_completions}]"
-        else:
-            emoji = "🤖"
-            counter = f" [{completed}/{max_completions}]" if max_completions > 1 else ""
-        
-        keyboard.append([InlineKeyboardButton(
-            text=f"{emoji} {task['title']}{counter} | +{task['reward']} 🍬",
-            callback_data=f"auto_task_{task['id']}"
-        )])
-    
-    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_refresh"), callback_data=f"auto_tasks_refresh_{category}")])
-    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_back_categories"), callback_data="auto_tasks")])
-    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")])
-    
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
 def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_type: str, task_data: str, task_status: str = None, user_id: int = None):
     from locales import get_text
     if user_id is None:
@@ -385,18 +344,6 @@ def get_task_action_menu(task_id: int, task_title: str, task_reward: int, task_t
     elif task_status == "approved":
         keyboard.append([InlineKeyboardButton(text="✅ Выполнено", callback_data="nothing")])
     keyboard.append([InlineKeyboardButton(text=get_text(user_id, "tasks_back"), callback_data="tasks")])
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_auto_task_action_menu(task_id: int, task_title: str, task_reward: int, user_id: int = None):
-    from locales import get_text
-    if user_id is None:
-        user_id = 0
-    
-    keyboard = [
-        [InlineKeyboardButton(text="🤖 Выполнить задание", callback_data=f"do_auto_task_{task_id}")],
-        [InlineKeyboardButton(text=get_text(user_id, "tasks_back"), callback_data="auto_tasks")]
-    ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -428,9 +375,7 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
             InlineKeyboardButton(text="🎖 Выдать пропуск", callback_data="admin_give_battlepass"),
             InlineKeyboardButton(text="📋 Управление заданиями", callback_data="admin_tasks")
         ],
-        [InlineKeyboardButton(text="🤖 Управление авто-заданиями", callback_data="admin_auto_tasks")],
         [InlineKeyboardButton(text="🗑 Управление заявками", callback_data="admin_manage_requests")],
-        [InlineKeyboardButton(text="🪞 Управление зеркалами", callback_data="admin_mirrors")],
         [InlineKeyboardButton(text="🤖 Управление зеркалами", callback_data="admin_mirrors")]
     ]
     if is_main_admin or can_manage_admins:
@@ -443,7 +388,6 @@ def get_mirrors_admin_menu():
         [InlineKeyboardButton(text="➕ Добавить зеркало", callback_data="mirror_add")],
         [InlineKeyboardButton(text="📋 Список зеркал", callback_data="mirror_list")],
         [InlineKeyboardButton(text="🗑 Удалить зеркало", callback_data="mirror_delete_select")],
-        [InlineKeyboardButton(text="🔄 Перезапустить зеркала", callback_data="mirror_restart")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
     ])
 
@@ -460,34 +404,12 @@ admin_tasks_keyboard = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 
-# ================= АДМИН-МЕНЮ АВТО-ЗАДАНИЙ =================
-admin_auto_tasks_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="➕ Создать авто-задание", callback_data="admin_auto_task_add")],
-    [InlineKeyboardButton(text="✏️ Редактировать авто-задание", callback_data="admin_auto_task_edit")],
-    [InlineKeyboardButton(text="🗑 Удалить авто-задание", callback_data="admin_auto_task_remove")],
-    [InlineKeyboardButton(text="📋 Список авто-заданий", callback_data="admin_auto_task_list")],
-    [InlineKeyboardButton(text="📂 Управление категориями", callback_data="admin_auto_task_categories")],
-    [InlineKeyboardButton(text="⏳ На проверке", callback_data="admin_auto_task_pending")],
-    [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel")]
-])
-
-
 def get_category_management_menu():
     keyboard = [
         [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="admin_category_easy")],
         [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="admin_category_medium")],
         [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="admin_category_hard")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_tasks")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_auto_category_management_menu():
-    keyboard = [
-        [InlineKeyboardButton(text="🥉 ЛЕГКИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_category_easy")],
-        [InlineKeyboardButton(text="🥈 СРЕДНИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_category_medium")],
-        [InlineKeyboardButton(text="🥇 ЛУЧШИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_category_hard")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_auto_tasks")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -503,18 +425,6 @@ def get_tasks_by_category_menu(tasks, category: str):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_auto_tasks_by_category_menu(tasks, category: str):
-    keyboard = []
-    for task in tasks:
-        auto_verify = "✅ авто" if task.get("auto_verify", 1) else "⏳ проверка"
-        keyboard.append([InlineKeyboardButton(
-            text=f"{task['title']} | +{task['reward']} 🍬 | {auto_verify}",
-            callback_data=f"admin_auto_move_task_{task['id']}_{category}"
-        )])
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_auto_task_categories")])
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
 def get_move_category_menu(task_id: int):
     keyboard = [
         [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data=f"admin_move_to_easy_{task_id}")],
@@ -525,26 +435,10 @@ def get_move_category_menu(task_id: int):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_move_auto_category_menu(task_id: int):
-    keyboard = [
-        [InlineKeyboardButton(text="🥉 ЛЕГКИЕ АВТО-ЗАДАНИЯ", callback_data=f"admin_auto_move_to_easy_{task_id}")],
-        [InlineKeyboardButton(text="🥈 СРЕДНИЕ АВТО-ЗАДАНИЯ", callback_data=f"admin_auto_move_to_medium_{task_id}")],
-        [InlineKeyboardButton(text="🥇 ЛУЧШИЕ АВТО-ЗАДАНИЯ", callback_data=f"admin_auto_move_to_hard_{task_id}")],
-        [InlineKeyboardButton(text="🔙 Отмена", callback_data="admin_auto_task_categories")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
 task_category_keyboard = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🥉 ЛЕГКИЕ ЗАДАЧИ", callback_data="admin_task_category_easy")],
     [InlineKeyboardButton(text="🥈 СРЕДНИЕ ЗАДАЧИ", callback_data="admin_task_category_medium")],
     [InlineKeyboardButton(text="🥇 ЛУЧШИЕ ЗАДАЧИ", callback_data="admin_task_category_hard")]
-])
-
-auto_task_category_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🥉 ЛЕГКИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_task_category_easy")],
-    [InlineKeyboardButton(text="🥈 СРЕДНИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_task_category_medium")],
-    [InlineKeyboardButton(text="🥇 ЛУЧШИЕ АВТО-ЗАДАНИЯ", callback_data="admin_auto_task_category_hard")]
 ])
 
 
@@ -560,17 +454,6 @@ def get_requests_menu(pending_tasks):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def get_auto_requests_menu(pending_tasks):
-    keyboard = []
-    for task in pending_tasks:
-        keyboard.append([InlineKeyboardButton(
-            text=f"🤖 {task['title']} | @{task['username']} | +{task['reward']}🍬",
-            callback_data=f"admin_view_auto_request_{task['id']}"
-        )])
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
 def get_request_action_menu(record_id: int, task_title: str, username: str, user_id: int, task_id: int, reward: int, proof: str):
     keyboard = [
         [
@@ -580,18 +463,6 @@ def get_request_action_menu(record_id: int, task_title: str, username: str, user
         [InlineKeyboardButton(text="📝 Отправить на доработку", callback_data=f"admin_rework_request_{record_id}_{user_id}_{task_id}")],
         [InlineKeyboardButton(text="🗑 Удалить заявку", callback_data=f"admin_delete_request_{record_id}_{user_id}_{task_id}")],
         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_manage_requests")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_auto_request_action_menu(record_id: int, task_title: str, username: str, user_id: int, task_id: int, reward: int, proof: str):
-    keyboard = [
-        [
-            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"admin_approve_auto_request_{record_id}_{user_id}_{task_id}_{reward}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_auto_request_{record_id}_{user_id}_{task_id}")
-        ],
-        [InlineKeyboardButton(text="🗑 Удалить заявку", callback_data=f"admin_delete_auto_request_{record_id}_{user_id}_{task_id}")],
-        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_auto_tasks")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
@@ -671,7 +542,7 @@ def get_private_crypto_menu(assets, user_id: int = None):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-# ================= МЕНЮ ПОДТВЕРЖДЕНИЯ РАССЫЛКИ =================
+# ================= МЕНЮ ПОДТВЕРЖДЕНИЯ =================
 confirm_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_broadcast"),
      InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_broadcast")]
@@ -699,99 +570,3 @@ def get_battlepass_tasks_menu(tasks, user_id: int = None):
         )])
     keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="battlepass_menu")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-# ================= МЕНЮ ЗЕРКАЛ ДЛЯ ПОЛЬЗОВАТЕЛЯ =================
-def get_mirror_menu(user_id: int = None):
-    from locales import get_text
-    if user_id is None:
-        user_id = 0
-    
-    keyboard = [
-        [InlineKeyboardButton(text="➕ Создать зеркало", callback_data="mirror_create")],
-        [InlineKeyboardButton(text="📋 Мои зеркала", callback_data="mirror_my_list")],
-        [InlineKeyboardButton(text="ℹ️ Что такое зеркало?", callback_data="mirror_info")],
-        [InlineKeyboardButton(text=get_text(user_id, "back_to_menu"), callback_data="menu")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_my_mirrors_keyboard(mirrors: list, user_id: int = None):
-    from locales import get_text
-    if user_id is None:
-        user_id = 0
-    
-    keyboard = []
-    for mirror in mirrors:
-        status = "✅" if mirror["is_active"] else "❌"
-        username = mirror.get("bot_username") or "без юзернейма"
-        keyboard.append([InlineKeyboardButton(
-            text=f"{status} @{username}",
-            callback_data=f"mirror_details_{mirror['id']}"
-        )])
-    
-    keyboard.append([InlineKeyboardButton(text="➕ Создать новое зеркало", callback_data="mirror_create")])
-    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="mirror_menu")])
-    
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_mirror_details_keyboard(mirror: dict, user_id: int = None):
-    from locales import get_text
-    if user_id is None:
-        user_id = 0
-    
-    keyboard = []
-    
-    if mirror["is_active"]:
-        keyboard.append([InlineKeyboardButton(text="🔄 Перезапустить зеркало", callback_data=f"mirror_restart_{mirror['id']}")])
-        keyboard.append([InlineKeyboardButton(text="⏸ Остановить зеркало", callback_data=f"mirror_stop_{mirror['id']}")])
-    else:
-        keyboard.append([InlineKeyboardButton(text="▶️ Запустить зеркало", callback_data=f"mirror_start_{mirror['id']}")])
-    
-    keyboard.append([InlineKeyboardButton(text="🗑 Удалить зеркало", callback_data=f"mirror_delete_{mirror['id']}")])
-    keyboard.append([InlineKeyboardButton(text=get_text(user_id, "back"), callback_data="mirror_my_list")])
-    
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def get_mirror_info_text() -> str:
-    return (
-        "🪞 <b>ЧТО ТАКОЕ БОТ-ЗЕРКАЛО?</b>\n\n"
-        "Бот-зеркало — это точная копия нашего основного бота, но со своим токеном.\n\n"
-        "<b>Зачем это нужно?</b>\n"
-        "• Если основной бот заблокируют — вы продолжите пользоваться зеркалом\n"
-        "• Вы можете приглашать друзей через своё зеркало\n"
-        "• Все данные синхронизируются между всеми зеркалами\n"
-        "• Ваш баланс и прогресс сохраняются\n\n"
-        "<b>Как создать зеркало?</b>\n"
-        "1. Создайте нового бота через @BotFather\n"
-        "2. Скопируйте токен бота\n"
-        "3. Нажмите «Создать зеркало» и вставьте токен\n"
-        "4. Готово! Ваше зеркало запущено\n\n"
-        "<b>Важно!</b>\n"
-        "• Вы можете создать до 3 зеркал\n"
-        "• Не передавайте токен бота никому\n"
-        "• Зеркало не имеет админ-функций"
-    )
-
-
-def get_mirror_create_instruction() -> str:
-    return (
-        "🪞 <b>СОЗДАНИЕ БОТА-ЗЕРКАЛА</b>\n\n"
-        "1️⃣ <b>Создайте нового бота</b>\n"
-        "   • Напишите @BotFather в Telegram\n"
-        "   • Отправьте команду /newbot\n"
-        "   • Придумайте имя и username для бота\n"
-        "   • Скопируйте полученный токен\n\n"
-        "2️⃣ <b>Отправьте токен сюда</b>\n"
-        "   • Токен выглядит так: <code>1234567890:ABCdefGHIjklMNOpqrsTUVwxyz</code>\n"
-        "   • Просто вставьте его в ответ на это сообщение\n\n"
-        "3️⃣ <b>Готово!</b>\n"
-        "   • Бот автоматически запустится\n"
-        "   • Вы можете приглашать друзей через своего бота\n"
-        "   • Все данные будут синхронизированы\n\n"
-        "⚠️ <b>Важно!</b>\n"
-        "• Никому не передавайте токен бота\n"
-        "• Вы можете создать не более 3 зеркал"
-    )
