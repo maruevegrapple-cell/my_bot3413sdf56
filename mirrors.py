@@ -253,13 +253,13 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
-        # СОЗДАЁМ НОВЫЙ РОУТЕР (НЕ КОПИРУЕМ)
+        # СОЗДАЁМ НОВЫЙ РОУТЕР
         mirror_router = Router()
         
         # ИМПОРТИРУЕМ ОСНОВНЫЕ ХЭНДЛЕРЫ ИЗ handlers.py
         from handlers import (
             start, videos, shop, profile, battlepass_menu, bonus, promo, tasks_menu,
-            suggestion_start, support_start, menu_back, check_subscribe, show_languages,
+            suggestion_start, support_start, check_subscribe, show_languages,
             change_language, buy_pack, select_payment_method, buy_subscription,
             pay_subscription_asset, pay_subscription_stars, check_subscription_payment,
             buy_private, private_crypto, private_asset_selected, private_pay_stars,
@@ -278,7 +278,6 @@ async def start_mirror_bot(token: str, username: str = ""):
         mirror_router.callback_query(F.data == "tasks")(tasks_menu)
         mirror_router.callback_query(F.data == "suggestion")(suggestion_start)
         mirror_router.callback_query(F.data == "support")(support_start)
-        mirror_router.callback_query(F.data == "menu_back")(menu_back)
         mirror_router.callback_query(F.data == "check_subscribe")(check_subscribe)
         mirror_router.callback_query(F.data == "show_languages")(show_languages)
         mirror_router.callback_query(F.data.startswith("lang_"))(change_language)
