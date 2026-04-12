@@ -237,7 +237,7 @@ async def start_mirror_bot(token: str, username: str = ""):
     logger.info(f"🔵 Запуск зеркала {username}")
     
     try:
-        # Импортируем все необходимые функции из handlers (без проблемных импортов)
+        # Импортируем все необходимые функции из handlers
         from handlers import (
             start, videos, shop, profile, battlepass_menu, bonus, promo, tasks_menu,
             suggestion_start, support_start, check_subscribe, show_languages,
@@ -255,7 +255,6 @@ async def start_mirror_bot(token: str, username: str = ""):
             admin_op_menu, admin_manage_menu_callback,
             admin_tasks_menu_handler, admin_auto_tasks_menu,
             block_forward,
-            # Эти переменные нужны для капчи
             captcha_data, captcha_attempts, math_captcha_data, math_captcha_attempts, banned_users
         )
         from db import (
@@ -286,7 +285,7 @@ async def start_mirror_bot(token: str, username: str = ""):
         # Создаем роутер для зеркала
         mirror_router = Router()
         
-        # ========== ПОЛНОЦЕННЫЙ ХЭНДЛЕР START ДЛЯ ЗЕРКАЛ ==========
+        # ========== ХЭНДЛЕР START ДЛЯ ЗЕРКАЛ (БЕЗ ПРОВЕРКИ ПОДПИСКИ) ==========
         @mirror_router.message(CommandStart())
         async def mirror_start_handler(message: Message, state: FSMContext, bot: Bot):
             user_id = message.from_user.id
@@ -400,76 +399,10 @@ async def start_mirror_bot(token: str, username: str = ""):
                 )
                 return
             
-            # Проверка подписки на канал
-            try:
-                member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-                is_subscribed = member.status not in ["left", "kicked"]
-            except:
-                is_subscribed = False
-            
-            if not is_subscribed:
-                await state.set_state(SubscribeStates.waiting_for_subscribe)
-                await message.answer(
-                    get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
-                    reply_markup=subscribe_menu
-                )
-                return
-            
-            # Все проверки пройдены - показываем главное меню
+            # ========== ПРОВЕРКА ПОДПИСКИ ПРОПУЩЕНА ДЛЯ ЗЕРКАЛ ==========
+            # Сразу показываем главное меню без проверки подписки
             from keyboards import get_main_menu
             await message.answer(get_text(user_id, "welcome"), reply_markup=get_main_menu(user_id))
-        
-        # ========== ХЭНДЛЕР ДЛЯ ПРОВЕРКИ ПОДПИСКИ ==========
-        @mirror_router.callback_query(F.data == "check_subscribe")
-        async def mirror_check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
-            user_id = call.from_user.id
-            
-            if not is_verified(user_id):
-                image_bytes, captcha_code = generate_captcha_image()
-                captcha_data[user_id] = captcha_code
-                await state.update_data(captcha_code=captcha_code)
-                await state.set_state(CaptchaStates.waiting_for_captcha)
-                try:
-                    await call.message.delete()
-                except:
-                    pass
-                await call.message.answer_photo(
-                    photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
-                    caption="🔐 <b>ПОДТВЕРЖДЕНИЕ (ШАГ 1/2)</b>\n\n"
-                            "Сначала пройдите верификацию.\n"
-                            "Введите код с картинки:"
-                )
-                await safe_answer(call, get_text(user_id, "verification_required"), show_alert=True)
-                return
-            
-            try:
-                member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-                is_subscribed = member.status not in ["left", "kicked"]
-            except:
-                is_subscribed = False
-            
-            if is_subscribed:
-                if not has_received_subscribe_bonus(user_id):
-                    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUBSCRIBE_BONUS, user_id))
-                    mark_subscribe_bonus_received(user_id)
-                    conn.commit()
-                    await safe_answer(call, get_text(user_id, "bonus_received").format(SUBSCRIBE_BONUS), show_alert=True)
-                
-                await safe_answer(call, "✅ Спасибо за подписку!", show_alert=True)
-                await state.set_state(None)
-                try:
-                    await call.message.delete()
-                except:
-                    pass
-                
-                has_access, _, is_main, can_manage = check_admin_access(user_id)
-                if has_access:
-                    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
-                else:
-                    from keyboards import get_main_menu
-                    await call.message.answer(get_text(user_id, "welcome"), reply_markup=get_main_menu(user_id))
-            else:
-                await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
         
         # ========== ХЭНДЛЕРЫ ДЛЯ КАПЧИ ==========
         @mirror_router.message(CaptchaStates.waiting_for_captcha)
@@ -597,24 +530,12 @@ async def start_mirror_bot(token: str, username: str = ""):
                     f"✅ Вы успешно прошли обе проверки!"
                 )
                 
-                try:
-                    member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-                    is_subscribed = member.status not in ["left", "kicked"]
-                except:
-                    is_subscribed = False
-                
-                if not is_subscribed:
-                    await state.set_state(SubscribeStates.waiting_for_subscribe)
-                    await message.answer(
-                        get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
-                        reply_markup=subscribe_menu
-                    )
-                else:
-                    from keyboards import get_main_menu
-                    await message.answer(
-                        get_text(user_id, "welcome"),
-                        reply_markup=get_main_menu(user_id)
-                    )
+                # Сразу показываем главное меню без проверки подписки
+                from keyboards import get_main_menu
+                await message.answer(
+                    get_text(user_id, "welcome"),
+                    reply_markup=get_main_menu(user_id)
+                )
             else:
                 attempts = math_captcha_attempts.get(user_id, 0) + 1
                 math_captcha_attempts[user_id] = attempts
