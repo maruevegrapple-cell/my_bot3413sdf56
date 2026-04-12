@@ -5596,47 +5596,22 @@ async def admin_delete_auto_request(call: CallbackQuery):
         await safe_answer(call, "❌ Ошибка", True)
 
 def get_main_router_for_mirror():
-    """Создаёт роутер для зеркал (без админ-функций)"""
+    """Создаёт роутер для зеркал (копирует все хэндлеры из основного роутера)"""
     from aiogram import Router
     
     mirror_router = Router()
     
-    # Список админских callback_data для исключения
-    admin_keywords = [
-        'admin_', 'add_balance', 'remove_balance', 'broadcast',
-        'add_promo', 'stats', 'give_subscription', 'op_',
-        'manage_', 'delete_200', 'delete_58', 'set_me_admin',
-        'remove_admin', 'set_main_admin', 'confirm_remove_main',
-        'admin_panel', 'admin_tasks', 'admin_task_', 'admin_auto_',
-        'admin_mirrors', 'mirror_add', 'mirror_list', 'mirror_delete',
-        'mirror_restart', 'waiting_for_', 'AdminStates'
-    ]
-    
     # Копируем все message handlers
     for handler in router.message.handlers:
         try:
-            callback_str = str(handler.callback)
-            skip = False
-            for kw in admin_keywords:
-                if kw in callback_str.lower():
-                    skip = True
-                    break
-            if not skip:
-                mirror_router.message.register(handler.callback, *handler.filters)
+            mirror_router.message.register(handler.callback, *handler.filters)
         except:
             pass
     
     # Копируем все callback_query handlers
     for handler in router.callback_query.handlers:
         try:
-            callback_str = str(handler.callback)
-            skip = False
-            for kw in admin_keywords:
-                if kw in callback_str.lower():
-                    skip = True
-                    break
-            if not skip:
-                mirror_router.callback_query.register(handler.callback, *handler.filters)
+            mirror_router.callback_query.register(handler.callback, *handler.filters)
         except:
             pass
     
