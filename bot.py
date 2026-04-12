@@ -12,13 +12,11 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.client.session.aiohttp import AiohttpSession
 
-# ========== МАКСИМАЛЬНОЕ ЛОГИРОВАНИЕ ==========
 print("="*60, file=sys.stderr)
-print("🚀 БОТ ЗАПУСКАЕТСЯ С МАКСИМАЛЬНЫМ ЛОГИРОВАНИЕМ", file=sys.stderr)
+print("🚀 БОТ ЗАПУСКАЕТСЯ", file=sys.stderr)
 print("="*60, file=sys.stderr)
 sys.stderr.flush()
 
-# Перехват всех исключений
 def global_exception_handler(exc_type, exc_value, exc_traceback):
     print("🔥 ГЛОБАЛЬНОЕ ИСКЛЮЧЕНИЕ:", file=sys.stderr)
     print("".join(traceback.format_exception(exc_type, exc_value, exc_traceback)), file=sys.stderr)
@@ -26,32 +24,13 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
 
 sys.excepthook = global_exception_handler
 
-# ========== ДИАГНОСТИКА ПЕРЕМЕННЫХ ==========
-print("="*50, file=sys.stderr)
-print("ДИАГНОСТИКА ПЕРЕМЕННЫХ", file=sys.stderr)
-print("="*50, file=sys.stderr)
-print(f"BOT_TOKEN из os.environ: {os.getenv('BOT_TOKEN', 'НЕ НАЙДЕН!')}", file=sys.stderr)
-print(f"BOT_TOKEN длина: {len(os.getenv('BOT_TOKEN', ''))}", file=sys.stderr)
-print(f"Все переменные окружения:", file=sys.stderr)
-for key in os.environ.keys():
-    if "TOKEN" in key or "BOT" in key:
-        print(f"  {key}: {os.environ[key][:10]}...", file=sys.stderr)
-print("="*50, file=sys.stderr)
-sys.stderr.flush()
-
 from config import BOT_TOKEN, MAIN_ADMIN_ID, BOT_USERNAME
 from db import init_db
-
-# ИМПОРТИРУЕМ ВСЕ ХЭНДЛЕРЫ
 from handlers import router
-
-# ИМПОРТИРУЕМ ЗЕРКАЛА
-from mirrors import start_all_mirror_bots, stop_all_mirror_bots, set_main_bot
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ========== ВЕБ-СЕРВЕР ДЛЯ HEALTHCHECK ==========
 from aiohttp import web
 
 async def healthcheck(request):
@@ -65,14 +44,10 @@ async def run_web():
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', 8080)
         await site.start()
-        print("✅ Web server for healthcheck started on port 8080", file=sys.stderr)
-        sys.stderr.flush()
+        print("✅ Web server started on port 8080", file=sys.stderr)
     except Exception as e:
         print(f"❌ Failed to start web server: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        sys.stderr.flush()
 
-# ================= ВОССТАНОВЛЕНИЕ БАЗЫ ИЗ JSON =================
 async def restore_db_handler(message: Message):
     user_id = message.from_user.id
     if user_id != MAIN_ADMIN_ID:
@@ -109,20 +84,9 @@ async def restore_from_json_handler(message: Message):
         conn.commit()
         cursor.execute("SELECT COUNT(*) FROM users")
         users_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM videos")
-        videos_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM user_videos")
-        watched_count = cursor.fetchone()[0]
-        await status_msg.edit_text(
-            f"✅ <b>База данных восстановлена!</b>\n\n"
-            f"👥 Пользователей: {users_count}\n"
-            f"🎥 Видео: {videos_count}\n"
-            f"👀 Просмотров: {watched_count}\n\n"
-            f"📊 Восстановлено таблиц: {len(restored_tables)}"
-        )
+        await status_msg.edit_text(f"✅ База данных восстановлена!\n\n👥 Пользователей: {users_count}")
     except Exception as e:
-        await status_msg.edit_text(f"❌ Ошибка при восстановлении: {e}")
-        traceback.print_exc(file=sys.stderr)
+        await status_msg.edit_text(f"❌ Ошибка: {e}")
 
 async def backup_db_command_handler(message: Message):
     user_id = message.from_user.id
@@ -155,41 +119,25 @@ async def backup_db_command_handler(message: Message):
         await message.answer_document(
             document=BytesIO(backup_json.encode('utf-8')),
             filename=filename,
-            caption=f"✅ Бэкап базы данных\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n👥 Пользователей: {len(backup_data.get('users', {}).get('data', []))}"
+            caption=f"✅ Бэкап базы данных"
         )
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {e}")
-
 
 async def main():
     try:
         print("🔵 Запускаем main()...", file=sys.stderr)
         sys.stderr.flush()
         
-        # Инициализируем БД
-        print("🟡 Инициализация БД...", file=sys.stderr)
         init_db()
         print("✅ БД инициализирована", file=sys.stderr)
         
-        # Регистрируем текущего бота как главного
-        try:
-            set_main_bot(BOT_TOKEN, BOT_USERNAME, MAIN_ADMIN_ID)
-            print("✅ Главный бот зарегистрирован", file=sys.stderr)
-        except Exception as e:
-            print(f"⚠️ Ошибка регистрации главного бота: {e}", file=sys.stderr)
-        
-        # Создаем директорию для временных видео
         TEMP_DIR = "temp_videos"
         os.makedirs(TEMP_DIR, exist_ok=True)
         print(f"✅ Директория {TEMP_DIR} создана", file=sys.stderr)
 
-        print(f"✅ Используется токен: {BOT_TOKEN[:10]}...", file=sys.stderr)
-        sys.stderr.flush()
-
-        # Запускаем веб-сервер для healthcheck
         asyncio.create_task(run_web())
 
-        # Создаем сессию с увеличенным таймаутом
         session = AiohttpSession(timeout=60)
         
         bot = Bot(
@@ -206,26 +154,19 @@ async def main():
         dp = Dispatcher(storage=storage)
         print("✅ Dispatcher created", file=sys.stderr)
         
-        # Добавляем роутер из handlers.py
         dp.include_router(router)
-        print("✅ Router from handlers.py included", file=sys.stderr)
+        print("✅ Router included", file=sys.stderr)
         
-        # Добавляем дополнительные хэндлеры для бэкапа
         dp.message.register(restore_db_handler, Command("restore"))
         dp.message.register(restore_from_json_handler, F.document)
         dp.message.register(backup_db_command_handler, Command("backup_db"))
         
-        # Блокировка пересылки
         @dp.message(F.forward_from | F.forward_from_chat)
         async def block_forward(message: Message):
             await message.delete()
 
-        print("✅ Бот запущен и готов к работе!", file=sys.stderr)
+        print("✅ Бот запущен!", file=sys.stderr)
         sys.stderr.flush()
-        
-        # Запускаем зеркала
-        print("🔄 Запускаем ботов-зеркала...", file=sys.stderr)
-        asyncio.create_task(start_all_mirror_bots(dp))
         
         await dp.start_polling(bot)
         
@@ -237,15 +178,10 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        print("🔵 Запускаем asyncio.run(main())...", file=sys.stderr)
-        sys.stderr.flush()
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("👋 Бот остановлен пользователем", file=sys.stderr)
-        sys.stderr.flush()
-        asyncio.run(stop_all_mirror_bots())
+        print("👋 Бот остановлен", file=sys.stderr)
     except Exception as e:
         print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
-        sys.stderr.flush()
         raise

@@ -128,10 +128,6 @@ PAYMENT_METHODS = {
     "stars": {"name": "⭐️ Telegram Stars", "enabled": True, "callback": "pay_stars"}
 }
 
-# ================= ЗЕРКАЛА =================
-MAX_MIRRORS_PER_USER = 3
-MAIN_BOT_TOKEN = BOT_TOKEN  # Для совместимости с зеркалами
-
 # ================= СПАМ ЗАЩИТА =================
 SPAM_COOLDOWN = int(os.environ.get("SPAM_COOLDOWN", "3"))
 
@@ -146,4 +142,3 @@ print(f"💎 Оплата xRocket: {'включена' if XROCKET_API_KEY else '
 print(f"🏦 Оплата СБП (Lolz): {'включена' if LOLZ_MERCHANT_SECRET_KEY else 'выключена'} (временно отключена)")
 print(f"🎮 Игры: загружено {len(GAMES)} игр")
 print(f"⏱ Бонус кулдаун: 3 часа")
-print(f"🪞 Максимум зеркал на пользователя: {MAX_MIRRORS_PER_USER}")
