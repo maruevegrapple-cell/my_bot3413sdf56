@@ -1,4 +1,4 @@
-import sqlite3
+\import sqlite3
 import random
 import string
 import os
@@ -2347,6 +2347,16 @@ def get_mirror_bot_by_code_db(code: str):
     """Получить зеркало по коду"""
     try:
         cursor.execute("SELECT * FROM mirror_bots WHERE mirror_code = ?", (code,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except:
+        return None
+
+
+def get_mirror_bot_by_id(bot_id: int):
+    """Получить зеркало по ID"""
+    try:
+        cursor.execute("SELECT * FROM mirror_bots WHERE id = ?", (bot_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
     except:
