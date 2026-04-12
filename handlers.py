@@ -5602,7 +5602,7 @@ def get_main_router_for_mirror():
     mirror_router = Router()
     
     # Список админских callback_data для исключения
-    admin_callbacks = [
+    admin_keywords = [
         'admin_', 'add_balance', 'remove_balance', 'broadcast',
         'add_promo', 'stats', 'give_subscription', 'op_',
         'manage_', 'delete_200', 'delete_58', 'set_me_admin',
@@ -5612,33 +5612,32 @@ def get_main_router_for_mirror():
         'mirror_restart', 'waiting_for_', 'AdminStates'
     ]
     
-    # Получаем все обработчики через router.observers
-    # Для message handlers
-    try:
-        for handler in router.message.handlers:
+    # Копируем все message handlers
+    for handler in router.message.handlers:
+        try:
             callback_str = str(handler.callback)
             skip = False
-            for ac in admin_callbacks:
-                if ac in callback_str.lower():
+            for kw in admin_keywords:
+                if kw in callback_str.lower():
                     skip = True
                     break
             if not skip:
                 mirror_router.message.register(handler.callback, *handler.filters)
-    except:
-        pass
+        except:
+            pass
     
-    # Для callback_query handlers
-    try:
-        for handler in router.callback_query.handlers:
+    # Копируем все callback_query handlers
+    for handler in router.callback_query.handlers:
+        try:
             callback_str = str(handler.callback)
             skip = False
-            for ac in admin_callbacks:
-                if ac in callback_str.lower():
+            for kw in admin_keywords:
+                if kw in callback_str.lower():
                     skip = True
                     break
             if not skip:
                 mirror_router.callback_query.register(handler.callback, *handler.filters)
-    except:
-        pass
+        except:
+            pass
     
     return mirror_router

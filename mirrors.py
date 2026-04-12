@@ -259,12 +259,6 @@ async def start_mirror_bot(token: str, username: str = ""):
         # ИСПОЛЬЗУЕМ ГОТОВЫЙ РОУТЕР ДЛЯ ЗЕРКАЛ ИЗ handlers.py
         mirror_router = get_main_router_for_mirror()
         
-        # Добавляем тестовый хэндлер для отладки
-        @mirror_router.message(CommandStart())
-        async def test_start(message: Message):
-            logger.info(f"🔵🔵🔵 ЗЕРКАЛО ПОЛУЧИЛО /start от {message.from_user.id}!")
-            await message.answer("✅ Зеркало работает! Все хэндлеры загружены.\n\nТеперь вы можете пользоваться ботом как обычно.")
-        
         dp.include_router(mirror_router)
         
         # Блокировка пересылки
