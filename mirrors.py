@@ -337,7 +337,19 @@ async def start_all_mirror_bots(dp_main=None):
     logger.info(f"✅ Запущено {len(active_mirror_bots)} зеркал")
 
 
+def remove_mirror_bot(bot_id: int) -> bool:
+    """Удалить зеркало (админская функция)"""
+    try:
+        from db import cursor, conn
+        cursor.execute("DELETE FROM mirror_bots WHERE id = ? AND is_main = 0", (bot_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    except:
+        return False
+
+
 # Инициализация при загрузке
 init_mirrors_table()
 
 print("✅ mirrors.py загружен")
+
