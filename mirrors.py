@@ -237,7 +237,7 @@ async def start_mirror_bot(token: str, username: str = ""):
     logger.info(f"🔵 Запуск зеркала {username}")
     
     try:
-        # Импортируем все необходимые функции из handlers
+        # Импортируем все необходимые функции из handlers (без проблемных импортов)
         from handlers import (
             start, videos, shop, profile, battlepass_menu, bonus, promo, tasks_menu,
             suggestion_start, support_start, check_subscribe, show_languages,
@@ -246,23 +246,26 @@ async def start_mirror_bot(token: str, username: str = ""):
             buy_private, private_crypto, private_asset_selected, private_pay_stars,
             check_private_payment, tasks_category, tasks_refresh, task_detail, do_task,
             like_video, dislike_video, back_to_menu, safe_answer,
-            process_captcha, process_math_captcha,
             CaptchaStates, MathCaptchaStates, SubscribeStates,
             generate_captcha_image, generate_math_captcha,
-            is_verified, check_subscription, get_main_menu,
             check_admin_access, get_admin_menu,
             upload_video, handle_suggestion_video,
             admin_panel, admin_stats, admin_broadcast,
             admin_add_balance, admin_remove_balance, admin_add_promo,
-            admin_give_subscription, admin_op_menu, admin_manage_menu_callback,
+            admin_op_menu, admin_manage_menu_callback,
             admin_tasks_menu_handler, admin_auto_tasks_menu,
-            block_forward
+            block_forward,
+            # Эти переменные нужны для капчи
+            captcha_data, captcha_attempts, math_captcha_data, math_captcha_attempts, banned_users
         )
-        from db import is_verified, get_user, cursor, conn, update_user_balance, generate_ref_code, has_received_subscribe_bonus, mark_subscribe_bonus_received
-        from config import CHANNEL_ID, SUBSCRIBE_BONUS
-        from keyboards import subscribe_menu, main_menu
+        from db import (
+            is_verified, get_user, cursor, conn, update_user_balance, 
+            generate_ref_code, has_received_subscribe_bonus, 
+            mark_subscribe_bonus_received, get_user_language_db, set_user_language_db
+        )
+        from config import CHANNEL_ID, SUBSCRIBE_BONUS, REF_BONUS
+        from keyboards import subscribe_menu
         from locales import get_text, set_user_language, get_user_language
-        from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL
         
         session = AiohttpSession(timeout=60)
         bot = Bot(
@@ -288,17 +291,13 @@ async def start_mirror_bot(token: str, username: str = ""):
         async def mirror_start_handler(message: Message, state: FSMContext, bot: Bot):
             user_id = message.from_user.id
             username = message.from_user.username or "пользователь"
-            first_name = message.from_user.first_name or "Пользователь"
             logger.info(f"🟢 MIRROR START from {user_id} (@{username})")
             
             # Проверяем язык пользователя
-            from db import get_user_language_db, set_user_language_db
             user_lang = get_user_language_db(user_id)
             set_user_language(user_id, user_lang)
             
             # Проверяем бан
-            banned = False
-            from handlers import banned_users
             if user_id in banned_users:
                 ban_until = banned_users[user_id]
                 if datetime.now() < ban_until:
@@ -355,7 +354,6 @@ async def start_mirror_bot(token: str, username: str = ""):
                 """, (user_id, username, referrer_id, new_ref_code, user_lang))
                 conn.commit()
                 if referrer_id:
-                    from config import REF_BONUS
                     cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
                     conn.commit()
                     try:
@@ -375,7 +373,6 @@ async def start_mirror_bot(token: str, username: str = ""):
                 if has_ref_in_link and user["referrer"] is None:
                     cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
                     conn.commit()
-                    from config import REF_BONUS
                     cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
                     conn.commit()
                     try:
@@ -390,9 +387,7 @@ async def start_mirror_bot(token: str, username: str = ""):
             
             # Проверка верификации
             if not is_verified(user_id):
-                # Показываем капчу
                 image_bytes, captcha_code = generate_captcha_image()
-                from handlers import captcha_data, captcha_attempts
                 captcha_data[user_id] = captcha_code
                 await state.update_data(captcha_code=captcha_code)
                 await state.set_state(CaptchaStates.waiting_for_captcha)
@@ -406,7 +401,12 @@ async def start_mirror_bot(token: str, username: str = ""):
                 return
             
             # Проверка подписки на канал
-            is_subscribed = await check_subscription(bot, user_id)
+            try:
+                member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                is_subscribed = member.status not in ["left", "kicked"]
+            except:
+                is_subscribed = False
+            
             if not is_subscribed:
                 await state.set_state(SubscribeStates.waiting_for_subscribe)
                 await message.answer(
@@ -416,6 +416,7 @@ async def start_mirror_bot(token: str, username: str = ""):
                 return
             
             # Все проверки пройдены - показываем главное меню
+            from keyboards import get_main_menu
             await message.answer(get_text(user_id, "welcome"), reply_markup=get_main_menu(user_id))
         
         # ========== ХЭНДЛЕР ДЛЯ ПРОВЕРКИ ПОДПИСКИ ==========
@@ -425,7 +426,6 @@ async def start_mirror_bot(token: str, username: str = ""):
             
             if not is_verified(user_id):
                 image_bytes, captcha_code = generate_captcha_image()
-                from handlers import captcha_data
                 captcha_data[user_id] = captcha_code
                 await state.update_data(captcha_code=captcha_code)
                 await state.set_state(CaptchaStates.waiting_for_captcha)
@@ -442,11 +442,14 @@ async def start_mirror_bot(token: str, username: str = ""):
                 await safe_answer(call, get_text(user_id, "verification_required"), show_alert=True)
                 return
             
-            is_subscribed = await check_subscription(bot, user_id)
+            try:
+                member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                is_subscribed = member.status not in ["left", "kicked"]
+            except:
+                is_subscribed = False
             
             if is_subscribed:
                 if not has_received_subscribe_bonus(user_id):
-                    from config import SUBSCRIBE_BONUS
                     cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUBSCRIBE_BONUS, user_id))
                     mark_subscribe_bonus_received(user_id)
                     conn.commit()
@@ -463,6 +466,7 @@ async def start_mirror_bot(token: str, username: str = ""):
                 if has_access:
                     await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
                 else:
+                    from keyboards import get_main_menu
                     await call.message.answer(get_text(user_id, "welcome"), reply_markup=get_main_menu(user_id))
             else:
                 await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
@@ -473,10 +477,6 @@ async def start_mirror_bot(token: str, username: str = ""):
             user_id = message.from_user.id
             user_input = message.text.strip().upper()
             
-            from handlers import captcha_data, captcha_attempts, banned_users, generate_captcha_image, generate_math_captcha
-            from db import get_user_language_db, set_user_language_db
-            
-            banned, ban_until = False, None
             if user_id in banned_users:
                 ban_until = banned_users[user_id]
                 if datetime.now() < ban_until:
@@ -507,7 +507,6 @@ async def start_mirror_bot(token: str, username: str = ""):
                     del captcha_attempts[user_id]
                 
                 math_text, math_answer = generate_math_captcha()
-                from handlers import math_captcha_data
                 math_captcha_data[user_id] = math_answer
                 await state.update_data(math_answer=math_answer)
                 await state.set_state(MathCaptchaStates.waiting_for_math_captcha)
@@ -555,11 +554,6 @@ async def start_mirror_bot(token: str, username: str = ""):
             user_id = message.from_user.id
             user_input = message.text.strip()
             
-            from handlers import math_captcha_data, math_captcha_attempts, banned_users, generate_math_captcha
-            from db import get_user_language_db, set_user_language_db
-            from config import CHANNEL_ID, SUBSCRIBE_BONUS
-            
-            banned, ban_until = False, None
             if user_id in banned_users:
                 ban_until = banned_users[user_id]
                 if datetime.now() < ban_until:
@@ -603,7 +597,12 @@ async def start_mirror_bot(token: str, username: str = ""):
                     f"✅ Вы успешно прошли обе проверки!"
                 )
                 
-                is_subscribed = await check_subscription(bot, user_id)
+                try:
+                    member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+                    is_subscribed = member.status not in ["left", "kicked"]
+                except:
+                    is_subscribed = False
+                
                 if not is_subscribed:
                     await state.set_state(SubscribeStates.waiting_for_subscribe)
                     await message.answer(
@@ -611,6 +610,7 @@ async def start_mirror_bot(token: str, username: str = ""):
                         reply_markup=subscribe_menu
                     )
                 else:
+                    from keyboards import get_main_menu
                     await message.answer(
                         get_text(user_id, "welcome"),
                         reply_markup=get_main_menu(user_id)
@@ -648,8 +648,7 @@ async def start_mirror_bot(token: str, username: str = ""):
                     f"📊 Осталось попыток: {remaining_attempts}/3"
                 )
         
-        # ========== КОПИРУЕМ ОСТАЛЬНЫЕ ХЭНДЛЕРЫ ИЗ ОСНОВНОГО РОУТЕРА ==========
-        # Регистрируем основные хэндлеры
+        # ========== КОПИРУЕМ ОСТАЛЬНЫЕ ХЭНДЛЕРЫ ==========
         mirror_router.callback_query(F.data == "videos")(videos)
         mirror_router.callback_query(F.data == "shop")(shop)
         mirror_router.callback_query(F.data == "profile")(profile)
@@ -681,8 +680,17 @@ async def start_mirror_bot(token: str, username: str = ""):
         mirror_router.callback_query(F.data == "menu")(back_to_menu)
         mirror_router.callback_query(F.data == "menu_back")(back_to_menu)
         
-        # Админские хэндлеры (только для главного админа, зеркала их не обрабатывают)
-        # но добавляем для совместимости
+        # Админские хэндлеры
+        mirror_router.callback_query(F.data == "admin_panel")(admin_panel)
+        mirror_router.callback_query(F.data == "admin_stats")(admin_stats)
+        mirror_router.callback_query(F.data == "admin_broadcast")(admin_broadcast)
+        mirror_router.callback_query(F.data == "admin_add_balance")(admin_add_balance)
+        mirror_router.callback_query(F.data == "admin_remove_balance")(admin_remove_balance)
+        mirror_router.callback_query(F.data == "admin_add_promo")(admin_add_promo)
+        mirror_router.callback_query(F.data == "admin_op")(admin_op_menu)
+        mirror_router.callback_query(F.data == "admin_manage")(admin_manage_menu_callback)
+        mirror_router.callback_query(F.data == "admin_tasks")(admin_tasks_menu_handler)
+        mirror_router.callback_query(F.data == "admin_auto_tasks")(admin_auto_tasks_menu)
         
         # Блокировка пересылки
         @mirror_router.message(F.forward_from | F.forward_from_chat)
@@ -695,10 +703,8 @@ async def start_mirror_bot(token: str, username: str = ""):
             user_id = message.from_user.id
             has_access, _, _, _ = check_admin_access(user_id)
             if has_access:
-                from handlers import upload_video
                 await upload_video(message)
             else:
-                from handlers import handle_suggestion_video
                 await handle_suggestion_video(message, bot)
         
         dp.include_router(mirror_router)
