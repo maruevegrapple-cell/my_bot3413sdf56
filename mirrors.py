@@ -12,7 +12,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.client.session.aiohttp import AiohttpSession
 
-from db import is_verified
+from db import is_verified as check_verified
 
 logger = logging.getLogger(__name__)
 
@@ -272,70 +272,70 @@ async def start_mirror_bot(token: str, username: str = ""):
         # ОБЁРТКИ ДЛЯ ЗЕРКАЛ (БЕЗ ПРОВЕРКИ ПОДПИСКИ)
         async def mirror_start_wrapper(message: Message, state: FSMContext, bot: Bot):
             user_id = message.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await message.answer(get_text(user_id, "verification_required"))
                 return
             await start(message, state, bot)
         
         async def mirror_videos_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await safe_answer(call, get_text(user_id, "verification_required"), True)
                 return
             await videos(call, state, bot)
         
         async def mirror_shop_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await safe_answer(call, get_text(user_id, "verification_required"), True)
                 return
             await shop(call, state, bot)
         
         async def mirror_profile_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await safe_answer(call, get_text(user_id, "verification_required"), True)
                 return
             await profile(call, state, bot)
         
         async def mirror_battlepass_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await safe_answer(call, get_text(user_id, "verification_required"), True)
                 return
             await battlepass_menu(call, state, bot)
         
         async def mirror_bonus_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await safe_answer(call, get_text(user_id, "verification_required"), True)
                 return
             await bonus(call, state, bot)
         
         async def mirror_promo_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await safe_answer(call, get_text(user_id, "verification_required"), True)
                 return
             await promo(call, state, bot)
         
         async def mirror_tasks_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await safe_answer(call, get_text(user_id, "verification_required"), True)
                 return
             await tasks_menu(call, state, bot)
         
         async def mirror_suggestion_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await safe_answer(call, get_text(user_id, "verification_required"), True)
                 return
             await suggestion_start(call, state)
         
         async def mirror_support_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
-            if not is_verified(user_id):
+            if not check_verified(user_id):
                 await safe_answer(call, get_text(user_id, "verification_required"), True)
                 return
             await support_start(call, state, bot)
