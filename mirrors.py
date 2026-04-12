@@ -236,7 +236,7 @@ async def start_mirror_bot(token: str, username: str = ""):
     logger.info(f"🔵 Запуск зеркала {username}")
     
     try:
-        from handlers import get_main_router_for_mirror
+        from handlers import router
         
         session = AiohttpSession(timeout=60)
         bot = Bot(
@@ -254,10 +254,8 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
-        # ИСПОЛЬЗУЕМ ГОТОВЫЙ РОУТЕР ДЛЯ ЗЕРКАЛ ИЗ handlers.py
-        mirror_router = get_main_router_for_mirror()
-        
-        dp.include_router(mirror_router)
+        # ПРОСТО ИСПОЛЬЗУЕМ ТОТ ЖЕ РОУТЕР
+        dp.include_router(router)
         
         # Блокировка пересылки
         @dp.message(F.forward_from | F.forward_from_chat)
@@ -281,7 +279,6 @@ async def start_mirror_bot(token: str, username: str = ""):
         import traceback
         traceback.print_exc()
         return None
-
 
 async def stop_mirror_bot(token: str):
     if token in active_mirror_bots:
