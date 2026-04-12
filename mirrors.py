@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Optional
 from datetime import datetime
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
@@ -249,7 +249,7 @@ def remove_mirror_bot_by_user(bot_id: int, user_id: int) -> bool:
 async def start_mirror_bot(token: str, username: str = ""):
     """Запустить отдельного бота-зеркало"""
     try:
-        from handlers import get_main_router_for_mirror
+        from handlers import router
         
         session = AiohttpSession(timeout=60)
         
@@ -270,9 +270,8 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
-        # Используем готовый роутер для зеркал (без админки)
-        mirror_router = get_main_router_for_mirror()
-        dp.include_router(mirror_router)
+        # ИСПОЛЬЗУЕМ ТОТ ЖЕ САМЫЙ РОУТЕР, ЧТО И ОСНОВНОЙ БОТ
+        dp.include_router(router)
         
         # Блокировка пересылки
         @dp.message(F.forward_from | F.forward_from_chat)
