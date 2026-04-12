@@ -4,7 +4,7 @@ from typing import Dict, Optional
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -14,7 +14,6 @@ from aiogram.client.session.aiohttp import AiohttpSession
 
 logger = logging.getLogger(__name__)
 
-# Хранилище активных ботов-зеркал
 active_mirror_bots: Dict[str, Bot] = {}
 active_mirror_dispatchers: Dict[str, Dispatcher] = {}
 
@@ -234,12 +233,10 @@ def remove_mirror_bot_by_user(bot_id: int, user_id: int) -> bool:
 
 
 async def start_mirror_bot(token: str, username: str = ""):
-    """Запустить отдельного бота-зеркало"""
+    """Запустить отдельного бота-зеркало с собственным роутером"""
     logger.info(f"🔵 Запуск зеркала {username}")
     
     try:
-        from handlers import get_main_router_for_mirror
-        
         session = AiohttpSession(timeout=60)
         bot = Bot(
             token=token,
@@ -256,8 +253,92 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
-        # ИСПОЛЬЗУЕМ ГОТОВЫЙ РОУТЕР ДЛЯ ЗЕРКАЛ ИЗ handlers.py
-        mirror_router = get_main_router_for_mirror()
+        # СОЗДАЁМ ОТДЕЛЬНЫЙ РОУТЕР ДЛЯ ЗЕРКАЛА
+        mirror_router = Router()
+        
+        # ИМПОРТИРУЕМ ВСЕ НУЖНЫЕ ХЭНДЛЕРЫ ИЗ ОСНОВНОГО ФАЙЛА
+        from handlers import (
+            start, videos, shop, profile, battlepass_menu, bonus, promo, tasks_menu,
+            suggestion_start, support_start, menu_back, check_subscribe, show_languages,
+            change_language, buy_pack, select_payment_method, buy_subscription,
+            pay_subscription_asset, pay_subscription_stars, check_subscription_payment,
+            buy_private, private_crypto, private_asset_selected, private_pay_stars,
+            check_private_payment, tasks_category, tasks_refresh, task_detail, do_task,
+            submit_task_photo, approve_task_admin, reject_task_admin, rework_task_admin,
+            admin_manage_requests, admin_view_request, admin_approve_request, admin_reject_request,
+            admin_rework_request, admin_delete_request, admin_tasks_menu_handler,
+            admin_task_categories, admin_category_tasks, admin_move_task_select, admin_move_task,
+            admin_task_add_start, admin_task_title, admin_task_description, admin_task_reward,
+            admin_task_max_completions, admin_task_edit_start, edit_task_select, edit_task_title_start,
+            edit_task_title_save, edit_task_description_start, edit_task_description_save,
+            edit_task_reward_start, edit_task_reward_save, edit_task_max_completions_start,
+            edit_task_max_completions_save, edit_task_category_start, edit_task_category_save,
+            admin_task_remove_start, admin_task_remove_by_button, admin_task_remove,
+            admin_task_list, admin_task_pending, admin_task_category, support_message_handler,
+            support_photo_handler, support_reply_send, support_reply_start, like_video, dislike_video,
+            mirror_menu, mirror_info, mirror_create_start, mirror_create_token, mirror_my_list,
+            mirror_details, mirror_start, mirror_stop, mirror_restart, mirror_delete,
+            auto_tasks_menu, auto_tasks_category, auto_task_detail, do_auto_task,
+            admin_auto_tasks_menu, admin_auto_task_add_start, admin_auto_task_title,
+            admin_auto_task_desc, admin_auto_task_reward, admin_auto_task_max,
+            admin_auto_task_category, admin_auto_task_list, admin_auto_task_remove_start,
+            admin_auto_task_remove, admin_auto_task_pending, admin_auto_task_categories,
+            admin_auto_category_tasks, admin_auto_move_task_select, admin_auto_move_task,
+            admin_auto_manage_requests, admin_view_auto_request, admin_approve_auto_request,
+            admin_reject_auto_request, admin_delete_auto_request
+        )
+        
+        # Регистрируем основные хэндлеры
+        mirror_router.message(CommandStart())(start)
+        mirror_router.callback_query(F.data == "videos")(videos)
+        mirror_router.callback_query(F.data == "shop")(shop)
+        mirror_router.callback_query(F.data == "profile")(profile)
+        mirror_router.callback_query(F.data == "battlepass_menu")(battlepass_menu)
+        mirror_router.callback_query(F.data == "bonus")(bonus)
+        mirror_router.callback_query(F.data == "promo")(promo)
+        mirror_router.callback_query(F.data == "tasks")(tasks_menu)
+        mirror_router.callback_query(F.data == "suggestion")(suggestion_start)
+        mirror_router.callback_query(F.data == "support")(support_start)
+        mirror_router.callback_query(F.data == "menu_back")(menu_back)
+        mirror_router.callback_query(F.data == "check_subscribe")(check_subscribe)
+        mirror_router.callback_query(F.data == "show_languages")(show_languages)
+        mirror_router.callback_query(F.data.startswith("lang_"))(change_language)
+        mirror_router.callback_query(F.data.startswith("buy_pack_"))(buy_pack)
+        mirror_router.callback_query(F.data.startswith("pay_method_"))(select_payment_method)
+        mirror_router.callback_query(F.data.startswith("buy_subscription_"))(buy_subscription)
+        mirror_router.callback_query(F.data.startswith("pay_subscription_asset_"))(pay_subscription_asset)
+        mirror_router.callback_query(F.data.startswith("pay_subscription_stars_"))(pay_subscription_stars)
+        mirror_router.callback_query(F.data.startswith("check_subscription_"))(check_subscription_payment)
+        mirror_router.callback_query(F.data == "buy_private")(buy_private)
+        mirror_router.callback_query(F.data == "private_crypto")(private_crypto)
+        mirror_router.callback_query(F.data.startswith("private_asset_"))(private_asset_selected)
+        mirror_router.callback_query(F.data == "private_stars")(private_pay_stars)
+        mirror_router.callback_query(F.data.startswith("check_private_"))(check_private_payment)
+        mirror_router.callback_query(F.data.startswith("tasks_category_"))(tasks_category)
+        mirror_router.callback_query(F.data.startswith("tasks_refresh_"))(tasks_refresh)
+        mirror_router.callback_query(F.data.startswith("task_"))(task_detail)
+        mirror_router.callback_query(F.data.startswith("do_task_"))(do_task)
+        mirror_router.message(F.photo)(submit_task_photo)
+        mirror_router.callback_query(F.data.startswith("like_video_"))(like_video)
+        mirror_router.callback_query(F.data.startswith("dislike_video_"))(dislike_video)
+        
+        # Регистрируем хэндлеры зеркал
+        mirror_router.callback_query(F.data == "mirror_menu")(mirror_menu)
+        mirror_router.callback_query(F.data == "mirror_info")(mirror_info)
+        mirror_router.callback_query(F.data == "mirror_create")(mirror_create_start)
+        mirror_router.message(MirrorStates.waiting_for_token)(mirror_create_token)
+        mirror_router.callback_query(F.data == "mirror_my_list")(mirror_my_list)
+        mirror_router.callback_query(F.data.startswith("mirror_details_"))(mirror_details)
+        mirror_router.callback_query(F.data.startswith("mirror_start_"))(mirror_start)
+        mirror_router.callback_query(F.data.startswith("mirror_stop_"))(mirror_stop)
+        mirror_router.callback_query(F.data.startswith("mirror_restart_"))(mirror_restart)
+        mirror_router.callback_query(F.data.startswith("mirror_delete_"))(mirror_delete)
+        
+        # Регистрируем хэндлеры авто-заданий
+        mirror_router.callback_query(F.data == "auto_tasks")(auto_tasks_menu)
+        mirror_router.callback_query(F.data.startswith("auto_tasks_category_"))(auto_tasks_category)
+        mirror_router.callback_query(F.data.startswith("auto_task_"))(auto_task_detail)
+        mirror_router.callback_query(F.data.startswith("do_auto_task_"))(do_auto_task)
         
         dp.include_router(mirror_router)
         
