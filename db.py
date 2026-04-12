@@ -1,4 +1,4 @@
-\import sqlite3
+import sqlite3
 import random
 import string
 import os
