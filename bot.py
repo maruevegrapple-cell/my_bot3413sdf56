@@ -39,14 +39,14 @@ for key in os.environ.keys():
 print("="*50, file=sys.stderr)
 sys.stderr.flush()
 
-from config import BOT_TOKEN, MAIN_ADMIN_ID
+from config import BOT_TOKEN, MAIN_ADMIN_ID, BOT_USERNAME
 from db import init_db
 
-# ИМПОРТИРУЕМ ВСЕ ХЭНДЛЕРЫ ИЗ ФАЙЛА handlers.py
-from handlers import router, get_main_router_for_mirror
+# ИМПОРТИРУЕМ ВСЕ ХЭНДЛЕРЫ
+from handlers import router
 
 # ИМПОРТИРУЕМ ЗЕРКАЛА
-from mirrors import start_all_mirror_bots, stop_all_mirror_bots, set_main_bot, get_main_bot_token
+from mirrors import start_all_mirror_bots, stop_all_mirror_bots, set_main_bot
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -75,67 +75,44 @@ async def run_web():
 # ================= ВОССТАНОВЛЕНИЕ БАЗЫ ИЗ JSON =================
 async def restore_db_handler(message: Message):
     user_id = message.from_user.id
-    
-    # Проверка на админа
     if user_id != MAIN_ADMIN_ID:
         await message.answer("❌ Нет доступа")
         return
-    
     await message.answer("📤 Отправь JSON файл с бэкапом")
 
 async def restore_from_json_handler(message: Message):
     user_id = message.from_user.id
-    
-    # Проверка на админа
     if user_id != MAIN_ADMIN_ID:
         return
-    
     if not message.document.file_name.endswith('.json'):
         return
-    
     status_msg = await message.answer("🔄 Восстанавливаю базу данных...")
-    
     try:
-        # Скачиваем файл
+        from db import cursor, conn
         file = await message.bot.get_file(message.document.file_id)
         file_bytes = await message.bot.download_file(file.file_path)
-        
         data = json.loads(file_bytes.read().decode('utf-8'))
-        
-        # Восстанавливаем базу
-        from db import cursor, conn
         restored_tables = []
         for table_name, table_data in data.items():
             if table_name == "sqlite_sequence":
                 continue
-            
             columns = table_data["columns"]
             rows = table_data["data"]
-            
             if not rows:
                 continue
-            
-            # Очищаем таблицу
             cursor.execute(f"DELETE FROM {table_name}")
-            
-            # Вставляем данные
             placeholders = ','.join(['?'] * len(columns))
             for row in rows:
                 values = [row.get(col) for col in columns]
                 cursor.execute(f"INSERT INTO {table_name} ({','.join(columns)}) VALUES ({placeholders})", values)
-            
             restored_tables.append(f"{table_name}: {len(rows)} записей")
-        
         conn.commit()
-        
-        # Проверяем результат
         cursor.execute("SELECT COUNT(*) FROM users")
         users_count = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM videos")
         videos_count = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM user_videos")
         watched_count = cursor.fetchone()[0]
-        
         await status_msg.edit_text(
             f"✅ <b>База данных восстановлена!</b>\n\n"
             f"👥 Пользователей: {users_count}\n"
@@ -143,83 +120,45 @@ async def restore_from_json_handler(message: Message):
             f"👀 Просмотров: {watched_count}\n\n"
             f"📊 Восстановлено таблиц: {len(restored_tables)}"
         )
-        
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка при восстановлении: {e}")
         traceback.print_exc(file=sys.stderr)
 
 async def backup_db_command_handler(message: Message):
     user_id = message.from_user.id
-    
-    # Проверка на админа
     if user_id != MAIN_ADMIN_ID:
         await message.answer("❌ Нет доступа")
         return
-    
     status_msg = await message.answer("🔄 Создаю бэкап...")
-    
     try:
         from db import cursor
-        # Получаем все таблицы
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = [row[0] for row in cursor.fetchall() if row[0] != 'sqlite_sequence']
-        
         backup_data = {}
-        
         for table in tables:
-            # Получаем структуру таблицы
             cursor.execute(f"PRAGMA table_info({table})")
             columns = [col[1] for col in cursor.fetchall()]
-            
-            # Получаем данные
             cursor.execute(f"SELECT * FROM {table}")
             rows = cursor.fetchall()
-            
-            # Преобразуем в словари
             data = []
             for row in rows:
                 row_dict = {}
                 for i, col in enumerate(columns):
                     row_dict[col] = row[i]
                 data.append(row_dict)
-            
-            backup_data[table] = {
-                "columns": columns,
-                "data": data
-            }
-        
-        # Сохраняем в JSON
+            backup_data[table] = {"columns": columns, "data": data}
         from datetime import datetime
         backup_json = json.dumps(backup_data, ensure_ascii=False, indent=2, default=str)
-        
         from io import BytesIO
         filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        
         await status_msg.delete()
         await message.answer_document(
             document=BytesIO(backup_json.encode('utf-8')),
             filename=filename,
             caption=f"✅ Бэкап базы данных\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n👥 Пользователей: {len(backup_data.get('users', {}).get('data', []))}"
         )
-        
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка: {e}")
-
-
-async def create_bot_instance(token: str, bot_name: str = ""):
-    """Создать экземпляр бота (для основного бота и зеркал)"""
-    session = AiohttpSession(timeout=60)
-    
-    bot = Bot(
-        token=token,
-        session=session,
-        default=DefaultBotProperties(
-            parse_mode=ParseMode.HTML,
-            protect_content=True
-        )
-    )
-    
-    return bot
 
 
 async def main():
@@ -232,10 +171,10 @@ async def main():
         init_db()
         print("✅ БД инициализирована", file=sys.stderr)
         
-        # Регистрируем текущего бота как главного в таблице зеркал
+        # Регистрируем текущего бота как главного
         try:
             set_main_bot(BOT_TOKEN, BOT_USERNAME, MAIN_ADMIN_ID)
-            print("✅ Главный бот зарегистрирован в таблице зеркал", file=sys.stderr)
+            print("✅ Главный бот зарегистрирован", file=sys.stderr)
         except Exception as e:
             print(f"⚠️ Ошибка регистрации главного бота: {e}", file=sys.stderr)
         
@@ -267,7 +206,7 @@ async def main():
         dp = Dispatcher(storage=storage)
         print("✅ Dispatcher created", file=sys.stderr)
         
-        # Добавляем роутер из handlers.py (там ВСЕ основные хэндлеры)
+        # Добавляем роутер из handlers.py
         dp.include_router(router)
         print("✅ Router from handlers.py included", file=sys.stderr)
         
@@ -284,7 +223,7 @@ async def main():
         print("✅ Бот запущен и готов к работе!", file=sys.stderr)
         sys.stderr.flush()
         
-        # Запускаем зеркала (после основного бота)
+        # Запускаем зеркала
         print("🔄 Запускаем ботов-зеркала...", file=sys.stderr)
         asyncio.create_task(start_all_mirror_bots(dp))
         
@@ -304,7 +243,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("👋 Бот остановлен пользователем", file=sys.stderr)
         sys.stderr.flush()
-        # Останавливаем зеркала
         asyncio.run(stop_all_mirror_bots())
     except Exception as e:
         print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}", file=sys.stderr)
