@@ -5596,9 +5596,23 @@ async def admin_delete_auto_request(call: CallbackQuery):
         await safe_answer(call, "❌ Ошибка", True)
 
 def get_main_router_for_mirror():
+    """Создаёт роутер для зеркал (без админ-функций)"""
+    from aiogram import Router
+    
     mirror_router = Router()
-    for handler in router.routes:
-        if 'admin' in str(handler.callback).lower():
-            continue
-        mirror_router.include_router(handler)
-    return mirror_router	
+    
+    # Проходим по всем зарегистрированным обработчикам в основном роутере
+    # и добавляем их в зеркальный роутер, исключая админские
+    for handler in router._observers.values():
+        for observer in handler.values():
+            for h in observer.handlers:
+                callback_str = str(h.callback)
+                if 'admin' in callback_str.lower():
+                    continue
+                # Определяем тип обработчика (message, callback_query и т.д.)
+                if hasattr(router, 'message') and h in router.message.observers.values():
+                    mirror_router.message.register(h.callback, *h.filters)
+                elif hasattr(router, 'callback_query') and h in router.callback_query.observers.values():
+                    mirror_router.callback_query.register(h.callback, *h.filters)
+    
+    return mirror_router
