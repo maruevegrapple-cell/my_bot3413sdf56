@@ -118,6 +118,12 @@ from mirrors import (
     get_all_mirror_bots, remove_mirror_bot, stop_all_mirror_bots, start_all_mirror_bots
 )
 
+# ========== ТЕСТОВЫЙ ХЭНДЛЕР ДЛЯ ДЕБАГА ==========
+@router.message(CommandStart())
+async def test_start_handler(message: Message):
+    await message.answer("✅ ТЕСТ: Бот получил команду /start и отвечает!")
+    logger.info(f"🔵🔵🔵 ТЕСТОВЫЙ ХЭНДЛЕР СРАБОТАЛ ДЛЯ {message.from_user.id}")
+
 try:
     from lolz_payments import create_lolz_invoice, check_lolz_payment
     LOLZ_AVAILABLE = True
@@ -5616,3 +5622,4 @@ def get_main_router_for_mirror():
             pass
     
     return mirror_router
+
