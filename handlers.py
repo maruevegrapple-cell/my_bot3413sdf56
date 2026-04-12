@@ -90,7 +90,8 @@ from keyboards import (
     admin_auto_tasks_keyboard, get_auto_category_management_menu, get_auto_tasks_by_category_menu,
     get_move_auto_category_menu, auto_task_category_keyboard, get_auto_requests_menu, get_auto_request_action_menu,
     get_mirror_menu, get_my_mirrors_keyboard, get_mirror_details_keyboard, get_mirror_info_text, get_mirror_create_instruction,
-    get_mirrors_admin_menu
+    get_mirrors_admin_menu,
+    get_main_menu  # <--- ДОБАВЬ ЭТУ СТРОКУ
 )
 
 from payments import (
@@ -5600,4 +5601,4 @@ def get_main_router_for_mirror():
         if 'admin' in str(handler.callback).lower():
             continue
         mirror_router.include_router(handler)
-    return mirror_router
+    return mirror_router	
