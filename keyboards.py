@@ -11,7 +11,6 @@ fake_menu = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 # ================= МЕНЮ ПОДПИСКИ =================
-# ИЗМЕНЕНО: текст кнопки и ссылка на бота-агрегатора
 subscribe_menu = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="🔗 Перейти по ссылке", url=CHANNEL_LINK)],
     [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_subscribe")]
@@ -376,21 +375,11 @@ def get_admin_menu(is_main_admin: bool = False, can_manage_admins: bool = False)
             InlineKeyboardButton(text="🎖 Выдать пропуск", callback_data="admin_give_battlepass"),
             InlineKeyboardButton(text="📋 Управление заданиями", callback_data="admin_tasks")
         ],
-        [InlineKeyboardButton(text="🗑 Управление заявками", callback_data="admin_manage_requests")],
-        [InlineKeyboardButton(text="🤖 Управление зеркалами", callback_data="admin_mirrors")]
+        [InlineKeyboardButton(text="🗑 Управление заявками", callback_data="admin_manage_requests")]
     ]
     if is_main_admin or can_manage_admins:
         buttons.append([InlineKeyboardButton(text="👥 Управление админами", callback_data="admin_manage")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def get_mirrors_admin_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Добавить зеркало", callback_data="mirror_add")],
-        [InlineKeyboardButton(text="📋 Список зеркал", callback_data="mirror_list")],
-        [InlineKeyboardButton(text="🗑 Удалить зеркало", callback_data="mirror_delete_select")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")]
-    ])
 
 
 # ================= АДМИН-МЕНЮ ЗАДАНИЙ =================
