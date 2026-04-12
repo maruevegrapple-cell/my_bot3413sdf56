@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import copy
 from typing import Dict, Optional
 from datetime import datetime
 
@@ -232,7 +233,7 @@ def remove_mirror_bot_by_user(bot_id: int, user_id: int) -> bool:
 
 
 async def start_mirror_bot(token: str, username: str = ""):
-    """Запустить отдельного бота-зеркало"""
+    """Запустить отдельного бота-зеркало с копией роутера"""
     logger.info(f"🔵 Запуск зеркала {username}")
     
     try:
@@ -254,8 +255,11 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
-        # ПРОСТО ИСПОЛЬЗУЕМ ТОТ ЖЕ РОУТЕР
-        dp.include_router(router)
+        # СОЗДАЁМ ГЛУБОКУЮ КОПИЮ РОУТЕРА
+        router_copy = copy.deepcopy(router)
+        router_copy.parent_router = None
+        
+        dp.include_router(router_copy)
         
         # Блокировка пересылки
         @dp.message(F.forward_from | F.forward_from_chat)
@@ -279,6 +283,7 @@ async def start_mirror_bot(token: str, username: str = ""):
         import traceback
         traceback.print_exc()
         return None
+
 
 async def stop_mirror_bot(token: str):
     if token in active_mirror_bots:
