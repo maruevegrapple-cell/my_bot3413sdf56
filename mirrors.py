@@ -1,12 +1,11 @@
 import asyncio
 import logging
+import copy
 from typing import Dict, Optional
 from datetime import datetime
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message
-from aiogram.filters import CommandStart, Command
-from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -56,6 +55,7 @@ def init_mirrors_table():
 
 
 def get_mirror_bot_by_id(bot_id: int) -> Optional[dict]:
+    """Получить зеркало по ID"""
     try:
         from db import cursor
         cursor.execute("SELECT * FROM mirror_bots WHERE id = ?", (bot_id,))
@@ -66,6 +66,7 @@ def get_mirror_bot_by_id(bot_id: int) -> Optional[dict]:
 
 
 def get_mirror_bot_by_token_db(token: str) -> Optional[dict]:
+    """Получить зеркало по токену"""
     try:
         from db import cursor
         cursor.execute("SELECT * FROM mirror_bots WHERE bot_token = ?", (token,))
@@ -76,6 +77,7 @@ def get_mirror_bot_by_token_db(token: str) -> Optional[dict]:
 
 
 def get_mirror_bot_by_code_db(code: str) -> Optional[dict]:
+    """Получить зеркало по коду"""
     try:
         from db import cursor
         cursor.execute("SELECT * FROM mirror_bots WHERE mirror_code = ?", (code,))
@@ -86,6 +88,7 @@ def get_mirror_bot_by_code_db(code: str) -> Optional[dict]:
 
 
 def get_user_mirror_bots_db(user_id: int) -> list:
+    """Получить зеркала пользователя"""
     try:
         from db import cursor
         cursor.execute("SELECT * FROM mirror_bots WHERE added_by = ? AND is_main = 0 ORDER BY id ASC", (user_id,))
@@ -95,6 +98,7 @@ def get_user_mirror_bots_db(user_id: int) -> list:
 
 
 def get_all_mirror_bots(include_main: bool = False) -> list:
+    """Получить список всех зеркал"""
     try:
         from db import cursor
         if include_main:
@@ -107,6 +111,7 @@ def get_all_mirror_bots(include_main: bool = False) -> list:
 
 
 def get_active_mirror_bots_db(include_main: bool = False) -> list:
+    """Получить список активных зеркал"""
     try:
         from db import cursor
         if include_main:
@@ -119,6 +124,7 @@ def get_active_mirror_bots_db(include_main: bool = False) -> list:
 
 
 def add_mirror_bot_db(token: str, username: str, added_by: int, notes: str = "") -> bool:
+    """Добавить зеркало в БД"""
     try:
         from db import cursor, conn, generate_ref_code
         mirror_code = generate_ref_code(8)
@@ -134,6 +140,7 @@ def add_mirror_bot_db(token: str, username: str, added_by: int, notes: str = "")
 
 
 def remove_mirror_bot_db(bot_id: int) -> bool:
+    """Удалить зеркало из БД"""
     try:
         from db import cursor, conn
         cursor.execute("DELETE FROM mirror_bots WHERE id = ? AND is_main = 0", (bot_id,))
@@ -144,10 +151,12 @@ def remove_mirror_bot_db(bot_id: int) -> bool:
 
 
 def remove_mirror_bot(bot_id: int) -> bool:
+    """Удалить зеркало (админская функция)"""
     return remove_mirror_bot_db(bot_id)
 
 
 def toggle_mirror_bot_db(bot_id: int, is_active: bool) -> bool:
+    """Включить/выключить зеркало в БД"""
     try:
         from db import cursor, conn
         cursor.execute("UPDATE mirror_bots SET is_active = ? WHERE id = ? AND is_main = 0", (1 if is_active else 0, bot_id))
@@ -158,6 +167,7 @@ def toggle_mirror_bot_db(bot_id: int, is_active: bool) -> bool:
 
 
 def update_mirror_username_db(bot_id: int, username: str) -> bool:
+    """Обновить username зеркала в БД"""
     try:
         from db import cursor, conn
         cursor.execute("UPDATE mirror_bots SET bot_username = ? WHERE id = ?", (username, bot_id))
@@ -168,6 +178,7 @@ def update_mirror_username_db(bot_id: int, username: str) -> bool:
 
 
 def set_main_bot(token: str, username: str = "", added_by: int = None) -> bool:
+    """Установить главного бота"""
     try:
         from db import cursor, conn
         
@@ -195,6 +206,7 @@ def set_main_bot(token: str, username: str = "", added_by: int = None) -> bool:
 
 
 def add_mirror_bot_by_user(token: str, username: str, user_id: int) -> tuple:
+    """Добавить бота-зеркало от обычного пользователя"""
     try:
         from db import cursor, conn, generate_ref_code
         
@@ -225,6 +237,7 @@ def add_mirror_bot_by_user(token: str, username: str, user_id: int) -> tuple:
 
 
 def remove_mirror_bot_by_user(bot_id: int, user_id: int) -> bool:
+    """Удалить зеркало, созданное пользователем"""
     try:
         from db import cursor, conn
         cursor.execute("DELETE FROM mirror_bots WHERE id = ? AND added_by = ? AND is_main = 0", (bot_id, user_id))
@@ -258,22 +271,15 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
-        # СОЗДАЕМ НОВЫЙ РОУТЕР И КОПИРУЕМ ВСЕ ХЭНДЛЕРЫ ВРУЧНУЮ
-        mirror_router = Router()
+        # СОЗДАЕМ ГЛУБОКУЮ КОПИЮ РОУТЕРА
+        mirror_router = copy.deepcopy(router)
         
-        # Копируем все message handlers
-        for handler in router.message.handlers:
-            try:
-                mirror_router.message.register(handler.callback, *handler.filters)
-            except Exception as e:
-                pass
+        # Очищаем parent_router у скопированного роутера
+        mirror_router.parent_router = None
         
-        # Копируем все callback_query handlers
-        for handler in router.callback_query.handlers:
-            try:
-                mirror_router.callback_query.register(handler.callback, *handler.filters)
-            except Exception as e:
-                pass
+        # Очищаем все вложенные роутеры
+        for sub_router in mirror_router.sub_routers:
+            sub_router.parent_router = None
         
         dp.include_router(mirror_router)
         
