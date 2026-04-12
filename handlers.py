@@ -5601,18 +5601,44 @@ def get_main_router_for_mirror():
     
     mirror_router = Router()
     
-    # Проходим по всем зарегистрированным обработчикам в основном роутере
-    # и добавляем их в зеркальный роутер, исключая админские
-    for handler in router._observers.values():
-        for observer in handler.values():
-            for h in observer.handlers:
-                callback_str = str(h.callback)
-                if 'admin' in callback_str.lower():
-                    continue
-                # Определяем тип обработчика (message, callback_query и т.д.)
-                if hasattr(router, 'message') and h in router.message.observers.values():
-                    mirror_router.message.register(h.callback, *h.filters)
-                elif hasattr(router, 'callback_query') and h in router.callback_query.observers.values():
-                    mirror_router.callback_query.register(h.callback, *h.filters)
+    # Список админских callback_data для исключения
+    admin_callbacks = [
+        'admin_', 'add_balance', 'remove_balance', 'broadcast',
+        'add_promo', 'stats', 'give_subscription', 'op_',
+        'manage_', 'delete_200', 'delete_58', 'set_me_admin',
+        'remove_admin', 'set_main_admin', 'confirm_remove_main',
+        'admin_panel', 'admin_tasks', 'admin_task_', 'admin_auto_',
+        'admin_mirrors', 'mirror_add', 'mirror_list', 'mirror_delete',
+        'mirror_restart', 'waiting_for_', 'AdminStates'
+    ]
+    
+    # Получаем все обработчики через router.observers
+    # Для message handlers
+    try:
+        for handler in router.message.handlers:
+            callback_str = str(handler.callback)
+            skip = False
+            for ac in admin_callbacks:
+                if ac in callback_str.lower():
+                    skip = True
+                    break
+            if not skip:
+                mirror_router.message.register(handler.callback, *handler.filters)
+    except:
+        pass
+    
+    # Для callback_query handlers
+    try:
+        for handler in router.callback_query.handlers:
+            callback_str = str(handler.callback)
+            skip = False
+            for ac in admin_callbacks:
+                if ac in callback_str.lower():
+                    skip = True
+                    break
+            if not skip:
+                mirror_router.callback_query.register(handler.callback, *handler.filters)
+    except:
+        pass
     
     return mirror_router
