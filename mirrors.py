@@ -238,7 +238,7 @@ async def start_mirror_bot(token: str, username: str = ""):
     logger.info(f"🔵 Запуск зеркала {username}")
     
     try:
-        from handlers import router
+        from handlers import get_main_router_for_mirror
         
         session = AiohttpSession(timeout=60)
         bot = Bot(
@@ -256,38 +256,14 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
-        # СОЗДАЕМ НОВЫЙ РОУТЕР
-        mirror_router = Router()
+        # ИСПОЛЬЗУЕМ ГОТОВЫЙ РОУТЕР ДЛЯ ЗЕРКАЛ ИЗ handlers.py
+        mirror_router = get_main_router_for_mirror()
         
-        # ТЕСТОВЫЙ ХЭНДЛЕР - ПРОВЕРЯЕМ РАБОТУ /start
+        # Добавляем тестовый хэндлер для отладки
         @mirror_router.message(CommandStart())
         async def test_start(message: Message):
             logger.info(f"🔵🔵🔵 ЗЕРКАЛО ПОЛУЧИЛО /start от {message.from_user.id}!")
-            await message.answer("✅ Зеркало работает! Тестовый хэндлер сработал.\n\nЕсли вы видите это сообщение - зеркало функционирует правильно.")
-        
-        # Копируем ТОЛЬКО message handlers
-        copied_msg = 0
-        for handler in router.message.handlers:
-            try:
-                if hasattr(handler, 'callback') and callable(handler.callback):
-                    mirror_router.message.register(handler.callback, *handler.filters)
-                    copied_msg += 1
-            except Exception as e:
-                pass
-        
-        logger.info(f"🔵 Скопировано message handlers: {copied_msg}")
-        
-        # Копируем ТОЛЬКО callback_query handlers
-        copied_cb = 0
-        for handler in router.callback_query.handlers:
-            try:
-                if hasattr(handler, 'callback') and callable(handler.callback):
-                    mirror_router.callback_query.register(handler.callback, *handler.filters)
-                    copied_cb += 1
-            except Exception as e:
-                pass
-        
-        logger.info(f"🔵 Скопировано callback handlers: {copied_cb}")
+            await message.answer("✅ Зеркало работает! Все хэндлеры загружены.\n\nТеперь вы можете пользоваться ботом как обычно.")
         
         dp.include_router(mirror_router)
         
