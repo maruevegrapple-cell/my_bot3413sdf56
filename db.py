@@ -2362,6 +2362,15 @@ def get_mirror_bot_by_id(bot_id: int):
     except:
         return None
 
+def is_verified(user_id: int) -> bool:
+    """Проверить, верифицирован ли пользователь"""
+    try:
+        cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row and row["is_verified"] == 1
+    except:
+        return False
+
 
 # ========== ЗАПУСК ИНИЦИАЛИЗАЦИИ ==========
 init_db()

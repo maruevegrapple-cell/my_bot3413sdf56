@@ -4,8 +4,8 @@ from typing import Dict, Optional
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.types import Message, CallbackQuery
-from aiogram.filters import CommandStart
+from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
@@ -237,6 +237,7 @@ async def start_mirror_bot(token: str, username: str = ""):
     logger.info(f"🔵 Запуск зеркала {username}")
     
     try:
+        # Импортируем все необходимые функции из handlers
         from handlers import (
             start, videos, shop, profile, battlepass_menu, bonus, promo, tasks_menu,
             suggestion_start, support_start, check_subscribe, show_languages,
@@ -244,10 +245,24 @@ async def start_mirror_bot(token: str, username: str = ""):
             pay_subscription_asset, pay_subscription_stars, check_subscription_payment,
             buy_private, private_crypto, private_asset_selected, private_pay_stars,
             check_private_payment, tasks_category, tasks_refresh, task_detail, do_task,
-            like_video, dislike_video, back_to_menu, safe_answer
+            like_video, dislike_video, back_to_menu, safe_answer,
+            process_captcha, process_math_captcha,
+            CaptchaStates, MathCaptchaStates, SubscribeStates,
+            generate_captcha_image, generate_math_captcha,
+            is_verified, check_subscription, get_main_menu,
+            check_admin_access, get_admin_menu,
+            upload_video, handle_suggestion_video,
+            admin_panel, admin_stats, admin_broadcast,
+            admin_add_balance, admin_remove_balance, admin_add_promo,
+            admin_give_subscription, admin_op_menu, admin_manage_menu_callback,
+            admin_tasks_menu_handler, admin_auto_tasks_menu,
+            block_forward
         )
-        from locales import get_text
-        from db import is_verified
+        from db import is_verified, get_user, cursor, conn, update_user_balance, generate_ref_code, has_received_subscribe_bonus, mark_subscribe_bonus_received
+        from config import CHANNEL_ID, SUBSCRIBE_BONUS
+        from keyboards import subscribe_menu, main_menu
+        from locales import get_text, set_user_language, get_user_language
+        from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL
         
         session = AiohttpSession(timeout=60)
         bot = Bot(
@@ -265,91 +280,385 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
+        # Создаем роутер для зеркала
         mirror_router = Router()
         
-        # Обёртки для зеркал (без проверки подписки, только верификация)
-        async def mirror_start_wrapper(message: Message, state: FSMContext, bot: Bot):
+        # ========== ПОЛНОЦЕННЫЙ ХЭНДЛЕР START ДЛЯ ЗЕРКАЛ ==========
+        @mirror_router.message(CommandStart())
+        async def mirror_start_handler(message: Message, state: FSMContext, bot: Bot):
             user_id = message.from_user.id
-            if not is_verified(user_id):
-                await message.answer(get_text(user_id, "verification_required"))
+            username = message.from_user.username or "пользователь"
+            first_name = message.from_user.first_name or "Пользователь"
+            logger.info(f"🟢 MIRROR START from {user_id} (@{username})")
+            
+            # Проверяем язык пользователя
+            from db import get_user_language_db, set_user_language_db
+            user_lang = get_user_language_db(user_id)
+            set_user_language(user_id, user_lang)
+            
+            # Проверяем бан
+            banned = False
+            from handlers import banned_users
+            if user_id in banned_users:
+                ban_until = banned_users[user_id]
+                if datetime.now() < ban_until:
+                    remaining = ban_until - datetime.now()
+                    minutes = remaining.seconds // 60
+                    seconds = remaining.seconds % 60
+                    await message.answer(
+                        f"🚫 <b>ДОСТУП ЗАБЛОКИРОВАН</b>\n\n"
+                        f"⏳ Осталось: {minutes} мин {seconds} сек"
+                    )
+                    return
+                else:
+                    del banned_users[user_id]
+            
+            # Проверяем, админ ли пользователь
+            has_access, _, is_main, can_manage = check_admin_access(user_id)
+            if has_access:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO users (user_id, username, is_verified, is_admin)
+                    VALUES (?, ?, 1, 1)
+                """, (user_id, username))
+                cursor.execute("UPDATE users SET is_verified = 1, username = ? WHERE user_id = ?", (username, user_id))
+                cursor.execute("SELECT ref_code FROM users WHERE user_id = ?", (user_id,))
+                admin_data = cursor.fetchone()
+                if not admin_data or not admin_data["ref_code"]:
+                    ref_code = generate_ref_code()
+                    cursor.execute("UPDATE users SET ref_code = ? WHERE user_id = ?", (ref_code, user_id))
+                conn.commit()
+                await message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
                 return
-            await start(message, state, bot)
+            
+            # Получаем или создаем пользователя
+            cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            user = cursor.fetchone()
+            
+            # Проверяем реферальную ссылку
+            args = message.text.split()
+            referrer_id = None
+            has_ref_in_link = False
+            if len(args) > 1:
+                ref_code = args[1].upper()
+                cursor.execute("SELECT user_id FROM users WHERE ref_code = ?", (ref_code,))
+                referrer = cursor.fetchone()
+                if referrer:
+                    referrer_id = referrer["user_id"]
+                    if referrer_id != user_id:
+                        has_ref_in_link = True
+            
+            if not user:
+                new_ref_code = generate_ref_code()
+                cursor.execute("""
+                    INSERT INTO users (user_id, username, referrer, is_verified, ref_code, subscribe_bonus_received, is_admin, language)
+                    VALUES (?, ?, ?, 0, ?, 0, 0, ?)
+                """, (user_id, username, referrer_id, new_ref_code, user_lang))
+                conn.commit()
+                if referrer_id:
+                    from config import REF_BONUS
+                    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
+                    conn.commit()
+                    try:
+                        await bot.send_message(
+                            referrer_id,
+                            f"🎁 <b>Новый реферал!</b>\n\n"
+                            f"По вашей ссылке зарегистрировался новый пользователь @{username}\n"
+                            f"➕ Вам начислено +{REF_BONUS} 🍬"
+                        )
+                    except:
+                        pass
+            else:
+                if not user["ref_code"]:
+                    new_ref_code = generate_ref_code()
+                    cursor.execute("UPDATE users SET ref_code = ? WHERE user_id = ?", (new_ref_code, user_id))
+                    conn.commit()
+                if has_ref_in_link and user["referrer"] is None:
+                    cursor.execute("UPDATE users SET referrer = ? WHERE user_id = ?", (referrer_id, user_id))
+                    conn.commit()
+                    from config import REF_BONUS
+                    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (REF_BONUS, referrer_id))
+                    conn.commit()
+                    try:
+                        await bot.send_message(
+                            referrer_id,
+                            f"🎁 <b>Новый реферал!</b>\n\n"
+                            f"По вашей ссылке зарегистрировался пользователь @{username}\n"
+                            f"➕ Вам начислено +{REF_BONUS} 🍬"
+                        )
+                    except:
+                        pass
+            
+            # Проверка верификации
+            if not is_verified(user_id):
+                # Показываем капчу
+                image_bytes, captcha_code = generate_captcha_image()
+                from handlers import captcha_data, captcha_attempts
+                captcha_data[user_id] = captcha_code
+                await state.update_data(captcha_code=captcha_code)
+                await state.set_state(CaptchaStates.waiting_for_captcha)
+                await message.answer_photo(
+                    photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
+                    caption="🔐 <b>ПОДТВЕРЖДЕНИЕ (ШАГ 1/2)</b>\n\n"
+                            "Введите код с картинки:\n"
+                            "⚠️ Только заглавные буквы и цифры\n"
+                            "📊 Осталось попыток: 3/3"
+                )
+                return
+            
+            # Проверка подписки на канал
+            is_subscribed = await check_subscription(bot, user_id)
+            if not is_subscribed:
+                await state.set_state(SubscribeStates.waiting_for_subscribe)
+                await message.answer(
+                    get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
+                    reply_markup=subscribe_menu
+                )
+                return
+            
+            # Все проверки пройдены - показываем главное меню
+            await message.answer(get_text(user_id, "welcome"), reply_markup=get_main_menu(user_id))
         
-        async def mirror_videos_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
+        # ========== ХЭНДЛЕР ДЛЯ ПРОВЕРКИ ПОДПИСКИ ==========
+        @mirror_router.callback_query(F.data == "check_subscribe")
+        async def mirror_check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
             user_id = call.from_user.id
+            
             if not is_verified(user_id):
-                await safe_answer(call, get_text(user_id, "verification_required"), True)
+                image_bytes, captcha_code = generate_captcha_image()
+                from handlers import captcha_data
+                captcha_data[user_id] = captcha_code
+                await state.update_data(captcha_code=captcha_code)
+                await state.set_state(CaptchaStates.waiting_for_captcha)
+                try:
+                    await call.message.delete()
+                except:
+                    pass
+                await call.message.answer_photo(
+                    photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
+                    caption="🔐 <b>ПОДТВЕРЖДЕНИЕ (ШАГ 1/2)</b>\n\n"
+                            "Сначала пройдите верификацию.\n"
+                            "Введите код с картинки:"
+                )
+                await safe_answer(call, get_text(user_id, "verification_required"), show_alert=True)
                 return
-            await videos(call, state, bot)
+            
+            is_subscribed = await check_subscription(bot, user_id)
+            
+            if is_subscribed:
+                if not has_received_subscribe_bonus(user_id):
+                    from config import SUBSCRIBE_BONUS
+                    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (SUBSCRIBE_BONUS, user_id))
+                    mark_subscribe_bonus_received(user_id)
+                    conn.commit()
+                    await safe_answer(call, get_text(user_id, "bonus_received").format(SUBSCRIBE_BONUS), show_alert=True)
+                
+                await safe_answer(call, "✅ Спасибо за подписку!", show_alert=True)
+                await state.set_state(None)
+                try:
+                    await call.message.delete()
+                except:
+                    pass
+                
+                has_access, _, is_main, can_manage = check_admin_access(user_id)
+                if has_access:
+                    await call.message.answer("👑 Админ-панель", reply_markup=get_admin_menu(is_main, can_manage))
+                else:
+                    await call.message.answer(get_text(user_id, "welcome"), reply_markup=get_main_menu(user_id))
+            else:
+                await safe_answer(call, "❌ Вы не подписались на канал! Подпишитесь и нажмите кнопку снова.", show_alert=True)
         
-        async def mirror_shop_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
-            user_id = call.from_user.id
-            if not is_verified(user_id):
-                await safe_answer(call, get_text(user_id, "verification_required"), True)
+        # ========== ХЭНДЛЕРЫ ДЛЯ КАПЧИ ==========
+        @mirror_router.message(CaptchaStates.waiting_for_captcha)
+        async def mirror_process_captcha(message: Message, state: FSMContext, bot: Bot):
+            user_id = message.from_user.id
+            user_input = message.text.strip().upper()
+            
+            from handlers import captcha_data, captcha_attempts, banned_users, generate_captcha_image, generate_math_captcha
+            from db import get_user_language_db, set_user_language_db
+            
+            banned, ban_until = False, None
+            if user_id in banned_users:
+                ban_until = banned_users[user_id]
+                if datetime.now() < ban_until:
+                    remaining = ban_until - datetime.now()
+                    minutes = remaining.seconds // 60
+                    seconds = remaining.seconds % 60
+                    await message.answer(
+                        f"🚫 <b>ДОСТУП ЗАБЛОКИРОВАН</b>\n\n"
+                        f"⏳ Осталось: {minutes} мин {seconds} сек"
+                    )
+                    await state.clear()
+                    return
+                else:
+                    del banned_users[user_id]
+            
+            data = await state.get_data()
+            correct_code = data.get('captcha_code') or captcha_data.get(user_id)
+            
+            if not correct_code:
+                await message.answer("❌ Ошибка верификации. Нажми /start заново")
+                await state.clear()
                 return
-            await shop(call, state, bot)
+            
+            if user_input == correct_code:
+                if user_id in captcha_data:
+                    del captcha_data[user_id]
+                if user_id in captcha_attempts:
+                    del captcha_attempts[user_id]
+                
+                math_text, math_answer = generate_math_captcha()
+                from handlers import math_captcha_data
+                math_captcha_data[user_id] = math_answer
+                await state.update_data(math_answer=math_answer)
+                await state.set_state(MathCaptchaStates.waiting_for_math_captcha)
+                
+                await message.answer(
+                    f"✅ <b>Первый шаг пройден!</b>\n\n"
+                    f"🔢 <b>МАТЕМАТИЧЕСКАЯ ПРОВЕРКА (ШАГ 2/2)</b>\n\n"
+                    f"Решите пример:\n"
+                    f"<b>{math_text}</b>\n\n"
+                    f"Введите только число:\n"
+                    f"📊 Осталось попыток: 3/3"
+                )
+            else:
+                attempts = captcha_attempts.get(user_id, 0) + 1
+                captcha_attempts[user_id] = attempts
+                if attempts >= 3:
+                    from datetime import timedelta
+                    ban_time = datetime.now() + timedelta(minutes=10)
+                    banned_users[user_id] = ban_time
+                    if user_id in captcha_data:
+                        del captcha_data[user_id]
+                    if user_id in captcha_attempts:
+                        del captcha_attempts[user_id]
+                    await state.clear()
+                    await message.answer(
+                        f"🚫 <b>ДОСТУП ЗАБЛОКИРОВАН</b>\n\n"
+                        f"❌ Вы исчерпали все попытки (3/3)\n"
+                        f"⏳ Блокировка на 10 минут"
+                    )
+                    return
+                image_bytes, new_code = generate_captcha_image()
+                captcha_data[user_id] = new_code
+                await state.update_data(captcha_code=new_code)
+                remaining_attempts = 3 - attempts
+                await message.answer_photo(
+                    photo=BufferedInputFile(file=image_bytes, filename="captcha.png"),
+                    caption=f"❌ <b>НЕПРАВИЛЬНЫЙ КОД!</b>\n\n"
+                            f"Попробуйте еще раз:\n"
+                            f"⚠️ Только заглавные буквы и цифры\n"
+                            f"📊 Осталось попыток: {remaining_attempts}/3"
+                )
         
-        async def mirror_profile_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
-            user_id = call.from_user.id
-            if not is_verified(user_id):
-                await safe_answer(call, get_text(user_id, "verification_required"), True)
+        @mirror_router.message(MathCaptchaStates.waiting_for_math_captcha)
+        async def mirror_process_math_captcha(message: Message, state: FSMContext, bot: Bot):
+            user_id = message.from_user.id
+            user_input = message.text.strip()
+            
+            from handlers import math_captcha_data, math_captcha_attempts, banned_users, generate_math_captcha
+            from db import get_user_language_db, set_user_language_db
+            from config import CHANNEL_ID, SUBSCRIBE_BONUS
+            
+            banned, ban_until = False, None
+            if user_id in banned_users:
+                ban_until = banned_users[user_id]
+                if datetime.now() < ban_until:
+                    remaining = ban_until - datetime.now()
+                    minutes = remaining.seconds // 60
+                    seconds = remaining.seconds % 60
+                    await message.answer(
+                        f"🚫 <b>ДОСТУП ЗАБЛОКИРОВАН</b>\n\n"
+                        f"⏳ Осталось: {minutes} мин {seconds} сек"
+                    )
+                    await state.clear()
+                    return
+                else:
+                    del banned_users[user_id]
+            
+            data = await state.get_data()
+            correct_answer = data.get('math_answer') or math_captcha_data.get(user_id)
+            
+            if correct_answer is None:
+                await message.answer("❌ Ошибка верификации. Нажми /start заново")
+                await state.clear()
                 return
-            await profile(call, state, bot)
+            
+            try:
+                user_answer = int(user_input)
+            except ValueError:
+                user_answer = None
+            
+            if user_answer == correct_answer:
+                if user_id in math_captcha_data:
+                    del math_captcha_data[user_id]
+                if user_id in math_captcha_attempts:
+                    del math_captcha_attempts[user_id]
+                
+                cursor.execute("UPDATE users SET is_verified = 1 WHERE user_id = ?", (user_id,))
+                conn.commit()
+                await state.clear()
+                
+                await message.answer(
+                    f"🎉 <b>ВЕРИФИКАЦИЯ ПРОЙДЕНА!</b>\n\n"
+                    f"✅ Вы успешно прошли обе проверки!"
+                )
+                
+                is_subscribed = await check_subscription(bot, user_id)
+                if not is_subscribed:
+                    await state.set_state(SubscribeStates.waiting_for_subscribe)
+                    await message.answer(
+                        get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
+                        reply_markup=subscribe_menu
+                    )
+                else:
+                    await message.answer(
+                        get_text(user_id, "welcome"),
+                        reply_markup=get_main_menu(user_id)
+                    )
+            else:
+                attempts = math_captcha_attempts.get(user_id, 0) + 1
+                math_captcha_attempts[user_id] = attempts
+                
+                if attempts >= 3:
+                    from datetime import timedelta
+                    ban_time = datetime.now() + timedelta(minutes=10)
+                    banned_users[user_id] = ban_time
+                    if user_id in math_captcha_data:
+                        del math_captcha_data[user_id]
+                    if user_id in math_captcha_attempts:
+                        del math_captcha_attempts[user_id]
+                    await state.clear()
+                    await message.answer(
+                        f"🚫 <b>ДОСТУП ЗАБЛОКИРОВАН</b>\n\n"
+                        f"❌ Вы исчерпали все попытки (3/3)\n"
+                        f"⏳ Блокировка на 10 минут"
+                    )
+                    return
+                
+                math_text, math_answer = generate_math_captcha()
+                math_captcha_data[user_id] = math_answer
+                await state.update_data(math_answer=math_answer)
+                remaining_attempts = 3 - attempts
+                
+                await message.answer(
+                    f"❌ <b>НЕПРАВИЛЬНЫЙ ОТВЕТ!</b>\n\n"
+                    f"Попробуйте еще раз:\n"
+                    f"<b>{math_text}</b>\n\n"
+                    f"Введите только число:\n"
+                    f"📊 Осталось попыток: {remaining_attempts}/3"
+                )
         
-        async def mirror_battlepass_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
-            user_id = call.from_user.id
-            if not is_verified(user_id):
-                await safe_answer(call, get_text(user_id, "verification_required"), True)
-                return
-            await battlepass_menu(call, state, bot)
-        
-        async def mirror_bonus_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
-            user_id = call.from_user.id
-            if not is_verified(user_id):
-                await safe_answer(call, get_text(user_id, "verification_required"), True)
-                return
-            await bonus(call, state, bot)
-        
-        async def mirror_promo_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
-            user_id = call.from_user.id
-            if not is_verified(user_id):
-                await safe_answer(call, get_text(user_id, "verification_required"), True)
-                return
-            await promo(call, state, bot)
-        
-        async def mirror_tasks_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
-            user_id = call.from_user.id
-            if not is_verified(user_id):
-                await safe_answer(call, get_text(user_id, "verification_required"), True)
-                return
-            await tasks_menu(call, state, bot)
-        
-        async def mirror_suggestion_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
-            user_id = call.from_user.id
-            if not is_verified(user_id):
-                await safe_answer(call, get_text(user_id, "verification_required"), True)
-                return
-            await suggestion_start(call, state)
-        
-        async def mirror_support_wrapper(call: CallbackQuery, state: FSMContext, bot: Bot):
-            user_id = call.from_user.id
-            if not is_verified(user_id):
-                await safe_answer(call, get_text(user_id, "verification_required"), True)
-                return
-            await support_start(call, state, bot)
-        
-        # Регистрируем обёртки
-        mirror_router.message(CommandStart())(mirror_start_wrapper)
-        mirror_router.callback_query(F.data == "videos")(mirror_videos_wrapper)
-        mirror_router.callback_query(F.data == "shop")(mirror_shop_wrapper)
-        mirror_router.callback_query(F.data == "profile")(mirror_profile_wrapper)
-        mirror_router.callback_query(F.data == "battlepass_menu")(mirror_battlepass_wrapper)
-        mirror_router.callback_query(F.data == "bonus")(mirror_bonus_wrapper)
-        mirror_router.callback_query(F.data == "promo")(mirror_promo_wrapper)
-        mirror_router.callback_query(F.data == "tasks")(mirror_tasks_wrapper)
-        mirror_router.callback_query(F.data == "suggestion")(mirror_suggestion_wrapper)
-        mirror_router.callback_query(F.data == "support")(mirror_support_wrapper)
-        mirror_router.callback_query(F.data == "check_subscribe")(check_subscribe)
+        # ========== КОПИРУЕМ ОСТАЛЬНЫЕ ХЭНДЛЕРЫ ИЗ ОСНОВНОГО РОУТЕРА ==========
+        # Регистрируем основные хэндлеры
+        mirror_router.callback_query(F.data == "videos")(videos)
+        mirror_router.callback_query(F.data == "shop")(shop)
+        mirror_router.callback_query(F.data == "profile")(profile)
+        mirror_router.callback_query(F.data == "battlepass_menu")(battlepass_menu)
+        mirror_router.callback_query(F.data == "bonus")(bonus)
+        mirror_router.callback_query(F.data == "promo")(promo)
+        mirror_router.callback_query(F.data == "tasks")(tasks_menu)
+        mirror_router.callback_query(F.data == "suggestion")(suggestion_start)
+        mirror_router.callback_query(F.data == "support")(support_start)
         mirror_router.callback_query(F.data == "show_languages")(show_languages)
         mirror_router.callback_query(F.data.startswith("lang_"))(change_language)
         mirror_router.callback_query(F.data.startswith("buy_pack_"))(buy_pack)
@@ -370,9 +679,31 @@ async def start_mirror_bot(token: str, username: str = ""):
         mirror_router.callback_query(F.data.startswith("like_video_"))(like_video)
         mirror_router.callback_query(F.data.startswith("dislike_video_"))(dislike_video)
         mirror_router.callback_query(F.data == "menu")(back_to_menu)
+        mirror_router.callback_query(F.data == "menu_back")(back_to_menu)
+        
+        # Админские хэндлеры (только для главного админа, зеркала их не обрабатывают)
+        # но добавляем для совместимости
+        
+        # Блокировка пересылки
+        @mirror_router.message(F.forward_from | F.forward_from_chat)
+        async def mirror_block_forward(message: Message):
+            await message.delete()
+        
+        # Хэндлер для видео (предложка)
+        @mirror_router.message(F.video)
+        async def mirror_handle_video(message: Message, bot: Bot):
+            user_id = message.from_user.id
+            has_access, _, _, _ = check_admin_access(user_id)
+            if has_access:
+                from handlers import upload_video
+                await upload_video(message)
+            else:
+                from handlers import handle_suggestion_video
+                await handle_suggestion_video(message, bot)
         
         dp.include_router(mirror_router)
         
+        # Блокировка пересылки на уровне диспетчера
         @dp.message(F.forward_from | F.forward_from_chat)
         async def block_forward(message: Message):
             await message.delete()

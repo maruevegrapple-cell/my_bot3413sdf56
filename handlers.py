@@ -342,7 +342,7 @@ async def safe_answer(call: CallbackQuery, text: str = None, show_alert: bool = 
     except:
         pass
 
-async def check_access(bot, user_id: int, state: FSMContext, message: Message = None, call: CallbackQuery = None) -> bool:
+async def check_access(bot, user_id: int, state: FSMContext, message: Message = None, call: CallbackQuery = None, is_mirror: bool = False) -> bool:
     if check_admin_access(user_id)[0]:
         return True
     if not is_verified(user_id):
@@ -351,19 +351,19 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
         elif call:
             await safe_answer(call, get_text(user_id, "verification_required"), show_alert=True)
         return False
+    
+    # ДЛЯ ЗЕРКАЛ ПРОВЕРКУ ПОДПИСКИ ПРОПУСКАЕМ
+    if is_mirror:
+        return True
+    
     is_subscribed = await check_subscription(bot, user_id)
     if not is_subscribed:
         await state.set_state(SubscribeStates.waiting_for_subscribe)
+        msg_text = get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS)
         if message:
-            await message.answer(
-                get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
-                reply_markup=subscribe_menu
-            )
+            await message.answer(msg_text, reply_markup=subscribe_menu)
         elif call:
-            await call.message.answer(
-                get_text(user_id, "subscribe_required").format(SUBSCRIBE_BONUS),
-                reply_markup=subscribe_menu
-            )
+            await call.message.answer(msg_text, reply_markup=subscribe_menu)
         return False
     return True
 
