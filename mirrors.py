@@ -1,12 +1,12 @@
 import asyncio
 import logging
-import copy
 from typing import Dict, Optional
 from datetime import datetime
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import Message
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -233,12 +233,10 @@ def remove_mirror_bot_by_user(bot_id: int, user_id: int) -> bool:
 
 
 async def start_mirror_bot(token: str, username: str = ""):
-    """Запустить отдельного бота-зеркало с копией роутера"""
+    """Запустить отдельного бота-зеркало с отдельным роутером"""
     logger.info(f"🔵 Запуск зеркала {username}")
     
     try:
-        from handlers import router
-        
         session = AiohttpSession(timeout=60)
         bot = Bot(
             token=token,
@@ -255,11 +253,55 @@ async def start_mirror_bot(token: str, username: str = ""):
         storage = MemoryStorage()
         dp = Dispatcher(storage=storage)
         
-        # СОЗДАЁМ ГЛУБОКУЮ КОПИЮ РОУТЕРА
-        router_copy = copy.deepcopy(router)
-        router_copy.parent_router = None
+        # СОЗДАЁМ НОВЫЙ РОУТЕР (НЕ КОПИРУЕМ)
+        mirror_router = Router()
         
-        dp.include_router(router_copy)
+        # ИМПОРТИРУЕМ ОСНОВНЫЕ ХЭНДЛЕРЫ ИЗ handlers.py
+        from handlers import (
+            start, videos, shop, profile, battlepass_menu, bonus, promo, tasks_menu,
+            suggestion_start, support_start, menu_back, check_subscribe, show_languages,
+            change_language, buy_pack, select_payment_method, buy_subscription,
+            pay_subscription_asset, pay_subscription_stars, check_subscription_payment,
+            buy_private, private_crypto, private_asset_selected, private_pay_stars,
+            check_private_payment, tasks_category, tasks_refresh, task_detail, do_task,
+            like_video, dislike_video, back_to_menu
+        )
+        
+        # Регистрируем основные хэндлеры
+        mirror_router.message(CommandStart())(start)
+        mirror_router.callback_query(F.data == "videos")(videos)
+        mirror_router.callback_query(F.data == "shop")(shop)
+        mirror_router.callback_query(F.data == "profile")(profile)
+        mirror_router.callback_query(F.data == "battlepass_menu")(battlepass_menu)
+        mirror_router.callback_query(F.data == "bonus")(bonus)
+        mirror_router.callback_query(F.data == "promo")(promo)
+        mirror_router.callback_query(F.data == "tasks")(tasks_menu)
+        mirror_router.callback_query(F.data == "suggestion")(suggestion_start)
+        mirror_router.callback_query(F.data == "support")(support_start)
+        mirror_router.callback_query(F.data == "menu_back")(menu_back)
+        mirror_router.callback_query(F.data == "check_subscribe")(check_subscribe)
+        mirror_router.callback_query(F.data == "show_languages")(show_languages)
+        mirror_router.callback_query(F.data.startswith("lang_"))(change_language)
+        mirror_router.callback_query(F.data.startswith("buy_pack_"))(buy_pack)
+        mirror_router.callback_query(F.data.startswith("pay_method_"))(select_payment_method)
+        mirror_router.callback_query(F.data.startswith("buy_subscription_"))(buy_subscription)
+        mirror_router.callback_query(F.data.startswith("pay_subscription_asset_"))(pay_subscription_asset)
+        mirror_router.callback_query(F.data.startswith("pay_subscription_stars_"))(pay_subscription_stars)
+        mirror_router.callback_query(F.data.startswith("check_subscription_"))(check_subscription_payment)
+        mirror_router.callback_query(F.data == "buy_private")(buy_private)
+        mirror_router.callback_query(F.data == "private_crypto")(private_crypto)
+        mirror_router.callback_query(F.data.startswith("private_asset_"))(private_asset_selected)
+        mirror_router.callback_query(F.data == "private_stars")(private_pay_stars)
+        mirror_router.callback_query(F.data.startswith("check_private_"))(check_private_payment)
+        mirror_router.callback_query(F.data.startswith("tasks_category_"))(tasks_category)
+        mirror_router.callback_query(F.data.startswith("tasks_refresh_"))(tasks_refresh)
+        mirror_router.callback_query(F.data.startswith("task_"))(task_detail)
+        mirror_router.callback_query(F.data.startswith("do_task_"))(do_task)
+        mirror_router.callback_query(F.data.startswith("like_video_"))(like_video)
+        mirror_router.callback_query(F.data.startswith("dislike_video_"))(dislike_video)
+        mirror_router.callback_query(F.data == "menu")(back_to_menu)
+        
+        dp.include_router(mirror_router)
         
         # Блокировка пересылки
         @dp.message(F.forward_from | F.forward_from_chat)
