@@ -12,7 +12,7 @@ fake_menu = InlineKeyboardMarkup(inline_keyboard=[
 
 # ================= МЕНЮ ПОДПИСКИ =================
 subscribe_menu = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🔗 Перейти по ссылке", url=CHANNEL_LINK)],
+    [InlineKeyboardButton(text="📢 Подписаться на канал", url=CHANNEL_LINK)],
     [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_subscribe")]
 ])
 

@@ -16,7 +16,7 @@ MAIN_ADMIN_ID = get_main_admin_id()
 
 # ================= CRYPTOBOT =================
 CRYPTOBOT_API = os.environ.get("CRYPTOBOT_API", "https://pay.crypt.bot/api")
-CRYPTOBOT_TOKEN = os.environ.get("CRYPTOBOT_TOKEN", "567651:AAe2kYwaRB2CWYnWWjw5PumiCaESFq09erq")  # ЗАМЕНЕНО
+CRYPTOBOT_TOKEN = os.environ.get("CRYPTOBOT_TOKEN", "567651:AAe2kYwaRB2CWYnWWjw5PumiCaESFq09erq")
 
 # ================= XROCKET =================
 XROCKET_API_KEY = os.environ.get("XROCKET_API_KEY", "b520de38f72563abe3bb14caa")
@@ -36,9 +36,7 @@ REF_PERCENT = int(os.environ.get("REF_PERCENT", "10"))
 SUBSCRIBE_BONUS = int(os.environ.get("SUBSCRIBE_BONUS", "6"))
 
 # ================= CHANNEL (ОБЯЗАТЕЛЬНАЯ ПОДПИСКА) =================
-# Ссылка на бота-агрегатора для подписки на спонсоров
-CHANNEL_LINK = "https://t.me/PiarFlowBot?start=tl_bhRsNENYWu"
-# ID вашего канала для проверки подписки
+CHANNEL_LINK = "https://t.me/+gx5QzOgi-Ro3Nzdl"
 CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003707313473"))
 ANON_CHAT_LINK = os.environ.get("ANON_CHAT_LINK", "https://t.me/anonaskbot?start=f21rnoq")
 
@@ -140,7 +138,7 @@ print("✅ Конфигурация загружена!")
 print(f"🤖 BOT_TOKEN: {BOT_TOKEN[:10]}...")
 print(f"🤖 MODERATOR_BOT_TOKEN: {BOT_TOKEN_MODERATOR[:10]}...")
 print(f"👑 MAIN_ADMIN_ID: {MAIN_ADMIN_ID}")
-print(f"📢 Ссылка на бота-агрегатора: {CHANNEL_LINK}")
+print(f"📢 Ссылка на канал: {CHANNEL_LINK}")
 print(f"📢 ID канала для проверки: {CHANNEL_ID}")
 print(f"🎁 Бонус за подписку: {SUBSCRIBE_BONUS} 🍬")
 print(f"⭐️ Оплата звездами: через {ANON_CHAT_LINK}")

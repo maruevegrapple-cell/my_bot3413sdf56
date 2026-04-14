@@ -316,7 +316,7 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
     is_subscribed = await check_subscription(bot, user_id)
     if not is_subscribed:
         await state.set_state(SubscribeStates.waiting_for_subscribe)
-        new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nЧтобы получить доступ в бота сделай следующее 👇\n\n1️⃣ -- Перейди по ссылке\n2️⃣ -- Подпишись на спонсоров в боте\n3️⃣ -- Отправь заявку в наш канал, и наслаждайся бесплатным контентом)"
+        new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
         if message:
             await message.answer(new_text, reply_markup=subscribe_menu)
         elif call:
@@ -824,7 +824,7 @@ async def start(message: Message, state: FSMContext, bot: Bot):
             is_subscribed = await check_subscription(bot, user_id)
             if not is_subscribed:
                 await state.set_state(SubscribeStates.waiting_for_subscribe)
-                new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nЧтобы получить доступ в бота сделай следующее 👇\n\n1️⃣ -- Перейди по ссылке\n2️⃣ -- Подпишись на спонсоров в боте\n3️⃣ -- Отправь заявку в наш канал, и наслаждайся бесплатным контентом)"
+                new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
                 await message.answer(new_text, reply_markup=subscribe_menu)
                 return
             await message.answer(get_text(user_id, "welcome"), reply_markup=main_menu)
@@ -880,7 +880,7 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         is_subscribed = await check_subscription(bot, user_id)
         if not is_subscribed:
             await state.set_state(SubscribeStates.waiting_for_subscribe)
-            new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nЧтобы получить доступ в бота сделай следующее 👇\n\n1️⃣ -- Перейди по ссылке\n2️⃣ -- Подпишись на спонсоров в боте\n3️⃣ -- Отправь заявку в наш канал, и наслаждайся бесплатным контентом)"
+            new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
             await message.answer(new_text, reply_markup=subscribe_menu)
             return
         await message.answer(get_text(user_id, "welcome"), reply_markup=main_menu)
@@ -1010,7 +1010,7 @@ async def process_math_captcha(message: Message, state: FSMContext, bot: Bot):
         is_subscribed = await check_subscription(bot, user_id)
         if not is_subscribed:
             await state.set_state(SubscribeStates.waiting_for_subscribe)
-            new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nЧтобы получить доступ в бота сделай следующее 👇\n\n1️⃣ -- Перейди по ссылке\n2️⃣ -- Подпишись на спонсоров в боте\n3️⃣ -- Отправь заявку в наш канал, и наслаждайся бесплатным контентом)"
+            new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
             await message.answer(new_text, reply_markup=subscribe_menu)
         else:
             await message.answer(
