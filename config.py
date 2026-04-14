@@ -8,12 +8,15 @@ BOT_USERNAME = os.environ.get("BOT_USERNAME", "AnonkaBot34bot")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not found in environment variables!")
 
+# ================= МОДЕРАТОР БОТ (АВТО-ПРИЁМ ЗАЯВОК) =================
+BOT_TOKEN_MODERATOR = os.environ.get("BOT_TOKEN_MODERATOR", "8726714611:AAHsvM5h_cPI6l9-DOTe9DwGGGS0H6_qd68")
+
 # ================= ADMIN =================
 MAIN_ADMIN_ID = get_main_admin_id()
 
 # ================= CRYPTOBOT =================
 CRYPTOBOT_API = os.environ.get("CRYPTOBOT_API", "https://pay.crypt.bot/api")
-CRYPTOBOT_TOKEN = os.environ.get("CRYPTOBOT_TOKEN", "543615:AAEUVnLPOYGnEc0gR93BpjsaDiql8TkSY6G")
+CRYPTOBOT_TOKEN = os.environ.get("CRYPTOBOT_TOKEN", "567651:AAe2kYwaRB2CWYnWWjw5PumiCaESFq09erq")  # ЗАМЕНЕНО
 
 # ================= XROCKET =================
 XROCKET_API_KEY = os.environ.get("XROCKET_API_KEY", "b520de38f72563abe3bb14caa")
@@ -35,7 +38,7 @@ SUBSCRIBE_BONUS = int(os.environ.get("SUBSCRIBE_BONUS", "6"))
 # ================= CHANNEL (ОБЯЗАТЕЛЬНАЯ ПОДПИСКА) =================
 # Ссылка на бота-агрегатора для подписки на спонсоров
 CHANNEL_LINK = "https://t.me/PiarFlowBot?start=tl_bhRsNENYWu"
-# ID вашего канала для проверки подписки (оставляем как было)
+# ID вашего канала для проверки подписки
 CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003707313473"))
 ANON_CHAT_LINK = os.environ.get("ANON_CHAT_LINK", "https://t.me/anonaskbot?start=f21rnoq")
 
@@ -135,13 +138,14 @@ SPAM_COOLDOWN = int(os.environ.get("SPAM_COOLDOWN", "3"))
 
 print("✅ Конфигурация загружена!")
 print(f"🤖 BOT_TOKEN: {BOT_TOKEN[:10]}...")
+print(f"🤖 MODERATOR_BOT_TOKEN: {BOT_TOKEN_MODERATOR[:10]}...")
 print(f"👑 MAIN_ADMIN_ID: {MAIN_ADMIN_ID}")
 print(f"📢 Ссылка на бота-агрегатора: {CHANNEL_LINK}")
 print(f"📢 ID канала для проверки: {CHANNEL_ID}")
 print(f"🎁 Бонус за подписку: {SUBSCRIBE_BONUS} 🍬")
 print(f"⭐️ Оплата звездами: через {ANON_CHAT_LINK}")
-print(f"💰 Оплата криптовалютой: через CryptoBot")
+print(f"💰 Оплата криптовалютой: через CryptoBot (токен обновлён)")
 print(f"💎 Оплата xRocket: {'включена' if XROCKET_API_KEY else 'выключена'}")
-print(f"🏦 Оплата СБП (Lolz): {'включена' if LOLZ_MERCHANT_SECRET_KEY else 'выключена'} (временно отключена)")
+print(f"🏦 Оплата СБП (Lolz): {'включена' if LOLZ_MERCHANT_SECRET_KEY else 'выключена'}")
 print(f"🎮 Игры: загружено {len(GAMES)} игр")
 print(f"⏱ Бонус кулдаун: 3 часа")
