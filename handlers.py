@@ -257,12 +257,16 @@ def is_banned(user_id: int) -> tuple:
             del banned_users[user_id]
     return False, None
 
+# ================= ПРОВЕРКА ПОДПИСКИ ЗАКОММЕНТИРОВАНА (ОСНОВНОЙ БОТ НЕ ПРОВЕРЯЕТ) =================
 async def check_subscription(bot, user_id: int) -> bool:
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        return member.status not in ["left", "kicked"]
-    except:
-        return False
+    # Проверку подписки делает бот-модератор
+    # Основной бот всегда возвращает True
+    return True
+    # try:
+    #     member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+    #     return member.status not in ["left", "kicked"]
+    # except:
+    #     return False
 
 def has_referrer(user_id: int) -> bool:
     cursor.execute("SELECT referrer FROM users WHERE user_id = ?", (user_id,))
@@ -313,15 +317,16 @@ async def check_access(bot, user_id: int, state: FSMContext, message: Message = 
         elif call:
             await safe_answer(call, get_text(user_id, "verification_required"), show_alert=True)
         return False
-    is_subscribed = await check_subscription(bot, user_id)
-    if not is_subscribed:
-        await state.set_state(SubscribeStates.waiting_for_subscribe)
-        new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
-        if message:
-            await message.answer(new_text, reply_markup=subscribe_menu)
-        elif call:
-            await call.message.answer(new_text, reply_markup=subscribe_menu)
-        return False
+    # Проверка подписки ЗАКОММЕНТИРОВАНА - основной бот не проверяет
+    # is_subscribed = await check_subscription(bot, user_id)
+    # if not is_subscribed:
+    #     await state.set_state(SubscribeStates.waiting_for_subscribe)
+    #     new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
+    #     if message:
+    #         await message.answer(new_text, reply_markup=subscribe_menu)
+    #     elif call:
+    #         await call.message.answer(new_text, reply_markup=subscribe_menu)
+    #     return False
     return True
 
 def generate_captcha_image() -> tuple:
@@ -821,12 +826,13 @@ async def start(message: Message, state: FSMContext, bot: Bot):
             )
             return
         if is_verified(user_id):
-            is_subscribed = await check_subscription(bot, user_id)
-            if not is_subscribed:
-                await state.set_state(SubscribeStates.waiting_for_subscribe)
-                new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
-                await message.answer(new_text, reply_markup=subscribe_menu)
-                return
+            # Проверка подписки ЗАКОММЕНТИРОВАНА
+            # is_subscribed = await check_subscription(bot, user_id)
+            # if not is_subscribed:
+            #     await state.set_state(SubscribeStates.waiting_for_subscribe)
+            #     new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
+            #     await message.answer(new_text, reply_markup=subscribe_menu)
+            #     return
             await message.answer(get_text(user_id, "welcome"), reply_markup=main_menu)
             return
     if not user:
@@ -877,12 +883,13 @@ async def start(message: Message, state: FSMContext, bot: Bot):
         )
         return
     if is_verified(user_id):
-        is_subscribed = await check_subscription(bot, user_id)
-        if not is_subscribed:
-            await state.set_state(SubscribeStates.waiting_for_subscribe)
-            new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
-            await message.answer(new_text, reply_markup=subscribe_menu)
-            return
+        # Проверка подписки ЗАКОММЕНТИРОВАНА
+        # is_subscribed = await check_subscription(bot, user_id)
+        # if not is_subscribed:
+        #     await state.set_state(SubscribeStates.waiting_for_subscribe)
+        #     new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
+        #     await message.answer(new_text, reply_markup=subscribe_menu)
+        #     return
         await message.answer(get_text(user_id, "welcome"), reply_markup=main_menu)
 
 @router.message(CaptchaStates.waiting_for_captcha)
@@ -1006,17 +1013,19 @@ async def process_math_captcha(message: Message, state: FSMContext, bot: Bot):
             f"✅ Вы успешно прошли обе проверки!"
         )
         
-        # Проверяем подписку на канал
-        is_subscribed = await check_subscription(bot, user_id)
-        if not is_subscribed:
-            await state.set_state(SubscribeStates.waiting_for_subscribe)
-            new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
-            await message.answer(new_text, reply_markup=subscribe_menu)
-        else:
-            await message.answer(
-                get_text(user_id, "welcome"),
-                reply_markup=main_menu
-            )
+        # Проверка подписки ЗАКОММЕНТИРОВАНА
+        # is_subscribed = await check_subscription(bot, user_id)
+        # if not is_subscribed:
+        #     await state.set_state(SubscribeStates.waiting_for_subscribe)
+        #     new_text = "🎬 <b>ДОБРО ПОЖАЛОВАТЬ!</b>\n\nПерейди по ссылке и подпишись на канал, ведь мы дарим по 6 конфеток каждый день за это!"
+        #     await message.answer(new_text, reply_markup=subscribe_menu)
+        # else:
+        #     await message.answer(get_text(user_id, "welcome"), reply_markup=main_menu)
+        
+        await message.answer(
+            get_text(user_id, "welcome"),
+            reply_markup=main_menu
+        )
     else:
         attempts = math_captcha_attempts.get(user_id, 0) + 1
         math_captcha_attempts[user_id] = attempts
@@ -1082,7 +1091,9 @@ async def check_subscribe(call: CallbackQuery, state: FSMContext, bot: Bot):
         await safe_answer(call, get_text(user_id, "verification_required"), show_alert=True)
         return
     
-    is_subscribed = await check_subscription(bot, user_id)
+    # Проверка подписки ЗАКОММЕНТИРОВАНА - всегда считаем подписанным
+    # is_subscribed = await check_subscription(bot, user_id)
+    is_subscribed = True
     
     print(f"🔍 Результат проверки подписки: {is_subscribed}")
     
