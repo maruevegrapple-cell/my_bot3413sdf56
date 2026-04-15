@@ -1,0 +1,8 @@
+PostgreSQL подключение:
+- Хост: localhost
+- Порт: 5432
+- База данных: botdb
+- Пользователь: botuser
+- Пароль: botpass123
+
+DATABASE_URL=postgresql://botuser:botpass123@localhost:5432/botdb

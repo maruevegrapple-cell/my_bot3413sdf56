@@ -79,6 +79,9 @@ TRANSLATIONS = {
         "tasks_completed": "✅ Все выполнения завершены!",
         "tasks_submit": "📸 Отправить скриншот",
         "tasks_back": "⬅️ Назад к заданиям",
+        "tasks_clear_all": "🗑 Очистить все заявки",
+        "tasks_cleared": "✅ Все заявки очищены",
+        "tasks_clear_notification": "🗑 <b>Ваша заявка на задание удалена</b>\n\n📋 Задание: {}\nПричина: массовая очистка заявок администратором\n\nВы можете отправить заявку заново.",
         "suggestion_title": "🎬 ПРЕДЛОЖКА",
         "suggestion_desc": "📹 Отправьте видео, которое хотите предложить для добавления в бота.\n\n✅ Если видео одобрят, вы получите +3 🍬\n❌ Если отклонят, вы получите уведомление\n\n⏳ Режим предложки активен 5 минут",
         "support_title": "📝 ПОДДЕРЖКА",
@@ -147,30 +150,6 @@ TRANSLATIONS = {
         "anon_chat_exit": "🚪 Выйти из чата",
         "anon_chat_exited": "👋 Вы вышли из анонимного чата.\nВозвращайтесь ещё!",
         "anon_chat_continue": "💭 Продолжить общение? Напишите ещё сообщение или нажмите кнопку для выхода.",
-        "mirror_menu": "🪞 Зеркало бота",
-        "mirror_create": "➕ Создать зеркало",
-        "mirror_my_list": "📋 Мои зеркала",
-        "mirror_info": "ℹ️ Что такое зеркало?",
-        "mirror_token_sent": "✅ Токен получен! Создаю зеркало...",
-        "mirror_created": "✅ Зеркало успешно создано!\n\n🤖 @{}\n🆔 ID: {}\n\nТеперь вы можете приглашать друзей через своего бота!",
-        "mirror_create_error": "❌ Ошибка при создании зеркала: {}",
-        "mirror_invalid_token": "❌ Неверный токен бота. Убедитесь, что вы скопировали правильный токен от @BotFather",
-        "mirror_already_exists": "❌ Этот бот уже зарегистрирован как зеркало!",
-        "mirror_limit_reached": "❌ Вы достигли лимита зеркал (3 шт.)",
-        "mirror_not_found": "❌ Зеркало не найдено",
-        "mirror_deleted": "✅ Зеркало удалено",
-        "mirror_started": "✅ Зеркало запущено",
-        "mirror_stopped": "⏸ Зеркало остановлено",
-        "mirror_restarted": "🔄 Зеркало перезапущено",
-        "mirror_no_mirrors": "📭 У вас нет созданных зеркал",
-        "mirror_details_title": "🪞 <b>ДЕТАЛИ ЗЕРКАЛА</b>\n\n",
-        "mirror_status_active": "✅ Статус: Активно",
-        "mirror_status_inactive": "❌ Статус: Неактивно",
-        "mirror_username": "🤖 Username: @{}",
-        "mirror_id": "🆔 ID: {}",
-        "mirror_created_at": "📅 Создано: {}",
-        "mirror_code": "🔑 Код зеркала: <code>{}</code>",
-        "mirror_link": "🔗 Ссылка: https://t.me/{}",
         "auto_task_completed": "✅ Задание выполнено! Начислено +{} 🍬",
         "auto_task_error": "❌ Ошибка при выполнении задания: {}",
         "auto_task_limit": "❌ Вы уже выполнили это задание {} раз из {}",
@@ -256,6 +235,9 @@ TRANSLATIONS = {
         "tasks_completed": "✅ All completions finished!",
         "tasks_submit": "📸 Send screenshot",
         "tasks_back": "⬅️ Back to tasks",
+        "tasks_clear_all": "🗑 Clear all requests",
+        "tasks_cleared": "✅ All requests cleared",
+        "tasks_clear_notification": "🗑 <b>Your task request has been deleted</b>\n\n📋 Task: {}\nReason: mass clearance by admin\n\nYou can submit a new request.",
         "suggestion_title": "🎬 SUGGESTION",
         "suggestion_desc": "📹 Send a video you want to suggest for the bot.\n\n✅ If approved, you'll get +3 🍬\n❌ If rejected, you'll be notified\n\n⏳ Suggestion mode active for 5 minutes",
         "support_title": "📝 SUPPORT",
@@ -324,30 +306,6 @@ TRANSLATIONS = {
         "anon_chat_exit": "🚪 Exit chat",
         "anon_chat_exited": "👋 You have left the anonymous chat.\nCome back again!",
         "anon_chat_continue": "💭 Continue chatting? Write another message or press the button to exit.",
-        "mirror_menu": "🪞 Bot Mirror",
-        "mirror_create": "➕ Create mirror",
-        "mirror_my_list": "📋 My mirrors",
-        "mirror_info": "ℹ️ What is a mirror?",
-        "mirror_token_sent": "✅ Token received! Creating mirror...",
-        "mirror_created": "✅ Mirror successfully created!\n\n🤖 @{}\n🆔 ID: {}\n\nNow you can invite friends through your bot!",
-        "mirror_create_error": "❌ Error creating mirror: {}",
-        "mirror_invalid_token": "❌ Invalid bot token. Make sure you copied the correct token from @BotFather",
-        "mirror_already_exists": "❌ This bot is already registered as a mirror!",
-        "mirror_limit_reached": "❌ You have reached the mirror limit (3 pcs.)",
-        "mirror_not_found": "❌ Mirror not found",
-        "mirror_deleted": "✅ Mirror deleted",
-        "mirror_started": "✅ Mirror started",
-        "mirror_stopped": "⏸ Mirror stopped",
-        "mirror_restarted": "🔄 Mirror restarted",
-        "mirror_no_mirrors": "📭 You have no mirrors created",
-        "mirror_details_title": "🪞 <b>MIRROR DETAILS</b>\n\n",
-        "mirror_status_active": "✅ Status: Active",
-        "mirror_status_inactive": "❌ Status: Inactive",
-        "mirror_username": "🤖 Username: @{}",
-        "mirror_id": "🆔 ID: {}",
-        "mirror_created_at": "📅 Created: {}",
-        "mirror_code": "🔑 Mirror code: <code>{}</code>",
-        "mirror_link": "🔗 Link: https://t.me/{}",
         "auto_task_completed": "✅ Task completed! +{} 🍬 awarded",
         "auto_task_error": "❌ Error completing task: {}",
         "auto_task_limit": "❌ You have already completed this task {} out of {} times",
@@ -357,21 +315,39 @@ TRANSLATIONS = {
 
 user_language = {}
 
+
 def get_text(user_id: int, key: str, *args) -> str:
+    """Получить локализованный текст для пользователя"""
     lang = user_language.get(user_id, "ru")
     text = TRANSLATIONS.get(lang, TRANSLATIONS["ru"]).get(key, key)
     if args:
         try:
             return text.format(*args)
-        except:
+        except Exception:
             return text
     return text
 
-def set_user_language(user_id: int, lang: str):
+
+def set_user_language(user_id: int, lang: str) -> bool:
+    """Установить язык пользователя"""
     if lang in ["ru", "en"]:
         user_language[user_id] = lang
         return True
     return False
 
+
 def get_user_language(user_id: int) -> str:
+    """Получить язык пользователя"""
     return user_language.get(user_id, "ru")
+
+
+def set_user_language_db_sync(user_id: int, language: str) -> bool:
+    """Сохранить язык пользователя в БД (синхронная версия)"""
+    try:
+        from db import cursor, conn
+        cursor.execute("UPDATE users SET language = ? WHERE user_id = ?", (language, user_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка set_user_language_db_sync: {e}")
+        return False

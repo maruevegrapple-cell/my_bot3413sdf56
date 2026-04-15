@@ -1,24 +1,17 @@
-import sqlite3
+import asyncpg
 import random
 import string
 import os
+import json
 import traceback
 from datetime import datetime
+from typing import Optional, List, Dict, Any
 
-if os.environ.get('RAILWAY_ENVIRONMENT'):
-    DB_PATH = "/data/database.db"
-    os.makedirs('/data', exist_ok=True)
-    print(f"✅ Railway mode: БД будет в {DB_PATH}")
-else:
-    DB_PATH = "database.db"
-    print(f"✅ Local mode: БД будет в {DB_PATH}")
+# ========== НАСТРОЙКИ ПОДКЛЮЧЕНИЯ ==========
+DATABASE_URL = "postgresql://botuser:botpass123@localhost:5432/botdb"
 
-conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
-conn.row_factory = sqlite3.Row
-cursor = conn.cursor()
-
-cursor.execute("PRAGMA journal_mode=WAL")
-cursor.execute("PRAGMA synchronous=FULL")
+# Пул соединений
+db_pool: Optional[asyncpg.Pool] = None
 
 # ========== КАТЕГОРИИ ЗАДАНИЙ ==========
 TASK_CATEGORIES = {
@@ -28,165 +21,89 @@ TASK_CATEGORIES = {
 }
 
 
-def fix_user_tasks_table():
+# ========== БАЗОВЫЕ ФУНКЦИИ ==========
+async def init_db_pool():
+    global db_pool
     try:
-        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='user_tasks'")
-        row = cursor.fetchone()
-        
-        if row:
-            sql = row["sql"]
-            if "UNIQUE" in sql.upper():
-                print("⚠️ Обнаружено UNIQUE ограничение в user_tasks, исправляем...")
-                
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS user_tasks_new (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER,
-                        task_id INTEGER,
-                        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        status TEXT DEFAULT 'pending',
-                        proof TEXT
-                    )
-                """)
-                
-                cursor.execute("SELECT user_id, task_id, completed_at, status, proof FROM user_tasks")
-                rows = cursor.fetchall()
-                for r in rows:
-                    cursor.execute("""
-                        INSERT INTO user_tasks_new (user_id, task_id, completed_at, status, proof)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (r["user_id"], r["task_id"], r["completed_at"], r["status"], r["proof"]))
-                
-                cursor.execute("DROP TABLE user_tasks")
-                cursor.execute("ALTER TABLE user_tasks_new RENAME TO user_tasks")
-                
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_tasks_user_task ON user_tasks(user_id, task_id)")
-                cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_tasks_status ON user_tasks(status)")
-                
-                conn.commit()
-                print("✅ UNIQUE ограничение удалено!")
-            else:
-                print("✅ Таблица user_tasks уже без UNIQUE")
+        db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10, command_timeout=60)
+        print("✅ PostgreSQL пул соединений создан")
+        await init_tables()
+        return True
     except Exception as e:
-        print(f"❌ Ошибка исправления user_tasks: {e}")
+        print(f"❌ Ошибка подключения к PostgreSQL: {e}")
+        return False
 
 
-def generate_ref_code(length=6):
-    chars = string.ascii_uppercase + string.digits
-    chars = chars.replace('O', '').replace('0', '').replace('I', '').replace('1', '')
-    while True:
-        code = ''.join(random.choices(chars, k=length))
-        cursor.execute("SELECT user_id FROM users WHERE ref_code = ?", (code,))
-        if not cursor.fetchone():
-            return code
+async def close_db_pool():
+    global db_pool
+    if db_pool:
+        await db_pool.close()
+        print("✅ PostgreSQL пул соединений закрыт")
 
 
-def get_main_admin_id():
-    try:
-        cursor.execute("SELECT user_id FROM admins WHERE is_main_admin = 1 LIMIT 1")
-        row = cursor.fetchone()
-        if row:
-            return row["user_id"]
-    except:
-        pass
-    return None
+async def execute(query: str, *args):
+    async with db_pool.acquire() as conn:
+        return await conn.execute(query, *args)
 
 
-def set_main_admin(user_id: int, username: str = ""):
-    try:
-        current_main = get_main_admin_id()
-        if current_main:
-            return current_main
-        
-        cursor.execute("""
-            INSERT OR REPLACE INTO users (user_id, username, is_verified, is_admin)
-            VALUES (?, ?, 1, 1)
-        """, (user_id, username))
-        
-        cursor.execute("""
-            INSERT OR REPLACE INTO admins (user_id, username, added_by, added_at, is_main_admin, can_add_admins)
-            VALUES (?, ?, ?, datetime('now'), 1, 1)
-        """, (user_id, username, user_id))
-        
-        conn.commit()
-        return user_id
-    except Exception as e:
-        print(f"❌ Ошибка установки главного админа: {e}")
-        return None
+async def fetch(query: str, *args):
+    async with db_pool.acquire() as conn:
+        return await conn.fetch(query, *args)
 
 
-def init_db():
+async def fetchrow(query: str, *args):
+    async with db_pool.acquire() as conn:
+        return await conn.fetchrow(query, *args)
+
+
+async def fetchval(query: str, *args):
+    async with db_pool.acquire() as conn:
+        return await conn.fetchval(query, *args)
+
+
+# ========== ИНИЦИАЛИЗАЦИЯ ТАБЛИЦ ==========
+async def init_tables():
     # ========== ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
+        user_id BIGINT PRIMARY KEY,
         username TEXT,
         balance INTEGER DEFAULT 0,
-        referrer INTEGER,
-        last_bonus INTEGER DEFAULT 0,
+        referrer BIGINT,
+        last_bonus BIGINT DEFAULT 0,
         is_verified INTEGER DEFAULT 0,
         ref_code TEXT UNIQUE,
         subscribe_bonus_received INTEGER DEFAULT 0,
         is_admin INTEGER DEFAULT 0,
-        pending_referrer_bonus INTEGER DEFAULT NULL,
+        pending_referrer_bonus BIGINT DEFAULT NULL,
         private_access INTEGER DEFAULT 0,
         language TEXT DEFAULT 'ru',
-        last_mirror_used TEXT DEFAULT NULL
+        last_mirror_used TEXT DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
     
     # Добавляем недостающие колонки
-    try:
-        cursor.execute("SELECT pending_referrer_bonus FROM users LIMIT 1")
-    except:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN pending_referrer_bonus INTEGER DEFAULT NULL")
-            print("✅ Добавлена колонка pending_referrer_bonus")
-        except:
-            pass
-    
-    try:
-        cursor.execute("SELECT private_access FROM users LIMIT 1")
-    except:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN private_access INTEGER DEFAULT 0")
-            print("✅ Добавлена колонка private_access")
-        except:
-            pass
-    
-    try:
-        cursor.execute("SELECT language FROM users LIMIT 1")
-    except:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'ru'")
-            print("✅ Добавлена колонка language в таблицу users")
-        except:
-            pass
-    
-    try:
-        cursor.execute("SELECT last_mirror_used FROM users LIMIT 1")
-    except:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN last_mirror_used TEXT DEFAULT NULL")
-            print("✅ Добавлена колонка last_mirror_used")
-        except:
-            pass
+    await execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS pending_referrer_bonus BIGINT DEFAULT NULL")
+    await execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS private_access INTEGER DEFAULT 0")
+    await execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'ru'")
+    await execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_mirror_used TEXT DEFAULT NULL")
 
     # ========== ТАБЛИЦА АДМИНОВ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS admins (
-        user_id INTEGER PRIMARY KEY,
+        user_id BIGINT PRIMARY KEY,
         username TEXT,
-        added_by INTEGER,
-        added_at TEXT,
+        added_by BIGINT,
+        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_main_admin INTEGER DEFAULT 0,
         can_add_admins INTEGER DEFAULT 0,
-        FOREIGN KEY (added_by) REFERENCES users (user_id)
+        FOREIGN KEY (added_by) REFERENCES users (user_id) ON DELETE SET NULL
     )
     """)
 
     # ========== ТАБЛИЦА КАНАЛОВ ОП ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS mandatory_channels (
         channel_id TEXT PRIMARY KEY,
         channel_name TEXT,
@@ -195,24 +112,27 @@ def init_db():
     """)
 
     # ========== ТАБЛИЦА ВИДЕО ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS videos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        file_id TEXT UNIQUE
+        id SERIAL PRIMARY KEY,
+        file_id TEXT UNIQUE NOT NULL
     )
     """)
 
     # ========== ТАБЛИЦА ПРОСМОТРОВ ВИДЕО ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS user_videos (
-        user_id INTEGER,
+        user_id BIGINT,
         video_id INTEGER,
-        UNIQUE(user_id, video_id)
+        watched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, video_id),
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+        FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE
     )
     """)
 
     # ========== ТАБЛИЦА ПРОМОКОДОВ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS promocodes (
         code TEXT PRIMARY KEY,
         reward INTEGER,
@@ -221,52 +141,40 @@ def init_db():
     """)
 
     # ========== ТАБЛИЦА ИСПОЛЬЗОВАННЫХ ПРОМОКОДОВ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS used_promocodes (
-        user_id INTEGER,
+        user_id BIGINT,
         code TEXT,
-        UNIQUE(user_id, code)
+        used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, code),
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
     )
     """)
 
     # ========== ТАБЛИЦА ПЛАТЕЖЕЙ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS payments (
         invoice_id TEXT PRIMARY KEY,
-        user_id INTEGER,
+        user_id BIGINT,
         amount INTEGER,
         paid INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        payment_method TEXT DEFAULT 'cryptobot'
+        payment_method TEXT DEFAULT 'cryptobot',
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE SET NULL
     )
     """)
     
-    try:
-        cursor.execute("SELECT paid FROM payments LIMIT 1")
-    except:
-        try:
-            cursor.execute("ALTER TABLE payments ADD COLUMN paid INTEGER DEFAULT 0")
-            print("✅ Добавлена колонка paid в таблицу payments")
-        except:
-            pass
-    
-    try:
-        cursor.execute("SELECT payment_method FROM payments LIMIT 1")
-    except:
-        try:
-            cursor.execute("ALTER TABLE payments ADD COLUMN payment_method TEXT DEFAULT 'cryptobot'")
-            print("✅ Добавлена колонка payment_method в таблицу payments")
-        except:
-            pass
-    
+    await execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS paid INTEGER DEFAULT 0")
+    await execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT 'cryptobot'")
+
     # ========== ТАБЛИЦА ЗАДАНИЙ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         title TEXT,
         description TEXT,
         reward INTEGER,
-        task_type TEXT DEFAULT 'text',
+        task_type TEXT DEFAULT 'photo',
         task_data TEXT,
         max_completions INTEGER DEFAULT 1,
         is_active INTEGER DEFAULT 1,
@@ -274,23 +182,25 @@ def init_db():
         category TEXT DEFAULT 'easy'
     )
     """)
-    
+
     # ========== ТАБЛИЦА ВЫПОЛНЕНИЙ ЗАДАНИЙ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS user_tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT,
         task_id INTEGER,
         completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         status TEXT DEFAULT 'pending',
-        proof TEXT
+        proof TEXT,
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+        FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE CASCADE
     )
     """)
-    
-    # ========== ТАБЛИЦА АВТО-ЗАДАНИЙ (ВЫДАЮТ НАГРАДУ АВТОМАТИЧЕСКИ) ==========
-    cursor.execute("""
+
+    # ========== ТАБЛИЦА АВТО-ЗАДАНИЙ ==========
+    await execute("""
     CREATE TABLE IF NOT EXISTS auto_tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         title TEXT,
         description TEXT,
         reward INTEGER,
@@ -303,116 +213,108 @@ def init_db():
         auto_verify INTEGER DEFAULT 1
     )
     """)
-    
+
     # ========== ТАБЛИЦА ВЫПОЛНЕНИЙ АВТО-ЗАДАНИЙ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS user_auto_tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT,
         task_id INTEGER,
         completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         status TEXT DEFAULT 'pending',
         proof TEXT,
-        reward_claimed INTEGER DEFAULT 0
+        reward_claimed INTEGER DEFAULT 0,
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+        FOREIGN KEY (task_id) REFERENCES auto_tasks (id) ON DELETE CASCADE
     )
     """)
-    
-    # ========== ТАБЛИЦА ЗЕРКАЛ ==========
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS mirror_bots (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        bot_token TEXT NOT NULL UNIQUE,
-        bot_username TEXT,
-        is_active INTEGER DEFAULT 1,
-        added_by INTEGER,
-        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_health_check TIMESTAMP,
-        is_main INTEGER DEFAULT 0,
-        notes TEXT,
-        mirror_code TEXT UNIQUE
-    )
-    """)
-    
+
     # ========== ТАБЛИЦА ПОКУПОК ПРИВАТКИ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS private_purchases (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT,
         invoice_id TEXT,
         amount REAL,
         paid INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE SET NULL
     )
     """)
-    
+
     # ========== ТАБЛИЦА ПОДПИСОК ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS user_subscriptions (
-        user_id INTEGER PRIMARY KEY,
+        user_id BIGINT PRIMARY KEY,
         subscription_type TEXT,
         expires_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_daily_bonus TIMESTAMP
+        last_daily_bonus TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
     )
     """)
-    
+
     # ========== ТАБЛИЦА РЕЙТИНГОВ ВИДЕО ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS video_ratings (
         video_id INTEGER,
-        user_id INTEGER,
+        user_id BIGINT,
         rating INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (video_id, user_id)
+        PRIMARY KEY (video_id, user_id),
+        FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
     )
     """)
-    
+
     # ========== ТАБЛИЦА СТАТИСТИКИ ВИДЕО ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS video_stats (
         video_id INTEGER PRIMARY KEY,
         likes INTEGER DEFAULT 0,
         dislikes INTEGER DEFAULT 0,
         rating REAL DEFAULT 0,
-        total_ratings INTEGER DEFAULT 0
+        total_ratings INTEGER DEFAULT 0,
+        FOREIGN KEY (video_id) REFERENCES videos (id) ON DELETE CASCADE
     )
     """)
-    
+
     # ========== ТАБЛИЦА ЗАЯВОК НА ОПЛАТУ ЗВЕЗДАМИ ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS stars_payment_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT,
         username TEXT,
         pack_amount INTEGER,
         stars_amount INTEGER,
         status TEXT DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         processed_at TIMESTAMP,
-        message_id INTEGER
+        message_id INTEGER,
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE SET NULL
     )
     """)
-    
+
     # ========== ТАБЛИЦА ДЛЯ LOLZ ПЛАТЕЖЕЙ (СБП) ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS lolz_payments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         invoice_id TEXT UNIQUE,
         order_id TEXT,
-        user_id INTEGER,
+        user_id BIGINT,
         amount_rub REAL,
         pack_amount INTEGER,
         status TEXT DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         paid_at TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(user_id)
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE SET NULL
     )
     """)
-    
+
     # ========== ТАБЛИЦА БОЕВОГО ПРОПУСКА ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS battlepass (
-        user_id INTEGER PRIMARY KEY,
+        user_id BIGINT PRIMARY KEY,
         level INTEGER DEFAULT 1,
         exp INTEGER DEFAULT 0,
         daily_exp INTEGER DEFAULT 0,
@@ -421,14 +323,14 @@ def init_db():
         premium INTEGER DEFAULT 0,
         premium_purchased INTEGER DEFAULT 0,
         last_hourly_claim TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(user_id)
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
     )
     """)
-    
+
     # ========== ТАБЛИЦА ЗАДАНИЙ БОЕВОГО ПРОПУСКА ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS battlepass_tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         title TEXT NOT NULL,
         description TEXT,
         reward_xp INTEGER DEFAULT 10,
@@ -438,103 +340,59 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
-    
+
     # ========== ТАБЛИЦА ВЫПОЛНЕННЫХ ЗАДАНИЙ БОЕВОГО ПРОПУСКА ==========
-    cursor.execute("""
+    await execute("""
     CREATE TABLE IF NOT EXISTS user_battlepass_tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT,
         task_id INTEGER,
         completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(user_id, task_id)
+        UNIQUE(user_id, task_id),
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+        FOREIGN KEY (task_id) REFERENCES battlepass_tasks (id) ON DELETE CASCADE
     )
     """)
-    
-    conn.commit()
-    print("✅ База данных инициализирована")
-    
-    # Обновляем схему tasks
-    try:
-        cursor.execute("PRAGMA table_info(tasks)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'category' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN category TEXT DEFAULT 'easy'")
-            print("✅ Добавлена колонка category в таблицу tasks")
-        
-        if 'task_type' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'text'")
-        if 'task_data' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN task_data TEXT")
-        if 'max_completions' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN max_completions INTEGER DEFAULT 1")
-        if 'is_active' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN is_active INTEGER DEFAULT 1")
-        if 'created_at' not in columns:
-            cursor.execute("ALTER TABLE tasks ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
-        
-        conn.commit()
-        print("✅ Схема обновлена")
-    except Exception as e:
-        print(f"❌ Ошибка обновления схемы: {e}")
-    
-    # Обновляем схему auto_tasks
-    try:
-        cursor.execute("PRAGMA table_info(auto_tasks)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'auto_verify' not in columns:
-            cursor.execute("ALTER TABLE auto_tasks ADD COLUMN auto_verify INTEGER DEFAULT 1")
-            print("✅ Добавлена колонка auto_verify в таблицу auto_tasks")
-        
-        if 'category' not in columns:
-            cursor.execute("ALTER TABLE auto_tasks ADD COLUMN category TEXT DEFAULT 'easy'")
-            print("✅ Добавлена колонка category в таблицу auto_tasks")
-        
-        conn.commit()
-    except Exception as e:
-        print(f"❌ Ошибка обновления схемы auto_tasks: {e}")
-    
-    # Обновляем схему mirror_bots
-    try:
-        cursor.execute("PRAGMA table_info(mirror_bots)")
-        columns = [col[1] for col in cursor.fetchall()]
-        
-        if 'is_main' not in columns:
-            cursor.execute("ALTER TABLE mirror_bots ADD COLUMN is_main INTEGER DEFAULT 0")
-            print("✅ Добавлена колонка is_main в таблицу mirror_bots")
-        
-        if 'notes' not in columns:
-            cursor.execute("ALTER TABLE mirror_bots ADD COLUMN notes TEXT")
-            print("✅ Добавлена колонка notes в таблицу mirror_bots")
-        
-        if 'mirror_code' not in columns:
-            cursor.execute("ALTER TABLE mirror_bots ADD COLUMN mirror_code TEXT UNIQUE")
-            print("✅ Добавлена колонка mirror_code в таблицу mirror_bots")
-        
-        conn.commit()
-    except Exception as e:
-        print(f"❌ Ошибка обновления схемы mirror_bots: {e}")
-    
-    fix_user_tasks_table()
+
+    # ========== ТАБЛИЦА ИГР ==========
+    await execute("""
+    CREATE TABLE IF NOT EXISTS casino_games (
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT,
+        game_type TEXT,
+        bet_amount INTEGER,
+        win_amount INTEGER,
+        is_win INTEGER,
+        result_data TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
+    )
+    """)
+
+    # ========== ИНДЕКСЫ ==========
+    await execute("CREATE INDEX IF NOT EXISTS idx_users_ref_code ON users(ref_code)")
+    await execute("CREATE INDEX IF NOT EXISTS idx_users_referrer ON users(referrer)")
+    await execute("CREATE INDEX IF NOT EXISTS idx_user_tasks_status ON user_tasks(status)")
+    await execute("CREATE INDEX IF NOT EXISTS idx_user_tasks_user_task ON user_tasks(user_id, task_id)")
+    await execute("CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id)")
+    await execute("CREATE INDEX IF NOT EXISTS idx_video_ratings_video_id ON video_ratings(video_id)")
+    await execute("CREATE INDEX IF NOT EXISTS idx_user_subscriptions_expires ON user_subscriptions(expires_at)")
+
+    print("✅ Все таблицы PostgreSQL созданы/проверены")
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ЯЗЫКОМ ==========
-def get_user_language_db(user_id: int) -> str:
-    """Получить язык пользователя из БД"""
+async def get_user_language_db(user_id: int) -> str:
     try:
-        cursor.execute("SELECT language FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT language FROM users WHERE user_id = $1", user_id)
         return row["language"] if row and row["language"] else "ru"
     except:
         return "ru"
 
 
-def set_user_language_db(user_id: int, language: str) -> bool:
-    """Сохранить язык пользователя в БД"""
+async def set_user_language_db(user_id: int, language: str) -> bool:
     try:
-        cursor.execute("UPDATE users SET language = ? WHERE user_id = ?", (language, user_id))
-        conn.commit()
+        await execute("UPDATE users SET language = $1 WHERE user_id = $2", language, user_id)
         return True
     except Exception as e:
         print(f"❌ Ошибка set_user_language_db: {e}")
@@ -542,84 +400,77 @@ def set_user_language_db(user_id: int, language: str) -> bool:
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С БОЕВЫМ ПРОПУСКОМ ==========
-def get_battlepass(user_id: int):
-    """Получить данные боевого пропуска пользователя"""
+async def get_battlepass(user_id: int):
     try:
-        cursor.execute("SELECT * FROM battlepass WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM battlepass WHERE user_id = $1", user_id)
         return dict(row) if row else None
     except Exception as e:
         print(f"❌ Ошибка get_battlepass: {e}")
         return None
 
 
-def update_battlepass(user_id: int, level: int = None, exp: int = None, daily_exp: int = None, 
+async def update_battlepass(user_id: int, level: int = None, exp: int = None, daily_exp: int = None, 
                      claimed_rewards: str = None, premium: int = None, last_hourly_claim: str = None,
                      last_daily_reset: str = None):
-    """Обновить данные боевого пропуска"""
     try:
         updates = []
         values = []
         
         if level is not None:
-            updates.append("level = ?")
+            updates.append(f"level = ${len(values) + 2}")
             values.append(level)
         if exp is not None:
-            updates.append("exp = ?")
+            updates.append(f"exp = ${len(values) + 2}")
             values.append(exp)
         if daily_exp is not None:
-            updates.append("daily_exp = ?")
+            updates.append(f"daily_exp = ${len(values) + 2}")
             values.append(daily_exp)
         if claimed_rewards is not None:
-            updates.append("claimed_rewards = ?")
+            updates.append(f"claimed_rewards = ${len(values) + 2}")
             values.append(claimed_rewards)
         if premium is not None:
-            updates.append("premium = ?")
+            updates.append(f"premium = ${len(values) + 2}")
             values.append(premium)
         if last_hourly_claim is not None:
-            updates.append("last_hourly_claim = ?")
+            updates.append(f"last_hourly_claim = ${len(values) + 2}")
             values.append(last_hourly_claim)
         if last_daily_reset is not None:
-            updates.append("last_daily_reset = ?")
+            updates.append(f"last_daily_reset = ${len(values) + 2}")
             values.append(last_daily_reset)
         
         if not updates:
             return False
         
         values.append(user_id)
-        query = f"UPDATE battlepass SET {', '.join(updates)} WHERE user_id = ?"
-        cursor.execute(query, values)
-        conn.commit()
+        query = f"UPDATE battlepass SET {', '.join(updates)} WHERE user_id = ${len(values)}"
+        await execute(query, *values)
         return True
     except Exception as e:
         print(f"❌ Ошибка update_battlepass: {e}")
         return False
 
 
-def create_battlepass(user_id: int):
-    """Создать новый боевой пропуск для пользователя"""
+async def create_battlepass(user_id: int):
     try:
-        cursor.execute("""
+        await execute("""
             INSERT INTO battlepass (user_id, level, exp, daily_exp, last_daily_reset, claimed_rewards, last_hourly_claim)
-            VALUES (?, 1, 0, 0, ?, '[]', ?)
-        """, (user_id, datetime.now(), datetime.now()))
-        conn.commit()
+            VALUES ($1, 1, 0, 0, CURRENT_TIMESTAMP, '[]', CURRENT_TIMESTAMP)
+        """, user_id)
         return True
     except Exception as e:
         print(f"❌ Ошибка create_battlepass: {e}")
         return False
 
 
-def add_battlepass_exp_db(user_id: int, exp: int):
-    """Добавить опыт в боевой пропуск"""
+async def add_battlepass_exp_db(user_id: int, exp: int):
     try:
-        bp = get_battlepass(user_id)
+        from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL
+        bp = await get_battlepass(user_id)
         if not bp:
-            if not create_battlepass(user_id):
+            if not await create_battlepass(user_id):
                 return {"status": "error", "exp_gained": 0}
-            bp = get_battlepass(user_id)
+            bp = await get_battlepass(user_id)
         
-        # Проверка дневного лимита
         daily_exp = bp["daily_exp"]
         if daily_exp + exp > 200:
             exp = 200 - daily_exp
@@ -630,14 +481,13 @@ def add_battlepass_exp_db(user_id: int, exp: int):
         new_exp = bp["exp"] + exp
         new_level = bp["level"]
         
-        # Повышение уровня
         from battlepass import BATTLEPASS_LEVELS, MAX_LEVEL
         leveled_up = False
         while new_level < MAX_LEVEL and new_exp >= BATTLEPASS_LEVELS[new_level + 1]["exp"]:
             new_level += 1
             leveled_up = True
         
-        update_battlepass(user_id, exp=new_exp, level=new_level, daily_exp=new_daily_exp)
+        await update_battlepass(user_id, exp=new_exp, level=new_level, daily_exp=new_daily_exp)
         
         return {"status": "success", "exp_gained": exp, "leveled_up": leveled_up, "new_level": new_level}
     except Exception as e:
@@ -645,14 +495,13 @@ def add_battlepass_exp_db(user_id: int, exp: int):
         return {"status": "error", "exp_gained": 0}
 
 
-def claim_hourly_exp_db(user_id: int):
-    """Забрать ежечасный опыт"""
+async def claim_hourly_exp_db(user_id: int):
     try:
-        bp = get_battlepass(user_id)
+        bp = await get_battlepass(user_id)
         if not bp:
-            if not create_battlepass(user_id):
+            if not await create_battlepass(user_id):
                 return {"status": "error", "message": "Не удалось создать пропуск"}
-            bp = get_battlepass(user_id)
+            bp = await get_battlepass(user_id)
         
         last_claim = bp.get("last_hourly_claim")
         if last_claim:
@@ -664,11 +513,10 @@ def claim_hourly_exp_db(user_id: int):
                 minutes_left = int(60 - (now - last_time).total_seconds() / 60)
                 return {"status": "cooldown", "minutes_left": minutes_left}
         
-        # Добавляем 5 XP
-        result = add_battlepass_exp_db(user_id, 5)
+        result = await add_battlepass_exp_db(user_id, 5)
         
         if result["status"] == "success":
-            update_battlepass(user_id, last_hourly_claim=datetime.now())
+            await update_battlepass(user_id, last_hourly_claim=datetime.now().isoformat())
             return {"status": "success", "exp_gained": 5, "leveled_up": result.get("leveled_up", False), "new_level": result.get("new_level")}
         
         return {"status": "error", "message": "Ошибка при начислении опыта"}
@@ -677,10 +525,10 @@ def claim_hourly_exp_db(user_id: int):
         return {"status": "error", "message": str(e)}
 
 
-def claim_battlepass_reward_db(user_id: int, level: int, is_premium: bool = False):
-    """Забрать награду уровня"""
+async def claim_battlepass_reward_db(user_id: int, level: int, is_premium: bool = False):
     try:
-        bp = get_battlepass(user_id)
+        from battlepass import BATTLEPASS_LEVELS
+        bp = await get_battlepass(user_id)
         if not bp:
             return False
         
@@ -706,12 +554,10 @@ def claim_battlepass_reward_db(user_id: int, level: int, is_premium: bool = Fals
         else:
             reward_amount = BATTLEPASS_LEVELS[level]["reward"]
         
-        # Начисляем награду
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward_amount, user_id))
+        await update_user_balance(user_id, reward_amount)
         
         claimed.append(reward_key)
-        update_battlepass(user_id, claimed_rewards=json.dumps(claimed))
-        conn.commit()
+        await update_battlepass(user_id, claimed_rewards=json.dumps(claimed))
         
         return {"reward": reward_amount, "level": level, "is_premium": is_premium}
     except Exception as e:
@@ -719,15 +565,14 @@ def claim_battlepass_reward_db(user_id: int, level: int, is_premium: bool = Fals
         return False
 
 
-def activate_premium_battlepass_db(user_id: int):
-    """Активировать премиум пропуск"""
+async def activate_premium_battlepass_db(user_id: int):
     try:
-        bp = get_battlepass(user_id)
+        bp = await get_battlepass(user_id)
         if not bp:
-            if not create_battlepass(user_id):
+            if not await create_battlepass(user_id):
                 return False
         
-        update_battlepass(user_id, premium=1, premium_purchased=1)
+        await update_battlepass(user_id, premium=1, premium_purchased=1)
         return True
     except Exception as e:
         print(f"❌ Ошибка activate_premium_battlepass_db: {e}")
@@ -735,238 +580,202 @@ def activate_premium_battlepass_db(user_id: int):
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ИГРАМИ ==========
-def add_game_record(user_id: int, game_type: str, bet_amount: int, win_amount: int, is_win: int, result_data: str = None):
-    """Добавить запись об игре в БД"""
+async def add_game_record(user_id: int, game_type: str, bet_amount: int, win_amount: int, is_win: int, result_data: str = None):
     try:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS casino_games (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                game_type TEXT,
-                bet_amount INTEGER,
-                win_amount INTEGER,
-                is_win INTEGER,
-                result_data TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("""
+        row = await fetchrow("""
             INSERT INTO casino_games (user_id, game_type, bet_amount, win_amount, is_win, result_data)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, game_type, bet_amount, win_amount, is_win, result_data))
-        conn.commit()
-        return cursor.lastrowid
+            VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+        """, user_id, game_type, bet_amount, win_amount, is_win, result_data)
+        return row["id"]
     except Exception as e:
         print(f"❌ Ошибка add_game_record: {e}")
         return None
 
 
-def get_user_game_stats(user_id: int):
-    """Получить статистику игр пользователя"""
+async def get_user_game_stats(user_id: int):
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             SELECT 
                 COUNT(*) as total_games,
                 SUM(CASE WHEN is_win = 1 THEN 1 ELSE 0 END) as wins,
                 SUM(CASE WHEN is_win = 0 THEN 1 ELSE 0 END) as losses,
-                SUM(bet_amount) as total_bet,
-                SUM(win_amount) as total_win
+                COALESCE(SUM(bet_amount), 0) as total_bet,
+                COALESCE(SUM(win_amount), 0) as total_win
             FROM casino_games 
-            WHERE user_id = ?
-        """, (user_id,))
-        row = cursor.fetchone()
+            WHERE user_id = $1
+        """, user_id)
         return dict(row) if row else {"total_games": 0, "wins": 0, "losses": 0, "total_bet": 0, "total_win": 0}
     except:
         return {"total_games": 0, "wins": 0, "losses": 0, "total_bet": 0, "total_win": 0}
 
 
 # ========== ФУНКЦИИ ДЛЯ ЗАДАНИЙ (С КАТЕГОРИЯМИ) ==========
-def get_active_tasks():
+async def get_active_tasks():
     try:
-        cursor.execute("SELECT * FROM tasks WHERE is_active = 1 ORDER BY id")
-        return [dict(row) for row in cursor.fetchall()]
-    except:
-        try:
-            cursor.execute("SELECT * FROM tasks ORDER BY id")
-            return [dict(row) for row in cursor.fetchall()]
-        except:
-            return []
-
-
-def get_active_tasks_by_category(category: str = None):
-    """Получить активные задания по категории"""
-    try:
-        if category:
-            cursor.execute("SELECT * FROM tasks WHERE is_active = 1 AND category = ? ORDER BY id", (category,))
-        else:
-            cursor.execute("SELECT * FROM tasks WHERE is_active = 1 ORDER BY id")
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT * FROM tasks WHERE is_active = 1 ORDER BY category, id")
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def get_all_tasks_by_category():
-    """Получить все задания сгруппированные по категориям"""
+async def get_active_tasks_by_category(category: str = None):
+    try:
+        if category:
+            rows = await fetch("SELECT * FROM tasks WHERE is_active = 1 AND category = $1 ORDER BY id", category)
+        else:
+            rows = await fetch("SELECT * FROM tasks WHERE is_active = 1 ORDER BY id")
+        return [dict(row) for row in rows]
+    except:
+        return []
+
+
+async def get_all_tasks_by_category():
     result = {}
     for cat_key in TASK_CATEGORIES.keys():
-        result[cat_key] = get_active_tasks_by_category(cat_key)
+        result[cat_key] = await get_active_tasks_by_category(cat_key)
     return result
 
 
-def get_task(task_id: int):
+async def get_task(task_id: int):
     try:
-        cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM tasks WHERE id = $1", task_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def add_task(title: str, description: str, reward: int, category: str = 'easy', task_type: str = "photo", task_data: str = None, max_completions: int = 1):
+async def add_task(title: str, description: str, reward: int, category: str = 'easy', task_type: str = "photo", task_data: str = None, max_completions: int = 1):
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             INSERT INTO tasks (title, description, reward, task_type, task_data, max_completions, category, is_active, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'))
-        """, (title, description, reward, task_type, task_data, max_completions, category))
-        conn.commit()
-        return cursor.lastrowid
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 1, CURRENT_TIMESTAMP) RETURNING id
+        """, title, description, reward, task_type, task_data, max_completions, category)
+        return row["id"]
     except Exception as e:
         print(f"❌ Ошибка добавления задания: {e}")
         return None
 
 
-def update_task(task_id: int, title: str = None, description: str = None, reward: int = None, max_completions: int = None, category: str = None):
+async def update_task(task_id: int, title: str = None, description: str = None, reward: int = None, max_completions: int = None, category: str = None):
     try:
         updates = []
         values = []
         
         if title is not None:
-            updates.append("title = ?")
+            updates.append(f"title = ${len(values) + 2}")
             values.append(title)
         if description is not None:
-            updates.append("description = ?")
+            updates.append(f"description = ${len(values) + 2}")
             values.append(description)
         if reward is not None:
-            updates.append("reward = ?")
+            updates.append(f"reward = ${len(values) + 2}")
             values.append(reward)
         if max_completions is not None:
-            updates.append("max_completions = ?")
+            updates.append(f"max_completions = ${len(values) + 2}")
             values.append(max_completions)
         if category is not None:
-            updates.append("category = ?")
+            updates.append(f"category = ${len(values) + 2}")
             values.append(category)
         
         if not updates:
             return False
         
         values.append(task_id)
-        query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
-        cursor.execute(query, values)
-        conn.commit()
+        query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ${len(values)}"
+        await execute(query, *values)
         return True
     except Exception as e:
         print(f"❌ Ошибка обновления задания: {e}")
         return False
 
 
-def remove_task(task_id: int):
+async def remove_task(task_id: int):
     try:
-        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-        cursor.execute("DELETE FROM user_tasks WHERE task_id = ?", (task_id,))
-        conn.commit()
+        await execute("DELETE FROM tasks WHERE id = $1", task_id)
+        await execute("DELETE FROM user_tasks WHERE task_id = $1", task_id)
         return True
     except:
         return False
 
 
-def get_user_task_status(user_id: int, task_id: int):
+async def get_user_task_status(user_id: int, task_id: int):
     try:
-        cursor.execute("SELECT status, completed_at FROM user_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC LIMIT 1", (user_id, task_id))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT status, completed_at FROM user_tasks WHERE user_id = $1 AND task_id = $2 ORDER BY id DESC LIMIT 1", user_id, task_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def get_user_task_records(user_id: int, task_id: int):
+async def get_user_task_records(user_id: int, task_id: int):
     try:
-        cursor.execute("SELECT * FROM user_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC", (user_id, task_id))
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT * FROM user_tasks WHERE user_id = $1 AND task_id = $2 ORDER BY id DESC", user_id, task_id)
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def delete_user_task_record(record_id: int):
+async def delete_user_task_record(record_id: int):
     try:
-        cursor.execute("DELETE FROM user_tasks WHERE id = ?", (record_id,))
-        conn.commit()
+        await execute("DELETE FROM user_tasks WHERE id = $1", record_id)
         return True
     except:
         return False
 
 
-def submit_task(user_id: int, task_id: int, proof: str = None):
+async def submit_task(user_id: int, task_id: int, proof: str = None):
     try:
-        cursor.execute("SELECT max_completions FROM tasks WHERE id = ?", (task_id,))
-        task = cursor.fetchone()
+        task = await get_task(task_id)
         if not task:
             return False
         
         max_completions = task["max_completions"]
         
-        cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
-        completed = cursor.fetchone()["count"]
+        completed = await fetchval("SELECT COUNT(*) FROM user_tasks WHERE user_id = $1 AND task_id = $2 AND status = 'approved'", user_id, task_id) or 0
         
         if completed >= max_completions:
             return False
         
-        cursor.execute("""
+        await execute("""
             INSERT INTO user_tasks (user_id, task_id, status, proof)
-            VALUES (?, ?, 'pending', ?)
-        """, (user_id, task_id, proof))
-        
-        conn.commit()
+            VALUES ($1, $2, 'pending', $3)
+        """, user_id, task_id, proof)
         return True
     except Exception as e:
         print(f"❌ Ошибка submit_task: {e}")
         return False
 
 
-def approve_task(user_id: int, task_id: int, reward: int):
+async def approve_task(user_id: int, task_id: int, reward: int):
     try:
-        cursor.execute("SELECT id FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1", (user_id, task_id))
-        task_record = cursor.fetchone()
+        task_record = await fetchrow("SELECT id FROM user_tasks WHERE user_id = $1 AND task_id = $2 AND status = 'pending' ORDER BY id DESC LIMIT 1", user_id, task_id)
         
         if not task_record:
             return False
         
-        cursor.execute("UPDATE user_tasks SET status = 'approved' WHERE id = ?", (task_record["id"],))
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, user_id))
-        conn.commit()
+        await execute("UPDATE user_tasks SET status = 'approved' WHERE id = $1", task_record["id"])
+        await update_user_balance(user_id, reward)
         return True
     except Exception as e:
         print(f"❌ Ошибка approve_task: {e}")
         return False
 
 
-def reject_task(user_id: int, task_id: int):
+async def reject_task(user_id: int, task_id: int):
     try:
-        cursor.execute("SELECT id FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1", (user_id, task_id))
-        task_record = cursor.fetchone()
+        task_record = await fetchrow("SELECT id FROM user_tasks WHERE user_id = $1 AND task_id = $2 AND status = 'pending' ORDER BY id DESC LIMIT 1", user_id, task_id)
         
         if not task_record:
             return False
         
-        cursor.execute("UPDATE user_tasks SET status = 'rejected' WHERE id = ?", (task_record["id"],))
-        conn.commit()
+        await execute("UPDATE user_tasks SET status = 'rejected' WHERE id = $1", task_record["id"])
         return True
     except:
         return False
 
 
-def get_pending_tasks():
+async def get_pending_tasks():
     try:
-        cursor.execute("""
+        rows = await fetch("""
             SELECT ut.*, u.username, t.title, t.reward, t.max_completions
             FROM user_tasks ut
             JOIN users u ON ut.user_id = u.user_id
@@ -974,200 +783,169 @@ def get_pending_tasks():
             WHERE ut.status = 'pending'
             ORDER BY ut.completed_at
         """)
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def get_user_completed_tasks(user_id: int):
+async def get_user_completed_tasks(user_id: int):
     try:
-        cursor.execute("""
+        rows = await fetch("""
             SELECT t.*, ut.status, ut.completed_at, ut.id as record_id
             FROM user_tasks ut
             JOIN tasks t ON ut.task_id = t.id
-            WHERE ut.user_id = ? AND ut.status = 'approved'
+            WHERE ut.user_id = $1 AND ut.status = 'approved'
             ORDER BY ut.completed_at DESC
-        """, (user_id,))
-        return [dict(row) for row in cursor.fetchall()]
+        """, user_id)
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
+async def can_complete_task(user_id: int, task_id: int, max_completions: int) -> bool:
     try:
-        cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
-        completed = cursor.fetchone()["count"]
+        completed = await fetchval("SELECT COUNT(*) FROM user_tasks WHERE user_id = $1 AND task_id = $2 AND status = 'approved'", user_id, task_id) or 0
         return completed < max_completions
     except:
         return False
 
 
-def get_user_completed_count(user_id: int, task_id: int) -> int:
+async def get_user_completed_count(user_id: int, task_id: int) -> int:
     try:
-        cursor.execute("SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND task_id = ? AND status = 'approved'", (user_id, task_id))
-        row = cursor.fetchone()
-        return row["count"] if row else 0
+        return await fetchval("SELECT COUNT(*) FROM user_tasks WHERE user_id = $1 AND task_id = $2 AND status = 'approved'", user_id, task_id) or 0
     except:
         return 0
 
 
-def get_task_record_by_id(record_id: int):
-    """Получить запись по ID"""
+async def get_task_record_by_id(record_id: int):
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             SELECT ut.*, u.username, t.title, t.reward, t.max_completions
             FROM user_tasks ut
             JOIN users u ON ut.user_id = u.user_id
             JOIN tasks t ON ut.task_id = t.id
-            WHERE ut.id = ?
-        """, (record_id,))
-        row = cursor.fetchone()
+            WHERE ut.id = $1
+        """, record_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def delete_task_record_by_id(record_id: int):
-    """Удалить запись по ID"""
+async def delete_task_record_by_id(record_id: int):
     try:
-        cursor.execute("DELETE FROM user_tasks WHERE id = ?", (record_id,))
-        conn.commit()
+        await execute("DELETE FROM user_tasks WHERE id = $1", record_id)
         return True
     except:
         return False
 
 
-# ========== АВТО-ЗАДАНИЯ (ВЫДАЮТ НАГРАДУ АВТОМАТИЧЕСКИ) ==========
-def get_auto_tasks():
-    """Получить все авто-задания"""
+# ========== АВТО-ЗАДАНИЯ ==========
+async def get_auto_tasks():
     try:
-        cursor.execute("SELECT * FROM auto_tasks WHERE is_active = 1 ORDER BY category, id")
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT * FROM auto_tasks WHERE is_active = 1 ORDER BY category, id")
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def get_auto_task(task_id: int):
-    """Получить авто-задание по ID"""
+async def get_auto_task(task_id: int):
     try:
-        cursor.execute("SELECT * FROM auto_tasks WHERE id = ?", (task_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM auto_tasks WHERE id = $1", task_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def add_auto_task(title: str, description: str, reward: int, category: str = 'easy', 
+async def add_auto_task(title: str, description: str, reward: int, category: str = 'easy', 
                   task_type: str = "text", task_data: str = None, 
                   max_completions: int = 1, auto_verify: bool = True):
-    """Добавить авто-задание (выдаёт награду автоматически)"""
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             INSERT INTO auto_tasks (title, description, reward, task_type, task_data, 
                                    max_completions, category, is_active, created_at, auto_verify)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), ?)
-        """, (title, description, reward, task_type, task_data, max_completions, category, 1 if auto_verify else 0))
-        conn.commit()
-        return cursor.lastrowid
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 1, CURRENT_TIMESTAMP, $8) RETURNING id
+        """, title, description, reward, task_type, task_data, max_completions, category, 1 if auto_verify else 0)
+        return row["id"]
     except Exception as e:
         print(f"❌ Ошибка add_auto_task: {e}")
         return None
 
 
-def update_auto_task(task_id: int, **kwargs):
-    """Обновить авто-задание"""
+async def update_auto_task(task_id: int, **kwargs):
     try:
         updates = []
         values = []
         for key, value in kwargs.items():
             if value is not None:
-                updates.append(f"{key} = ?")
+                updates.append(f"{key} = ${len(values) + 2}")
                 values.append(value)
         
         if not updates:
             return False
         
         values.append(task_id)
-        query = f"UPDATE auto_tasks SET {', '.join(updates)} WHERE id = ?"
-        cursor.execute(query, values)
-        conn.commit()
+        query = f"UPDATE auto_tasks SET {', '.join(updates)} WHERE id = ${len(values)}"
+        await execute(query, *values)
         return True
     except Exception as e:
         print(f"❌ Ошибка update_auto_task: {e}")
         return False
 
 
-def remove_auto_task(task_id: int):
-    """Удалить авто-задание"""
+async def remove_auto_task(task_id: int):
     try:
-        cursor.execute("DELETE FROM auto_tasks WHERE id = ?", (task_id,))
-        cursor.execute("DELETE FROM user_auto_tasks WHERE task_id = ?", (task_id,))
-        conn.commit()
+        await execute("DELETE FROM auto_tasks WHERE id = $1", task_id)
+        await execute("DELETE FROM user_auto_tasks WHERE task_id = $1", task_id)
         return True
     except:
         return False
 
 
-def get_user_auto_task_status(user_id: int, task_id: int):
-    """Получить статус выполнения авто-задания"""
+async def get_user_auto_task_status(user_id: int, task_id: int):
     try:
-        cursor.execute("SELECT status, completed_at, reward_claimed FROM user_auto_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC LIMIT 1", 
-                       (user_id, task_id))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT status, completed_at, reward_claimed FROM user_auto_tasks WHERE user_id = $1 AND task_id = $2 ORDER BY id DESC LIMIT 1", user_id, task_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def get_user_auto_task_records(user_id: int, task_id: int):
-    """Получить записи выполнения авто-задания"""
+async def get_user_auto_task_records(user_id: int, task_id: int):
     try:
-        cursor.execute("SELECT * FROM user_auto_tasks WHERE user_id = ? AND task_id = ? ORDER BY id DESC", 
-                       (user_id, task_id))
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT * FROM user_auto_tasks WHERE user_id = $1 AND task_id = $2 ORDER BY id DESC", user_id, task_id)
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def submit_auto_task(user_id: int, task_id: int, proof: str = None) -> tuple:
-    """Отправить авто-задание и автоматически выдать награду"""
+async def submit_auto_task(user_id: int, task_id: int, proof: str = None) -> tuple:
     try:
-        task = get_auto_task(task_id)
+        task = await get_auto_task(task_id)
         if not task or not task.get("is_active", 0):
             return False, "Задание не найдено или неактивно"
         
         max_completions = task.get("max_completions", 1)
         
-        # Проверяем, сколько раз уже выполнено
-        cursor.execute("SELECT COUNT(*) as count FROM user_auto_tasks WHERE user_id = ? AND task_id = ? AND status = 'completed'", 
-                       (user_id, task_id))
-        completed = cursor.fetchone()["count"]
+        completed = await fetchval("SELECT COUNT(*) FROM user_auto_tasks WHERE user_id = $1 AND task_id = $2 AND status = 'completed'", user_id, task_id) or 0
         
         if completed >= max_completions:
             return False, f"Вы уже выполнили это задание {completed} раз из {max_completions}"
         
-        # Проверяем, есть ли ожидающая заявка
-        cursor.execute("SELECT id FROM user_auto_tasks WHERE user_id = ? AND task_id = ? AND status = 'pending'", 
-                       (user_id, task_id))
-        if cursor.fetchone():
+        pending = await fetchrow("SELECT id FROM user_auto_tasks WHERE user_id = $1 AND task_id = $2 AND status = 'pending'", user_id, task_id)
+        if pending:
             return False, "У вас уже есть задание на проверке"
         
-        # Создаём запись
-        cursor.execute("""
+        row = await fetchrow("""
             INSERT INTO user_auto_tasks (user_id, task_id, status, proof, completed_at, reward_claimed)
-            VALUES (?, ?, 'pending', ?, datetime('now'), 0)
-        """, (user_id, task_id, proof))
+            VALUES ($1, $2, 'pending', $3, CURRENT_TIMESTAMP, 0) RETURNING id
+        """, user_id, task_id, proof)
         
-        record_id = cursor.lastrowid
+        record_id = row["id"]
         
-        # Если задание авто-верифицируемое, сразу выдаём награду
         if task.get("auto_verify", 1):
-            cursor.execute("UPDATE user_auto_tasks SET status = 'completed', reward_claimed = 1 WHERE id = ?", (record_id,))
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (task["reward"], user_id))
-            conn.commit()
+            await execute("UPDATE user_auto_tasks SET status = 'completed', reward_claimed = 1 WHERE id = $1", record_id)
+            await update_user_balance(user_id, task["reward"])
             return True, f"✅ Задание выполнено! Начислено +{task['reward']} 🍬"
         
-        conn.commit()
         return True, "Задание отправлено на проверку"
         
     except Exception as e:
@@ -1175,10 +953,9 @@ def submit_auto_task(user_id: int, task_id: int, proof: str = None) -> tuple:
         return False, f"Ошибка: {e}"
 
 
-def get_pending_auto_tasks():
-    """Получить ожидающие проверки авто-задания"""
+async def get_pending_auto_tasks():
     try:
-        cursor.execute("""
+        rows = await fetch("""
             SELECT ut.*, u.username, t.title, t.reward, t.max_completions, t.auto_verify
             FROM user_auto_tasks ut
             JOIN users u ON ut.user_id = u.user_id
@@ -1186,790 +963,751 @@ def get_pending_auto_tasks():
             WHERE ut.status = 'pending'
             ORDER BY ut.completed_at
         """)
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def approve_auto_task(record_id: int, reward: int) -> bool:
-    """Одобрить авто-задание и выдать награду"""
+async def approve_auto_task(record_id: int, reward: int) -> bool:
     try:
-        cursor.execute("SELECT user_id, task_id, reward_claimed FROM user_auto_tasks WHERE id = ?", (record_id,))
-        record = cursor.fetchone()
-        
+        record = await fetchrow("SELECT user_id, reward_claimed FROM user_auto_tasks WHERE id = $1", record_id)
         if not record or record["reward_claimed"]:
             return False
         
-        cursor.execute("UPDATE user_auto_tasks SET status = 'completed', reward_claimed = 1 WHERE id = ?", (record_id,))
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, record["user_id"]))
-        conn.commit()
+        await execute("UPDATE user_auto_tasks SET status = 'completed', reward_claimed = 1 WHERE id = $1", record_id)
+        await update_user_balance(record["user_id"], reward)
         return True
     except Exception as e:
         print(f"❌ Ошибка approve_auto_task: {e}")
         return False
 
 
-def reject_auto_task(record_id: int) -> bool:
-    """Отклонить авто-задание"""
+async def reject_auto_task(record_id: int) -> bool:
     try:
-        cursor.execute("UPDATE user_auto_tasks SET status = 'rejected' WHERE id = ?", (record_id,))
-        conn.commit()
+        await execute("UPDATE user_auto_tasks SET status = 'rejected' WHERE id = $1", record_id)
         return True
     except:
         return False
 
 
-def get_auto_tasks_by_category(category: str = None):
-    """Получить авто-задания по категории"""
+async def get_auto_tasks_by_category(category: str = None):
     try:
         if category:
-            cursor.execute("SELECT * FROM auto_tasks WHERE is_active = 1 AND category = ? ORDER BY id", (category,))
+            rows = await fetch("SELECT * FROM auto_tasks WHERE is_active = 1 AND category = $1 ORDER BY id", category)
         else:
-            cursor.execute("SELECT * FROM auto_tasks WHERE is_active = 1 ORDER BY id")
-        return [dict(row) for row in cursor.fetchall()]
+            rows = await fetch("SELECT * FROM auto_tasks WHERE is_active = 1 ORDER BY id")
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def get_all_auto_tasks_by_category():
-    """Получить все авто-задания сгруппированные по категориям"""
+async def get_all_auto_tasks_by_category():
     result = {}
     for cat_key in TASK_CATEGORIES.keys():
-        result[cat_key] = get_auto_tasks_by_category(cat_key)
+        result[cat_key] = await get_auto_tasks_by_category(cat_key)
     return result
 
 
-def get_auto_task_record_by_id(record_id: int):
-    """Получить запись авто-задания по ID"""
+async def get_auto_task_record_by_id(record_id: int):
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             SELECT ut.*, u.username, t.title, t.reward, t.max_completions, t.auto_verify
             FROM user_auto_tasks ut
             JOIN users u ON ut.user_id = u.user_id
             JOIN auto_tasks t ON ut.task_id = t.id
-            WHERE ut.id = ?
-        """, (record_id,))
-        row = cursor.fetchone()
+            WHERE ut.id = $1
+        """, record_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def delete_auto_task_record_by_id(record_id: int):
-    """Удалить запись авто-задания по ID"""
+async def delete_auto_task_record_by_id(record_id: int):
     try:
-        cursor.execute("DELETE FROM user_auto_tasks WHERE id = ?", (record_id,))
-        conn.commit()
+        await execute("DELETE FROM user_auto_tasks WHERE id = $1", record_id)
         return True
     except:
         return False
 
 
 # ========== ФУНКЦИИ ДЛЯ ЗАЯВОК НА ОПЛАТУ ЗВЕЗДАМИ ==========
-def add_stars_payment_request_db(user_id: int, username: str, pack_amount: int, stars_amount: int, message_id: int = None):
-    """Добавить заявку на оплату звездами в БД"""
+async def add_stars_payment_request_db(user_id: int, username: str, pack_amount: int, stars_amount: int, message_id: int = None):
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             INSERT INTO stars_payment_requests (user_id, username, pack_amount, stars_amount, status, message_id)
-            VALUES (?, ?, ?, ?, 'pending', ?)
-        """, (user_id, username, pack_amount, stars_amount, message_id))
-        conn.commit()
-        return cursor.lastrowid
+            VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING id
+        """, user_id, username, pack_amount, stars_amount, message_id)
+        return row["id"]
     except Exception as e:
         print(f"❌ Ошибка add_stars_payment_request_db: {e}")
         return None
 
 
-def get_stars_payment_request_db(request_id: int):
-    """Получить заявку из БД по ID"""
+async def get_stars_payment_request_db(request_id: int):
     try:
-        cursor.execute("SELECT * FROM stars_payment_requests WHERE id = ?", (request_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM stars_payment_requests WHERE id = $1", request_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def get_all_stars_payment_requests_db(status: str = None):
-    """Получить все заявки из БД"""
+async def get_all_stars_payment_requests_db(status: str = None):
     try:
         if status:
-            cursor.execute("SELECT * FROM stars_payment_requests WHERE status = ? ORDER BY created_at DESC", (status,))
+            rows = await fetch("SELECT * FROM stars_payment_requests WHERE status = $1 ORDER BY created_at DESC", status)
         else:
-            cursor.execute("SELECT * FROM stars_payment_requests ORDER BY created_at DESC")
-        return [dict(row) for row in cursor.fetchall()]
+            rows = await fetch("SELECT * FROM stars_payment_requests ORDER BY created_at DESC")
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def approve_stars_payment_db(request_id: int):
-    """Одобрить заявку в БД"""
+async def approve_stars_payment_db(request_id: int):
     try:
-        cursor.execute("UPDATE stars_payment_requests SET status = 'approved', processed_at = datetime('now') WHERE id = ?", (request_id,))
-        conn.commit()
+        await execute("UPDATE stars_payment_requests SET status = 'approved', processed_at = CURRENT_TIMESTAMP WHERE id = $1", request_id)
         return True
     except:
         return False
 
 
-def reject_stars_payment_db(request_id: int):
-    """Отклонить заявку в БД"""
+async def reject_stars_payment_db(request_id: int):
     try:
-        cursor.execute("UPDATE stars_payment_requests SET status = 'rejected', processed_at = datetime('now') WHERE id = ?", (request_id,))
-        conn.commit()
+        await execute("UPDATE stars_payment_requests SET status = 'rejected', processed_at = CURRENT_TIMESTAMP WHERE id = $1", request_id)
         return True
     except:
         return False
 
 
 # ========== ФУНКЦИИ ДЛЯ LOLZ ПЛАТЕЖЕЙ (СБП) ==========
-def add_lolz_payment(invoice_id: str, order_id: str, user_id: int, amount_rub: float, pack_amount: int):
-    """Добавить запись о Lolz платеже"""
+async def add_lolz_payment(invoice_id: str, order_id: str, user_id: int, amount_rub: float, pack_amount: int):
     try:
-        cursor.execute("""
+        await execute("""
             INSERT INTO lolz_payments (invoice_id, order_id, user_id, amount_rub, pack_amount, status)
-            VALUES (?, ?, ?, ?, ?, 'pending')
-        """, (invoice_id, order_id, user_id, amount_rub, pack_amount))
-        conn.commit()
+            VALUES ($1, $2, $3, $4, $5, 'pending')
+        """, invoice_id, order_id, user_id, amount_rub, pack_amount)
         return True
     except Exception as e:
         print(f"❌ Ошибка add_lolz_payment: {e}")
         return False
 
 
-def mark_lolz_payment_paid(invoice_id: str):
-    """Отметить Lolz платеж как оплаченный"""
+async def mark_lolz_payment_paid(invoice_id: str):
     try:
-        cursor.execute("""
+        await execute("""
             UPDATE lolz_payments 
-            SET status = 'paid', paid_at = datetime('now') 
-            WHERE invoice_id = ?
-        """, (invoice_id,))
-        conn.commit()
+            SET status = 'paid', paid_at = CURRENT_TIMESTAMP 
+            WHERE invoice_id = $1
+        """, invoice_id)
         return True
     except Exception as e:
         print(f"❌ Ошибка mark_lolz_payment_paid: {e}")
         return False
 
 
-def get_lolz_payment(invoice_id: str):
-    """Получить Lolz платеж по invoice_id"""
+async def get_lolz_payment(invoice_id: str):
     try:
-        cursor.execute("SELECT * FROM lolz_payments WHERE invoice_id = ?", (invoice_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM lolz_payments WHERE invoice_id = $1", invoice_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def get_lolz_payment_by_order(order_id: str):
-    """Получить Lolz платеж по order_id"""
+async def get_lolz_payment_by_order(order_id: str):
     try:
-        cursor.execute("SELECT * FROM lolz_payments WHERE order_id = ?", (order_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM lolz_payments WHERE order_id = $1", order_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def get_pending_lolz_payments():
-    """Получить все ожидающие Lolz платежи"""
+async def get_pending_lolz_payments():
     try:
-        cursor.execute("SELECT * FROM lolz_payments WHERE status = 'pending' ORDER BY created_at DESC")
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT * FROM lolz_payments WHERE status = 'pending' ORDER BY created_at DESC")
+        return [dict(row) for row in rows]
     except:
         return []
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С КАНАЛАМИ ОП ==========
-def get_mandatory_channels():
+async def get_mandatory_channels():
     try:
-        cursor.execute("SELECT channel_id, channel_name, channel_link FROM mandatory_channels")
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT channel_id, channel_name, channel_link FROM mandatory_channels")
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def add_mandatory_channel(channel_id, channel_name, channel_link):
+async def add_mandatory_channel(channel_id, channel_name, channel_link):
     try:
-        cursor.execute(
-            "INSERT OR REPLACE INTO mandatory_channels (channel_id, channel_name, channel_link) VALUES (?, ?, ?)",
-            (channel_id, channel_name, channel_link)
-        )
-        conn.commit()
+        await execute("INSERT INTO mandatory_channels (channel_id, channel_name, channel_link) VALUES ($1, $2, $3) ON CONFLICT (channel_id) DO UPDATE SET channel_name = EXCLUDED.channel_name, channel_link = EXCLUDED.channel_link", channel_id, channel_name, channel_link)
         return True
     except:
         return False
 
 
-def remove_mandatory_channel(channel_id):
+async def remove_mandatory_channel(channel_id):
     try:
-        cursor.execute("DELETE FROM mandatory_channels WHERE channel_id = ?", (channel_id,))
-        conn.commit()
+        await execute("DELETE FROM mandatory_channels WHERE channel_id = $1", channel_id)
         return True
     except:
         return False
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С АДМИНАМИ ==========
-def is_admin(user_id: int) -> bool:
+async def is_admin(user_id: int) -> bool:
     try:
-        cursor.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT is_admin FROM users WHERE user_id = $1", user_id)
         return row and row["is_admin"] == 1
     except:
         return False
 
 
-def is_main_admin(user_id: int) -> bool:
+async def is_main_admin(user_id: int) -> bool:
     try:
-        cursor.execute("SELECT is_main_admin FROM admins WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT is_main_admin FROM admins WHERE user_id = $1", user_id)
         return row and row["is_main_admin"] == 1
     except:
         return False
 
 
-def can_manage_admins(user_id: int) -> bool:
+async def can_manage_admins(user_id: int) -> bool:
     try:
-        if is_main_admin(user_id):
+        if await is_main_admin(user_id):
             return True
-        cursor.execute("SELECT can_add_admins FROM admins WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT can_add_admins FROM admins WHERE user_id = $1", user_id)
         return row and row["can_add_admins"] == 1
     except:
         return False
 
 
-def get_all_admins():
+async def get_all_admins():
     try:
-        cursor.execute("""
+        rows = await fetch("""
             SELECT a.user_id, a.username, a.added_at, a.is_main_admin, a.can_add_admins, u.username as current_username
             FROM admins a
             LEFT JOIN users u ON a.user_id = u.user_id
             ORDER BY a.is_main_admin DESC, a.added_at
         """)
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def add_admin(admin_id: int, username: str, added_by: int, can_add: bool = False):
+async def add_admin(admin_id: int, username: str, added_by: int, can_add: bool = False):
     try:
-        cursor.execute("""
-            INSERT OR REPLACE INTO users (user_id, username, is_verified, is_admin)
-            VALUES (?, ?, 1, 1)
-        """, (admin_id, username))
+        await execute("""
+            INSERT INTO users (user_id, username, is_verified, is_admin)
+            VALUES ($1, $2, 1, 1)
+            ON CONFLICT (user_id) DO UPDATE SET is_admin = 1
+        """, admin_id, username)
         
-        cursor.execute("""
-            INSERT OR REPLACE INTO admins (user_id, username, added_by, added_at, is_main_admin, can_add_admins)
-            VALUES (?, ?, ?, datetime('now'), 0, ?)
-        """, (admin_id, username, added_by, 1 if can_add else 0))
-        
-        conn.commit()
+        await execute("""
+            INSERT INTO admins (user_id, username, added_by, added_at, is_main_admin, can_add_admins)
+            VALUES ($1, $2, $3, CURRENT_TIMESTAMP, 0, $4)
+            ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username, added_by = EXCLUDED.added_by, can_add_admins = EXCLUDED.can_add_admins
+        """, admin_id, username, added_by, 1 if can_add else 0)
         return True
     except:
         return False
 
 
-def remove_admin(admin_id: int):
+async def remove_admin(admin_id: int):
     try:
-        cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (admin_id,))
-        cursor.execute("DELETE FROM admins WHERE user_id = ?", (admin_id,))
-        conn.commit()
+        await execute("UPDATE users SET is_admin = 0 WHERE user_id = $1", admin_id)
+        await execute("DELETE FROM admins WHERE user_id = $1", admin_id)
         return True
     except:
         return False
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С БОНУСАМИ ==========
-def has_received_subscribe_bonus(user_id: int) -> bool:
+async def has_received_subscribe_bonus(user_id: int) -> bool:
     try:
-        cursor.execute("SELECT subscribe_bonus_received FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT subscribe_bonus_received FROM users WHERE user_id = $1", user_id)
         return row and row["subscribe_bonus_received"] == 1
     except:
         return False
 
 
-def mark_subscribe_bonus_received(user_id: int):
+async def mark_subscribe_bonus_received(user_id: int):
     try:
-        cursor.execute("UPDATE users SET subscribe_bonus_received = 1 WHERE user_id = ?", (user_id,))
-        conn.commit()
+        await execute("UPDATE users SET subscribe_bonus_received = 1 WHERE user_id = $1", user_id)
         return True
     except:
         return False
 
 
-def update_last_bonus(user_id: int, timestamp: int):
+async def update_last_bonus(user_id: int, timestamp: int):
     try:
-        cursor.execute("UPDATE users SET last_bonus = ? WHERE user_id = ?", (timestamp, user_id))
-        conn.commit()
+        await execute("UPDATE users SET last_bonus = $1 WHERE user_id = $2", timestamp, user_id)
         return True
     except:
         return False
 
 
-def get_bonus_stats():
+async def get_bonus_stats():
     try:
-        cursor.execute("SELECT COUNT(*) as users_took_bonus FROM users WHERE last_bonus > 0")
-        row = cursor.fetchone()
-        return {"users_took_bonus": row["users_took_bonus"] if row else 0}
+        count = await fetchval("SELECT COUNT(*) FROM users WHERE last_bonus > 0") or 0
+        return {"users_took_bonus": count}
     except:
         return {"users_took_bonus": 0}
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОЛЬЗОВАТЕЛЯМИ ==========
-def get_user(user_id: int):
+async def get_user(user_id: int):
     try:
-        cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def update_user_balance(user_id: int, amount: int):
+async def update_user_balance(user_id: int, amount: int):
     try:
-        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
-        conn.commit()
+        await execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", amount, user_id)
         return True
     except:
         return False
 
 
-def get_user_by_ref_code(ref_code: str):
+async def get_user_by_ref_code(ref_code: str):
     try:
-        cursor.execute("SELECT user_id FROM users WHERE ref_code = ?", (ref_code,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT user_id FROM users WHERE ref_code = $1", ref_code)
         return row["user_id"] if row else None
     except:
         return None
 
 
-def get_referrals_count(user_id: int) -> int:
+async def get_referrals_count(user_id: int) -> int:
     try:
-        cursor.execute("SELECT COUNT(*) as count FROM users WHERE referrer = ?", (user_id,))
-        row = cursor.fetchone()
-        return row["count"] if row else 0
+        return await fetchval("SELECT COUNT(*) FROM users WHERE referrer = $1", user_id) or 0
     except:
         return 0
 
 
-def get_top_referrers(limit: int = 10):
+async def get_top_referrers(limit: int = 10):
     try:
-        cursor.execute("""
+        rows = await fetch("""
             SELECT u.user_id, u.username, u.balance, COUNT(r.user_id) as referrals_count
             FROM users u
             LEFT JOIN users r ON r.referrer = u.user_id
             GROUP BY u.user_id
-            HAVING referrals_count > 0
-            ORDER BY referrals_count DESC
-            LIMIT ?
-        """, (limit,))
-        return [dict(row) for row in cursor.fetchall()]
+            HAVING COUNT(r.user_id) > 0
+            ORDER BY COUNT(r.user_id) DESC
+            LIMIT $1
+        """, limit)
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def get_top_balances(limit: int = 20):
+async def get_top_balances(limit: int = 20):
     try:
-        cursor.execute("""
+        rows = await fetch("""
             SELECT user_id, username, balance 
             FROM users 
             WHERE balance > 0
             ORDER BY balance DESC 
-            LIMIT ?
-        """, (limit,))
-        return [dict(row) for row in cursor.fetchall()]
+            LIMIT $1
+        """, limit)
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def get_pending_referrer_bonus(user_id: int):
+async def get_pending_referrer_bonus(user_id: int):
     try:
-        cursor.execute("SELECT pending_referrer_bonus FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT pending_referrer_bonus FROM users WHERE user_id = $1", user_id)
         return row["pending_referrer_bonus"] if row else None
     except:
         return None
 
 
-def clear_pending_referrer_bonus(user_id: int):
+async def clear_pending_referrer_bonus(user_id: int):
     try:
-        cursor.execute("UPDATE users SET pending_referrer_bonus = NULL WHERE user_id = ?", (user_id,))
-        conn.commit()
+        await execute("UPDATE users SET pending_referrer_bonus = NULL WHERE user_id = $1", user_id)
         return True
     except:
         return False
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПЛАТЕЖАМИ ==========
-def add_payment(invoice_id: str, user_id: int, amount: int, payment_method: str = "cryptobot"):
+async def add_payment(invoice_id: str, user_id: int, amount: int, payment_method: str = "cryptobot"):
     try:
-        cursor.execute(
-            "INSERT INTO payments (invoice_id, user_id, amount, payment_method) VALUES (?, ?, ?, ?)",
-            (invoice_id, user_id, amount, payment_method)
-        )
-        conn.commit()
+        await execute("INSERT INTO payments (invoice_id, user_id, amount, payment_method) VALUES ($1, $2, $3, $4)", invoice_id, user_id, amount, payment_method)
         return True
     except:
         return False
 
 
-def mark_payment_paid(invoice_id: str):
+async def mark_payment_paid(invoice_id: str):
     try:
-        cursor.execute("UPDATE payments SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
-        conn.commit()
+        await execute("UPDATE payments SET paid = 1 WHERE invoice_id = $1", invoice_id)
         return True
     except:
         return False
 
 
-def get_payment(invoice_id: str):
+async def get_payment(invoice_id: str):
     try:
-        cursor.execute("SELECT * FROM payments WHERE invoice_id = ?", (invoice_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM payments WHERE invoice_id = $1", invoice_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def get_user_payments(user_id: int, limit: int = 10):
+async def get_user_payments(user_id: int, limit: int = 10):
     try:
-        cursor.execute("""
-            SELECT * FROM payments 
-            WHERE user_id = ? 
-            ORDER BY created_at DESC 
-            LIMIT ?
-        """, (user_id, limit))
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT * FROM payments WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2", user_id, limit)
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def get_payments_stats():
+async def get_payments_stats():
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             SELECT 
                 COUNT(*) as total_attempts,
                 SUM(CASE WHEN paid = 1 THEN 1 ELSE 0 END) as successful,
                 SUM(CASE WHEN paid = 0 THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN paid = 1 THEN amount ELSE 0 END) as total_candies
+                COALESCE(SUM(CASE WHEN paid = 1 THEN amount ELSE 0 END), 0) as total_candies
             FROM payments
         """)
-        return dict(cursor.fetchone())
-    except:
+        if row:
+            return {
+                "total_attempts": row["total_attempts"] or 0,
+                "successful": row["successful"] or 0,
+                "pending": row["pending"] or 0,
+                "total_candies": row["total_candies"] or 0
+            }
+        return {"total_attempts": 0, "successful": 0, "pending": 0, "total_candies": 0}
+    except Exception as e:
+        print(f"❌ Ошибка get_payments_stats: {e}")
         return {"total_attempts": 0, "successful": 0, "pending": 0, "total_candies": 0}
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ВИДЕО ==========
-def get_all_videos():
+async def get_all_videos():
     try:
-        cursor.execute("SELECT id, file_id FROM videos ORDER BY id")
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT id, file_id FROM videos ORDER BY id")
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def get_video_count() -> int:
+async def get_video_count() -> int:
     try:
-        cursor.execute("SELECT COUNT(*) as count FROM videos")
-        row = cursor.fetchone()
-        return row["count"] if row else 0
+        return await fetchval("SELECT COUNT(*) FROM videos") or 0
     except:
         return 0
 
 
-def add_video(file_id: str):
+async def add_video(file_id: str):
     try:
-        cursor.execute("INSERT INTO videos (file_id) VALUES (?)", (file_id,))
-        conn.commit()
+        await execute("INSERT INTO videos (file_id) VALUES ($1)", file_id)
+        row = await fetchrow("SELECT id FROM videos WHERE file_id = $1", file_id)
+        if row:
+            await execute("INSERT INTO video_stats (video_id) VALUES ($1)", row["id"])
         return True
     except:
         return False
 
 
-def get_user_watched_videos(user_id: int):
+async def get_user_watched_videos(user_id: int):
     try:
-        cursor.execute("SELECT video_id FROM user_videos WHERE user_id = ?", (user_id,))
-        return [row["video_id"] for row in cursor.fetchall()]
+        rows = await fetch("SELECT video_id FROM user_videos WHERE user_id = $1", user_id)
+        return [row["video_id"] for row in rows]
     except:
         return []
 
 
-def mark_video_watched(user_id: int, video_id: int):
+async def mark_video_watched(user_id: int, video_id: int):
     try:
-        cursor.execute(
-            "INSERT OR IGNORE INTO user_videos (user_id, video_id) VALUES (?, ?)",
-            (user_id, video_id)
-        )
-        conn.commit()
+        await execute("INSERT INTO user_videos (user_id, video_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", user_id, video_id)
         return True
     except:
         return False
 
 
-def get_watched_stats():
+async def get_watched_stats():
     try:
-        cursor.execute("""
-            SELECT 
-                COUNT(DISTINCT user_id) as unique_viewers,
-                COUNT(*) as total_views
-            FROM user_videos
-        """)
-        return dict(cursor.fetchone())
+        row = await fetchrow("SELECT COUNT(DISTINCT user_id) as unique_viewers, COUNT(*) as total_views FROM user_videos")
+        if row:
+            return {"unique_viewers": row["unique_viewers"] or 0, "total_views": row["total_views"] or 0}
+        return {"unique_viewers": 0, "total_views": 0}
     except:
         return {"unique_viewers": 0, "total_views": 0}
 
 
-# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРОМОКОДАМИ ==========
-def add_promo_code(code: str, reward: int, activations: int):
+async def get_video_count_for_user(user_id: int):
     try:
-        cursor.execute(
-            "INSERT INTO promocodes (code, reward, activations_left) VALUES (?, ?, ?)",
-            (code, reward, activations)
-        )
-        conn.commit()
+        return await fetchval("SELECT COUNT(*) FROM videos WHERE id NOT IN (SELECT video_id FROM user_videos WHERE user_id = $1)", user_id) or 0
+    except:
+        return 0
+
+
+async def get_videos_sorted_by_rating(user_id: int, limit: int = 1):
+    try:
+        subscription = await get_user_subscription(user_id)
+        has_sub = subscription is not None
+        
+        if has_sub:
+            rows = await fetch("""
+                SELECT v.id, v.file_id, 
+                       COALESCE(vs.rating, 0) as rating,
+                       COALESCE(vs.likes, 0) as likes,
+                       COALESCE(vs.dislikes, 0) as dislikes
+                FROM videos v
+                LEFT JOIN video_stats vs ON v.id = vs.video_id
+                WHERE v.id NOT IN (
+                    SELECT video_id FROM user_videos WHERE user_id = $1
+                )
+                ORDER BY COALESCE(vs.rating, 0) DESC, v.id ASC
+                LIMIT $2
+            """, user_id, limit)
+        else:
+            rows = await fetch("""
+                SELECT v.id, v.file_id, 
+                       COALESCE(vs.rating, 0) as rating,
+                       COALESCE(vs.likes, 0) as likes,
+                       COALESCE(vs.dislikes, 0) as dislikes
+                FROM videos v
+                LEFT JOIN video_stats vs ON v.id = vs.video_id
+                WHERE v.id NOT IN (
+                    SELECT video_id FROM user_videos WHERE user_id = $1
+                )
+                ORDER BY v.id ASC
+                LIMIT $2
+            """, user_id, limit)
+        
+        return [dict(row) for row in rows]
+    except Exception as e:
+        print(f"❌ Ошибка get_videos_sorted_by_rating: {e}")
+        return []
+
+
+# ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРОМОКОДАМИ ==========
+async def add_promo_code(code: str, reward: int, activations: int):
+    try:
+        await execute("INSERT INTO promocodes (code, reward, activations_left) VALUES ($1, $2, $3)", code, reward, activations)
         return True
     except:
         return False
 
 
-def get_promo_code(code: str):
+async def get_promo_code(code: str):
     try:
-        cursor.execute("SELECT * FROM promocodes WHERE code = ?", (code,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM promocodes WHERE code = $1", code)
         return dict(row) if row else None
     except:
         return None
 
 
-def use_promo_code(code: str, user_id: int):
+async def use_promo_code(code: str, user_id: int):
     try:
-        cursor.execute("UPDATE promocodes SET activations_left = activations_left - 1 WHERE code = ?", (code,))
-        cursor.execute("INSERT INTO used_promocodes (user_id, code) VALUES (?, ?)", (user_id, code))
-        conn.commit()
+        await execute("UPDATE promocodes SET activations_left = activations_left - 1 WHERE code = $1", code)
+        await execute("INSERT INTO used_promocodes (user_id, code) VALUES ($1, $2)", user_id, code)
         return True
     except:
         return False
 
 
-def check_promo_used(user_id: int, code: str) -> bool:
+async def check_promo_used(user_id: int, code: str) -> bool:
     try:
-        cursor.execute(
-            "SELECT 1 FROM used_promocodes WHERE user_id = ? AND code = ?",
-            (user_id, code)
-        )
-        return cursor.fetchone() is not None
+        row = await fetchrow("SELECT 1 FROM used_promocodes WHERE user_id = $1 AND code = $2", user_id, code)
+        return row is not None
     except:
         return False
 
 
-def get_promo_stats():
+async def get_promo_stats():
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             SELECT 
                 COUNT(*) as total_codes,
-                SUM(activations_left) as total_left,
+                COALESCE(SUM(activations_left), 0) as total_left,
                 (SELECT COUNT(*) FROM used_promocodes) as total_used
             FROM promocodes
         """)
-        return dict(cursor.fetchone())
+        if row:
+            return {
+                "total_codes": row["total_codes"] or 0,
+                "total_left": row["total_left"] or 0,
+                "total_used": row["total_used"] or 0
+            }
+        return {"total_codes": 0, "total_left": 0, "total_used": 0}
     except:
         return {"total_codes": 0, "total_left": 0, "total_used": 0}
 
 
 # ========== ФУНКЦИИ ДЛЯ ПОЛУЧЕНИЯ ОБЩЕЙ СТАТИСТИКИ ==========
-def get_total_users() -> int:
+async def get_total_users() -> int:
     try:
-        cursor.execute("SELECT COUNT(*) as count FROM users")
-        row = cursor.fetchone()
-        return row["count"] if row else 0
+        return await fetchval("SELECT COUNT(*) FROM users") or 0
     except:
         return 0
 
 
-def get_verified_users() -> int:
+async def get_verified_users() -> int:
     try:
-        cursor.execute("SELECT COUNT(*) as count FROM users WHERE is_verified = 1")
-        row = cursor.fetchone()
-        return row["count"] if row else 0
+        return await fetchval("SELECT COUNT(*) FROM users WHERE is_verified = 1") or 0
     except:
         return 0
 
 
-def get_users_with_balance() -> int:
+async def get_users_with_balance() -> int:
     try:
-        cursor.execute("SELECT COUNT(*) as count FROM users WHERE balance > 0")
-        row = cursor.fetchone()
-        return row["count"] if row else 0
+        return await fetchval("SELECT COUNT(*) FROM users WHERE balance > 0") or 0
     except:
         return 0
 
 
-def get_total_balance() -> int:
+async def get_total_balance() -> int:
     try:
-        cursor.execute("SELECT SUM(balance) as total FROM users")
-        row = cursor.fetchone()
-        return row["total"] if row and row["total"] else 0
+        return await fetchval("SELECT COALESCE(SUM(balance), 0) FROM users") or 0
     except:
         return 0
 
 
-def get_max_balance() -> int:
+async def get_max_balance() -> int:
     try:
-        cursor.execute("SELECT MAX(balance) as max FROM users")
-        row = cursor.fetchone()
-        return row["max"] if row and row["max"] else 0
+        return await fetchval("SELECT COALESCE(MAX(balance), 0) FROM users") or 0
     except:
         return 0
 
 
-def get_avg_balance() -> float:
+async def get_avg_balance() -> float:
     try:
-        cursor.execute("SELECT AVG(balance) as avg FROM users")
-        row = cursor.fetchone()
-        return row["avg"] if row and row["avg"] else 0
+        return await fetchval("SELECT COALESCE(AVG(balance), 0) FROM users") or 0.0
     except:
-        return 0
+        return 0.0
 
 
-def get_referral_stats():
+async def get_referral_stats():
     try:
-        cursor.execute("""
-            SELECT 
-                COUNT(*) as total_refs,
-                COUNT(DISTINCT referrer) as unique_referrers
-            FROM users 
-            WHERE referrer IS NOT NULL
-        """)
-        return dict(cursor.fetchone())
+        row = await fetchrow("SELECT COUNT(*) as total_refs, COUNT(DISTINCT referrer) as unique_referrers FROM users WHERE referrer IS NOT NULL")
+        if row:
+            return {"total_refs": row["total_refs"] or 0, "unique_referrers": row["unique_referrers"] or 0}
+        return {"total_refs": 0, "unique_referrers": 0}
     except:
         return {"total_refs": 0, "unique_referrers": 0}
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПРИВАТКОЙ ==========
-def add_private_purchase(user_id: int, invoice_id: str, amount: float):
+async def add_private_purchase(user_id: int, invoice_id: str, amount: float):
     try:
-        cursor.execute("""
+        await execute("""
             INSERT INTO private_purchases (user_id, invoice_id, amount)
-            VALUES (?, ?, ?)
-        """, (user_id, invoice_id, amount))
-        conn.commit()
+            VALUES ($1, $2, $3)
+        """, user_id, invoice_id, amount)
         return True
     except:
         return False
 
 
-def mark_private_paid(invoice_id: str):
+async def mark_private_paid(invoice_id: str):
     try:
-        cursor.execute("UPDATE private_purchases SET paid = 1 WHERE invoice_id = ?", (invoice_id,))
-        cursor.execute("""
+        await execute("UPDATE private_purchases SET paid = 1 WHERE invoice_id = $1", invoice_id)
+        await execute("""
             UPDATE users SET private_access = 1 
-            WHERE user_id = (SELECT user_id FROM private_purchases WHERE invoice_id = ?)
-        """, (invoice_id,))
-        conn.commit()
+            WHERE user_id = (SELECT user_id FROM private_purchases WHERE invoice_id = $1)
+        """, invoice_id)
         return True
     except:
         return False
 
 
-def get_private_purchase(invoice_id: str):
+async def get_private_purchase(invoice_id: str):
     try:
-        cursor.execute("SELECT * FROM private_purchases WHERE invoice_id = ?", (invoice_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM private_purchases WHERE invoice_id = $1", invoice_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def has_private_access(user_id: int) -> bool:
+async def has_private_access(user_id: int) -> bool:
     try:
-        cursor.execute("SELECT private_access FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT private_access FROM users WHERE user_id = $1", user_id)
         return row and row["private_access"] == 1
     except:
         return False
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С ПОДПИСКАМИ ==========
-def get_user_subscription(user_id: int):
+async def get_user_subscription(user_id: int):
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             SELECT subscription_type, expires_at, last_daily_bonus 
             FROM user_subscriptions 
-            WHERE user_id = ? AND expires_at > datetime('now')
-        """, (user_id,))
-        row = cursor.fetchone()
+            WHERE user_id = $1 AND expires_at > CURRENT_TIMESTAMP
+        """, user_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def get_user_subscriptions(user_id: int):
+async def get_user_subscriptions(user_id: int):
     try:
-        cursor.execute("""
+        rows = await fetch("""
             SELECT subscription_type, expires_at, created_at 
             FROM user_subscriptions 
-            WHERE user_id = ?
+            WHERE user_id = $1
             ORDER BY created_at DESC
-        """, (user_id,))
-        return [dict(row) for row in cursor.fetchall()]
+        """, user_id)
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def add_subscription(user_id: int, sub_type: str, days: int):
+async def add_subscription(user_id: int, sub_type: str, days: int):
     try:
-        cursor.execute("""
-            INSERT OR REPLACE INTO user_subscriptions (user_id, subscription_type, expires_at)
-            VALUES (?, ?, datetime('now', '+' || ? || ' days'))
-        """, (user_id, sub_type, days))
-        conn.commit()
+        await execute("""
+            INSERT INTO user_subscriptions (user_id, subscription_type, expires_at)
+            VALUES ($1, $2, CURRENT_TIMESTAMP + ($3 || ' days')::INTERVAL)
+            ON CONFLICT (user_id) DO UPDATE SET subscription_type = EXCLUDED.subscription_type, expires_at = EXCLUDED.expires_at
+        """, user_id, sub_type, days)
         return True
     except Exception as e:
         print(f"❌ Ошибка добавления подписки: {e}")
         return False
 
 
-def remove_subscription(user_id: int):
+async def remove_subscription(user_id: int):
     try:
-        cursor.execute("DELETE FROM user_subscriptions WHERE user_id = ?", (user_id,))
-        conn.commit()
+        await execute("DELETE FROM user_subscriptions WHERE user_id = $1", user_id)
         return True
     except:
         return False
 
 
-def get_all_active_subscriptions():
+async def get_all_active_subscriptions():
     try:
-        cursor.execute("""
+        rows = await fetch("""
             SELECT user_id, subscription_type, expires_at 
             FROM user_subscriptions 
-            WHERE expires_at > datetime('now')
+            WHERE expires_at > CURRENT_TIMESTAMP
             ORDER BY expires_at
         """)
-        return [dict(row) for row in cursor.fetchall()]
+        return [dict(row) for row in rows]
     except Exception as e:
         print(f"❌ Ошибка get_all_active_subscriptions: {e}")
         return []
 
 
-def check_and_give_daily_bonus(user_id: int):
+async def check_and_give_daily_bonus(user_id: int):
     try:
-        cursor.execute("""
+        sub = await fetchrow("""
             SELECT subscription_type, last_daily_bonus 
             FROM user_subscriptions 
-            WHERE user_id = ? AND expires_at > datetime('now')
-        """, (user_id,))
-        sub = cursor.fetchone()
+            WHERE user_id = $1 AND expires_at > CURRENT_TIMESTAMP
+        """, user_id)
         if not sub:
             return False
         last_bonus = sub["last_daily_bonus"]
         today = datetime.now().date()
         if last_bonus:
-            last_date = datetime.fromisoformat(last_bonus).date()
+            last_date = last_bonus.date()
             if last_date == today:
                 return False
         sub_type = sub["subscription_type"]
@@ -1981,9 +1719,8 @@ def check_and_give_daily_bonus(user_id: int):
         elif sub_type == "op":
             bonus_amount = 0
         if bonus_amount > 0:
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (bonus_amount, user_id))
-            cursor.execute("UPDATE user_subscriptions SET last_daily_bonus = datetime('now') WHERE user_id = ?", (user_id,))
-            conn.commit()
+            await update_user_balance(user_id, bonus_amount)
+            await execute("UPDATE user_subscriptions SET last_daily_bonus = CURRENT_TIMESTAMP WHERE user_id = $1", user_id)
             return bonus_amount
         return False
     except Exception as e:
@@ -1992,386 +1729,228 @@ def check_and_give_daily_bonus(user_id: int):
 
 
 # ========== ФУНКЦИИ ДЛЯ РАБОТЫ С РЕЙТИНГОМ ВИДЕО ==========
-def rate_video(video_id: int, user_id: int, rating: int):
+async def rate_video(video_id: int, user_id: int, rating: int):
     try:
-        cursor.execute("SELECT id FROM videos WHERE id = ?", (video_id,))
-        if not cursor.fetchone():
+        row = await fetchrow("SELECT id FROM videos WHERE id = $1", video_id)
+        if not row:
             return None
         
-        cursor.execute("SELECT rating FROM video_ratings WHERE video_id = ? AND user_id = ?", (video_id, user_id))
-        existing = cursor.fetchone()
+        existing = await fetchrow("SELECT rating FROM video_ratings WHERE video_id = $1 AND user_id = $2", video_id, user_id)
         
         if existing:
             old_rating = existing["rating"]
             if old_rating == rating:
-                cursor.execute("DELETE FROM video_ratings WHERE video_id = ? AND user_id = ?", (video_id, user_id))
+                await execute("DELETE FROM video_ratings WHERE video_id = $1 AND user_id = $2", video_id, user_id)
                 if old_rating == 1:
-                    cursor.execute("UPDATE video_stats SET likes = likes - 1 WHERE video_id = ?", (video_id,))
+                    await execute("UPDATE video_stats SET likes = likes - 1 WHERE video_id = $1", video_id)
                 else:
-                    cursor.execute("UPDATE video_stats SET dislikes = dislikes - 1 WHERE video_id = ?", (video_id,))
+                    await execute("UPDATE video_stats SET dislikes = dislikes - 1 WHERE video_id = $1", video_id)
             else:
-                cursor.execute("UPDATE video_ratings SET rating = ? WHERE video_id = ? AND user_id = ?", (rating, video_id, user_id))
+                await execute("UPDATE video_ratings SET rating = $1 WHERE video_id = $2 AND user_id = $3", rating, video_id, user_id)
                 if old_rating == 1:
-                    cursor.execute("UPDATE video_stats SET likes = likes - 1, dislikes = dislikes + 1 WHERE video_id = ?", (video_id,))
+                    await execute("UPDATE video_stats SET likes = likes - 1, dislikes = dislikes + 1 WHERE video_id = $1", video_id)
                 else:
-                    cursor.execute("UPDATE video_stats SET dislikes = dislikes - 1, likes = likes + 1 WHERE video_id = ?", (video_id,))
+                    await execute("UPDATE video_stats SET dislikes = dislikes - 1, likes = likes + 1 WHERE video_id = $1", video_id)
         else:
-            cursor.execute("INSERT INTO video_ratings (video_id, user_id, rating) VALUES (?, ?, ?)", (video_id, user_id, rating))
+            await execute("INSERT INTO video_ratings (video_id, user_id, rating) VALUES ($1, $2, $3)", video_id, user_id, rating)
             if rating == 1:
-                cursor.execute("UPDATE video_stats SET likes = likes + 1 WHERE video_id = ?", (video_id,))
+                await execute("UPDATE video_stats SET likes = likes + 1 WHERE video_id = $1", video_id)
             else:
-                cursor.execute("UPDATE video_stats SET dislikes = dislikes + 1 WHERE video_id = ?", (video_id,))
+                await execute("UPDATE video_stats SET dislikes = dislikes + 1 WHERE video_id = $1", video_id)
         
-        cursor.execute("""
+        await execute("""
             UPDATE video_stats 
             SET total_ratings = likes + dislikes,
                 rating = CASE 
-                    WHEN (likes + dislikes) > 0 THEN CAST(likes AS REAL) / (likes + dislikes) * 100
+                    WHEN (likes + dislikes) > 0 THEN (likes::REAL / (likes + dislikes)) * 100
                     ELSE 0
                 END
-            WHERE video_id = ?
-        """, (video_id,))
+            WHERE video_id = $1
+        """, video_id)
         
-        conn.commit()
-        
-        cursor.execute("SELECT likes, dislikes, rating FROM video_stats WHERE video_id = ?", (video_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else {"likes": 0, "dislikes": 0, "rating": 0}
+        stats = await fetchrow("SELECT likes, dislikes, rating FROM video_stats WHERE video_id = $1", video_id)
+        return dict(stats) if stats else {"likes": 0, "dislikes": 0, "rating": 0}
     except Exception as e:
         print(f"❌ Ошибка rate_video: {e}")
         traceback.print_exc()
         return None
 
 
-def get_video_rating(video_id: int):
+async def get_video_rating(video_id: int):
     try:
-        cursor.execute("SELECT likes, dislikes, rating FROM video_stats WHERE video_id = ?", (video_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT likes, dislikes, rating FROM video_stats WHERE video_id = $1", video_id)
         return dict(row) if row else {"likes": 0, "dislikes": 0, "rating": 0}
     except:
         return {"likes": 0, "dislikes": 0, "rating": 0}
 
 
-def get_user_video_rating(video_id: int, user_id: int):
+async def get_user_video_rating(video_id: int, user_id: int):
     try:
-        cursor.execute("SELECT rating FROM video_ratings WHERE video_id = ? AND user_id = ?", (video_id, user_id))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT rating FROM video_ratings WHERE video_id = $1 AND user_id = $2", video_id, user_id)
         return row["rating"] if row else 0
     except:
         return 0
 
 
-def get_videos_sorted_by_rating(user_id: int, limit: int = 1):
-    try:
-        subscription = get_user_subscription(user_id)
-        has_sub = subscription is not None
-        
-        if has_sub:
-            cursor.execute("""
-                SELECT v.id, v.file_id, 
-                       COALESCE(vs.rating, 0) as rating,
-                       COALESCE(vs.likes, 0) as likes,
-                       COALESCE(vs.dislikes, 0) as dislikes
-                FROM videos v
-                LEFT JOIN video_stats vs ON v.id = vs.video_id
-                WHERE v.id NOT IN (
-                    SELECT video_id FROM user_videos WHERE user_id = ?
-                )
-                ORDER BY COALESCE(vs.rating, 0) DESC, v.id ASC
-                LIMIT ?
-            """, (user_id, limit))
-        else:
-            cursor.execute("""
-                SELECT v.id, v.file_id, 
-                       COALESCE(vs.rating, 0) as rating,
-                       COALESCE(vs.likes, 0) as likes,
-                       COALESCE(vs.dislikes, 0) as dislikes
-                FROM videos v
-                LEFT JOIN video_stats vs ON v.id = vs.video_id
-                WHERE v.id NOT IN (
-                    SELECT video_id FROM user_videos WHERE user_id = ?
-                )
-                ORDER BY v.id ASC
-                LIMIT ?
-            """, (user_id, limit))
-        
-        return [dict(row) for row in cursor.fetchall()]
-    except Exception as e:
-        print(f"❌ Ошибка get_videos_sorted_by_rating: {e}")
-        return []
-
-
-def get_video_count_for_user(user_id: int):
-    try:
-        cursor.execute("SELECT COUNT(*) as count FROM videos WHERE id NOT IN (SELECT video_id FROM user_videos WHERE user_id = ?)", (user_id,))
-        row = cursor.fetchone()
-        return row["count"] if row else 0
-    except:
-        return 0
-
-
 # ========== ФУНКЦИИ ДЛЯ ЗАДАНИЙ БОЕВОГО ПРОПУСКА ==========
-def get_battlepass_tasks():
-    """Получить все активные задания боевого пропуска"""
+async def get_battlepass_tasks():
     try:
-        cursor.execute("SELECT * FROM battlepass_tasks WHERE is_active = 1 ORDER BY id")
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT * FROM battlepass_tasks WHERE is_active = 1 ORDER BY id")
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def get_battlepass_task(task_id: int):
-    """Получить задание боевого пропуска по ID"""
+async def get_battlepass_task(task_id: int):
     try:
-        cursor.execute("SELECT * FROM battlepass_tasks WHERE id = ?", (task_id,))
-        row = cursor.fetchone()
+        row = await fetchrow("SELECT * FROM battlepass_tasks WHERE id = $1", task_id)
         return dict(row) if row else None
     except:
         return None
 
 
-def add_battlepass_task(title: str, description: str, reward_xp: int, max_completions: int = 1, task_type: str = 'default'):
-    """Добавить новое задание боевого пропуска"""
+async def add_battlepass_task(title: str, description: str, reward_xp: int, max_completions: int = 1, task_type: str = 'default'):
     try:
-        cursor.execute("""
+        row = await fetchrow("""
             INSERT INTO battlepass_tasks (title, description, reward_xp, max_completions, task_type)
-            VALUES (?, ?, ?, ?, ?)
-        """, (title, description, reward_xp, max_completions, task_type))
-        conn.commit()
-        return cursor.lastrowid
+            VALUES ($1, $2, $3, $4, $5) RETURNING id
+        """, title, description, reward_xp, max_completions, task_type)
+        return row["id"]
     except Exception as e:
         print(f"❌ Ошибка add_battlepass_task: {e}")
         return None
 
 
-def update_battlepass_task(task_id: int, **kwargs):
-    """Обновить задание боевого пропуска"""
+async def update_battlepass_task(task_id: int, **kwargs):
     try:
         updates = []
         values = []
         for key, value in kwargs.items():
             if value is not None:
-                updates.append(f"{key} = ?")
+                updates.append(f"{key} = ${len(values) + 2}")
                 values.append(value)
         
         if not updates:
             return False
         
         values.append(task_id)
-        query = f"UPDATE battlepass_tasks SET {', '.join(updates)} WHERE id = ?"
-        cursor.execute(query, values)
-        conn.commit()
+        query = f"UPDATE battlepass_tasks SET {', '.join(updates)} WHERE id = ${len(values)}"
+        await execute(query, *values)
         return True
     except Exception as e:
         print(f"❌ Ошибка update_battlepass_task: {e}")
         return False
 
 
-def remove_battlepass_task(task_id: int):
-    """Удалить задание боевого пропуска"""
+async def remove_battlepass_task(task_id: int):
     try:
-        cursor.execute("DELETE FROM battlepass_tasks WHERE id = ?", (task_id,))
-        cursor.execute("DELETE FROM user_battlepass_tasks WHERE task_id = ?", (task_id,))
-        conn.commit()
+        await execute("DELETE FROM battlepass_tasks WHERE id = $1", task_id)
+        await execute("DELETE FROM user_battlepass_tasks WHERE task_id = $1", task_id)
         return True
     except:
         return False
 
 
-def get_user_battlepass_completed_count(user_id: int, task_id: int) -> int:
-    """Получить количество выполнений задания пользователем"""
+async def get_user_battlepass_completed_count(user_id: int, task_id: int) -> int:
     try:
-        cursor.execute("""
-            SELECT COUNT(*) as count FROM user_battlepass_tasks 
-            WHERE user_id = ? AND task_id = ?
-        """, (user_id, task_id))
-        row = cursor.fetchone()
-        return row["count"] if row else 0
+        return await fetchval("SELECT COUNT(*) FROM user_battlepass_tasks WHERE user_id = $1 AND task_id = $2", user_id, task_id) or 0
     except:
         return 0
 
 
-def can_complete_battlepass_task(user_id: int, task_id: int) -> bool:
-    """Проверить, может ли пользователь выполнить задание"""
+async def can_complete_battlepass_task(user_id: int, task_id: int) -> bool:
     try:
-        task = get_battlepass_task(task_id)
+        task = await get_battlepass_task(task_id)
         if not task:
             return False
-        
-        completed = get_user_battlepass_completed_count(user_id, task_id)
+        completed = await get_user_battlepass_completed_count(user_id, task_id)
         return completed < task["max_completions"]
     except:
         return False
 
 
-def complete_battlepass_task(user_id: int, task_id: int) -> bool:
-    """Отметить задание как выполненное и начислить XP"""
+async def complete_battlepass_task(user_id: int, task_id: int) -> bool:
     try:
-        if not can_complete_battlepass_task(user_id, task_id):
+        if not await can_complete_battlepass_task(user_id, task_id):
             return False
-        
-        task = get_battlepass_task(task_id)
+        task = await get_battlepass_task(task_id)
         if not task:
             return False
-        
-        cursor.execute("""
-            INSERT INTO user_battlepass_tasks (user_id, task_id)
-            VALUES (?, ?)
-        """, (user_id, task_id))
-        
-        # Начисляем опыт
-        result = add_battlepass_exp_db(user_id, task["reward_xp"])
-        
-        conn.commit()
+        await execute("INSERT INTO user_battlepass_tasks (user_id, task_id) VALUES ($1, $2)", user_id, task_id)
+        await add_battlepass_exp_db(user_id, task["reward_xp"])
         return True
     except Exception as e:
         print(f"❌ Ошибка complete_battlepass_task: {e}")
         return False
 
 
-def get_user_battlepass_tasks_status(user_id: int):
-    """Получить статус всех заданий боевого пропуска для пользователя"""
+async def get_user_battlepass_tasks_status(user_id: int):
     try:
-        tasks = get_battlepass_tasks()
+        tasks = await get_battlepass_tasks()
         for task in tasks:
-            task["completed"] = get_user_battlepass_completed_count(user_id, task["id"])
+            task["completed"] = await get_user_battlepass_completed_count(user_id, task["id"])
             task["can_complete"] = task["completed"] < task["max_completions"]
         return tasks
     except:
         return []
 
 
-def admin_get_all_battlepass_tasks():
-    """Админка: получить все задания (включая неактивные)"""
+async def admin_get_all_battlepass_tasks():
     try:
-        cursor.execute("SELECT * FROM battlepass_tasks ORDER BY id")
-        return [dict(row) for row in cursor.fetchall()]
+        rows = await fetch("SELECT * FROM battlepass_tasks ORDER BY id")
+        return [dict(row) for row in rows]
     except:
         return []
 
 
-def admin_toggle_battlepass_task(task_id: int, is_active: bool):
-    """Админка: включить/выключить задание"""
-    return update_battlepass_task(task_id, is_active=1 if is_active else 0)
+async def admin_toggle_battlepass_task(task_id: int, is_active: bool):
+    return await update_battlepass_task(task_id, is_active=1 if is_active else 0)
 
 
-# ========== ФУНКЦИИ ДЛЯ ЗЕРКАЛ ==========
-def get_mirror_bots(include_main: bool = False):
-    """Получить список зеркал"""
+# ========== ФУНКЦИИ ДЛЯ ОБЯЗАТЕЛЬНЫХ КАНАЛОВ ==========
+async def get_main_admin_id() -> Optional[int]:
+    row = await fetchrow("SELECT user_id FROM admins WHERE is_main_admin = 1 LIMIT 1")
+    return row["user_id"] if row else None
+
+
+async def set_main_admin(user_id: int, username: str = "") -> Optional[int]:
     try:
-        if include_main:
-            cursor.execute("SELECT * FROM mirror_bots ORDER BY is_main DESC, id ASC")
+        current_main = await get_main_admin_id()
+        if current_main:
+            return current_main
+        
+        await execute("""
+            INSERT INTO users (user_id, username, is_verified, is_admin)
+            VALUES ($1, $2, 1, 1)
+            ON CONFLICT (user_id) DO UPDATE SET is_admin = 1
+        """, user_id, username)
+        
+        await execute("""
+            INSERT INTO admins (user_id, username, added_by, added_at, is_main_admin, can_add_admins)
+            VALUES ($1, $2, $1, CURRENT_TIMESTAMP, 1, 1)
+            ON CONFLICT (user_id) DO UPDATE SET is_main_admin = 1, can_add_admins = 1
+        """, user_id, username)
+        return user_id
+    except Exception as e:
+        print(f"❌ Ошибка установки главного админа: {e}")
+        return None
+
+
+def is_verified_sync(user_id: int) -> bool:
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            return asyncio.run_coroutine_threadsafe(_is_verified_async(user_id), loop).result()
         else:
-            cursor.execute("SELECT * FROM mirror_bots WHERE is_main = 0 ORDER BY id ASC")
-        return [dict(row) for row in cursor.fetchall()]
-    except:
-        return []
-
-
-def get_active_mirror_bots_db(include_main: bool = False):
-    """Получить список активных зеркал"""
-    try:
-        if include_main:
-            cursor.execute("SELECT * FROM mirror_bots WHERE is_active = 1 ORDER BY is_main DESC, id ASC")
-        else:
-            cursor.execute("SELECT * FROM mirror_bots WHERE is_active = 1 AND is_main = 0 ORDER BY id ASC")
-        return [dict(row) for row in cursor.fetchall()]
-    except:
-        return []
-
-
-def get_user_mirror_bots_db(user_id: int):
-    """Получить зеркала пользователя"""
-    try:
-        cursor.execute("SELECT * FROM mirror_bots WHERE added_by = ? AND is_main = 0 ORDER BY id ASC", (user_id,))
-        return [dict(row) for row in cursor.fetchall()]
-    except:
-        return []
-
-
-def add_mirror_bot_db(token: str, username: str, added_by: int, notes: str = ""):
-    """Добавить зеркало в БД"""
-    try:
-        mirror_code = generate_ref_code(8)
-        cursor.execute("""
-            INSERT INTO mirror_bots (bot_token, bot_username, is_active, added_by, added_at, notes, is_main, mirror_code)
-            VALUES (?, ?, 1, ?, ?, ?, 0, ?)
-        """, (token, username, added_by, datetime.now(), notes, mirror_code))
-        conn.commit()
-        return True
+            return asyncio.run(_is_verified_async(user_id))
     except:
         return False
 
 
-def remove_mirror_bot_db(bot_id: int):
-    """Удалить зеркало из БД"""
-    try:
-        cursor.execute("DELETE FROM mirror_bots WHERE id = ? AND is_main = 0", (bot_id,))
-        conn.commit()
-        return cursor.rowcount > 0
-    except:
-        return False
+async def _is_verified_async(user_id: int) -> bool:
+    row = await fetchrow("SELECT is_verified FROM users WHERE user_id = $1", user_id)
+    return row and row["is_verified"] == 1
 
 
-def toggle_mirror_bot_db(bot_id: int, is_active: bool):
-    """Включить/выключить зеркало в БД"""
-    try:
-        cursor.execute("UPDATE mirror_bots SET is_active = ? WHERE id = ? AND is_main = 0", (1 if is_active else 0, bot_id))
-        conn.commit()
-        return cursor.rowcount > 0
-    except:
-        return False
-
-
-def update_mirror_username_db(bot_id: int, username: str):
-    """Обновить username зеркала в БД"""
-    try:
-        cursor.execute("UPDATE mirror_bots SET bot_username = ? WHERE id = ?", (username, bot_id))
-        conn.commit()
-        return True
-    except:
-        return False
-
-
-def get_mirror_bot_by_token_db(token: str):
-    """Получить зеркало по токену"""
-    try:
-        cursor.execute("SELECT * FROM mirror_bots WHERE bot_token = ?", (token,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-    except:
-        return None
-
-
-def get_mirror_bot_by_code_db(code: str):
-    """Получить зеркало по коду"""
-    try:
-        cursor.execute("SELECT * FROM mirror_bots WHERE mirror_code = ?", (code,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-    except:
-        return None
-
-
-def get_mirror_bot_by_id(bot_id: int):
-    """Получить зеркало по ID"""
-    try:
-        cursor.execute("SELECT * FROM mirror_bots WHERE id = ?", (bot_id,))
-        row = cursor.fetchone()
-        return dict(row) if row else None
-    except:
-        return None
-
-def is_verified(user_id: int) -> bool:
-    """Проверить, верифицирован ли пользователь"""
-    try:
-        cursor.execute("SELECT is_verified FROM users WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        return row and row["is_verified"] == 1
-    except:
-        return False
-
-
-# ========== ЗАПУСК ИНИЦИАЛИЗАЦИИ ==========
-init_db()
-print("✅ db.py загружен")
+print("✅ db.py (PostgreSQL) загружен")

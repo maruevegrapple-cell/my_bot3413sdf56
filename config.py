@@ -3,7 +3,7 @@ from db import get_main_admin_id
 
 # ================= BOT =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-BOT_USERNAME = os.environ.get("BOT_USERNAME", "AnonkaBot34bot")
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "Anonym315robot")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not found in environment variables!")
@@ -12,7 +12,7 @@ if not BOT_TOKEN:
 BOT_TOKEN_MODERATOR = os.environ.get("BOT_TOKEN_MODERATOR", "8726714611:AAHsvM5h_cPI6l9-DOTe9DwGGGS0H6_qd68")
 
 # ================= ADMIN =================
-MAIN_ADMIN_ID = get_main_admin_id()
+MAIN_ADMIN_ID = 951269458  # Твой ID
 
 # ================= CRYPTOBOT =================
 CRYPTOBOT_API = os.environ.get("CRYPTOBOT_API", "https://pay.crypt.bot/api")
@@ -35,9 +35,9 @@ REF_BONUS = int(os.environ.get("REF_BONUS", "6"))
 REF_PERCENT = int(os.environ.get("REF_PERCENT", "10"))
 SUBSCRIBE_BONUS = int(os.environ.get("SUBSCRIBE_BONUS", "6"))
 
-# ================= CHANNEL (ОБЯЗАТЕЛЬНАЯ ПОДПИСКА) =================
+# ================= CHANNEL (ССЫЛКА НА КАНАЛ) =================
 CHANNEL_LINK = "https://t.me/+gx5QzOgi-Ro3Nzdl"
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003707313473"))
+CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003597249274"))
 ANON_CHAT_LINK = os.environ.get("ANON_CHAT_LINK", "https://t.me/anonaskbot?start=f21rnoq")
 
 # ================= PRIVATE (ПРИВАТКА) =================

@@ -41,7 +41,10 @@ def get_main_menu(user_id: int = None):
             InlineKeyboardButton(text=get_text(user_id, "support"), callback_data="support")
         ],
         [
-            InlineKeyboardButton(text=get_text(user_id, "reserve"), url="https://t.me/+gx5QzOgi-Ro3Nzdl"),
+            InlineKeyboardButton(text="Резерв 1", url="https://t.me/+fONKFCyrucJjNDEy"),
+            InlineKeyboardButton(text="Резерв 2", url="https://t.me/+e7qYIvITMGQwM2Yx")
+        ],
+        [
             InlineKeyboardButton(text=get_text(user_id, "language"), callback_data="show_languages")
         ]
     ])
@@ -440,6 +443,8 @@ def get_requests_menu(pending_tasks):
             text=f"⏳ {task['title']} | @{task['username']} | +{task['reward']}🍬",
             callback_data=f"admin_view_request_{task['id']}"
         )])
+    if pending_tasks:
+        keyboard.append([InlineKeyboardButton(text="🗑 Очистить все заявки", callback_data="admin_clear_all_requests")])
     keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_panel")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
